@@ -36,11 +36,14 @@ function renderPending(items) {
   for (const item of sorted) {
     const days = ageDays(item.firstSeenAt);
     list.append(el('li', { className: `row ${ageClassFromDays(days)}` }, [
-      el('div', { className: 'name-row' }, [
-        el('a', { className: 'name', href: item.profileUrl, target: '_blank' }, [item.name]),
+      item.avatar ? el('img', { className: 'avatar', src: item.avatar, alt: '' }) : null,
+      el('div', { className: 'row-body' }, [
+        el('div', { className: 'name-row' }, [
+          el('a', { className: 'name', href: item.profileUrl, target: '_blank' }, [item.name]),
+        ]),
+        item.headline ? el('div', { className: 'headline' }, [item.headline]) : null,
+        el('div', { className: 'meta' }, [`Pending ${days}d`, item.sentDateRelative || '']),
       ]),
-      item.headline ? el('div', { className: 'headline' }, [item.headline]) : null,
-      el('div', { className: 'meta' }, [`Pending ${days}d`, item.sentDateRelative || '']),
     ]));
   }
 }
@@ -76,16 +79,19 @@ function renderAccepted(items, onMarkWelcome) {
     if (isDeclined) rowClasses.push('declined');
 
     list.append(el('li', { className: rowClasses.filter(Boolean).join(' ') }, [
-      el('div', { className: 'name-row' }, [
-        el('a', { className: 'name', href: item.profileUrl, target: '_blank' }, [item.name]),
-        statusBadge(item.verified),
+      item.avatar ? el('img', { className: 'avatar', src: item.avatar, alt: '' }) : null,
+      el('div', { className: 'row-body' }, [
+        el('div', { className: 'name-row' }, [
+          el('a', { className: 'name', href: item.profileUrl, target: '_blank' }, [item.name]),
+          statusBadge(item.verified),
+        ]),
+        item.headline ? el('div', { className: 'headline' }, [item.headline]) : null,
+        el('div', { className: 'meta' }, [
+          `Accepted ${sinceAccepted}d ago`,
+          `was pending ${item.daysPending}d`,
+        ]),
+        item.welcomeMessageSent ? null : el('div', { className: 'row-actions' }, actions),
       ]),
-      item.headline ? el('div', { className: 'headline' }, [item.headline]) : null,
-      el('div', { className: 'meta' }, [
-        `Accepted ${sinceAccepted}d ago`,
-        `was pending ${item.daysPending}d`,
-      ]),
-      item.welcomeMessageSent ? null : el('div', { className: 'row-actions' }, actions),
     ]));
   }
 }
