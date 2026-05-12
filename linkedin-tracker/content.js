@@ -4,6 +4,8 @@
 // inside <main>. Everything else (name, headline, "Sent X ago") is pulled from
 // the link's text and the nearest card-shaped ancestor.
 
+console.log('[LI Tracker] content script INJECTED at', location.href);
+
 const SCROLL_STEP_MS = 800;
 const SCROLL_STABLE_TICKS = 3;
 const SCROLL_MAX_TICKS = 60;
@@ -17,16 +19,28 @@ function normalizeProfileUrl(href) {
   return `${u.origin}${u.pathname.replace(/\/+$/, '')}/`;
 }
 
-// Get every visible link to a profile inside <main>, deduped by profile URL.
-// One card can contain several links to the same person (avatar + name), we
-// keep the first one with non-empty text — that's the name link.
+const TIME_RE = /(sent[^.\n]*ago|\d+\s+(second|minute|hour|day|week|month|year)s?\s+ago)/i;
+
+// A profile link counts as a sent-invitation card only if some ancestor within
+// 8 levels contains "Sent ... ago" or "N day(s) ago". This filters out the
+// header/nav links to your own profile and the "people you may know" sidebar.
+function isInsideInviteCard(link) {
+  let node = link.parentElement;
+  for (let i = 0; i < 8 && node; i++, node = node.parentElement) {
+    if (TIME_RE.test(node.textContent || '')) return true;
+  }
+  return false;
+}
+
+// Get every link to a profile that lives inside an invitation card, deduped
+// by profile URL. Same person can have avatar+name links — we keep the first
+// one with non-empty text content.
 function findProfileLinks() {
-  const root = document.querySelector('main') || document.body;
   const byUrl = new Map();
-  for (const link of root.querySelectorAll('a[href*="/in/"]')) {
-    if (link.offsetParent === null) continue;
+  for (const link of document.querySelectorAll('a[href*="/in/"]')) {
     const text = (link.textContent || '').trim();
     if (!text) continue;
+    if (!isInsideInviteCard(link)) continue;
     const url = normalizeProfileUrl(link.href);
     if (!byUrl.has(url)) byUrl.set(url, link);
   }
@@ -34,15 +48,12 @@ function findProfileLinks() {
 }
 
 // Walk up a few levels until we hit a block that contains a "Sent ... ago"
-// or "N day(s) ago" string. That's our card. Falls back to a fixed depth if
-// the time text isn't there (rare — usually LinkedIn shows it).
+// or "N day(s) ago" string. That's our card.
 function findCardContainer(link) {
-  const TIME_RE = /(sent[^.]*ago|\d+\s+(second|minute|hour|day|week|month|year)s?\s+ago)/i;
   let node = link.parentElement;
   for (let i = 0; i < 8 && node; i++, node = node.parentElement) {
     if (TIME_RE.test(node.textContent || '')) return node;
   }
-  // fallback: 5 levels up — empirically that's where the card sits
   node = link;
   for (let i = 0; i < 5 && node.parentElement; i++) node = node.parentElement;
   return node;
