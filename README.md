@@ -25,6 +25,7 @@ See [linkedin-tracker-extension-spec.md](linkedin-tracker-extension-spec.md) for
 - [linkedin-tracker/content.js](linkedin-tracker/content.js) — DOM parser, auto-scroll, diff against previous snapshot
 - [linkedin-tracker/background.js](linkedin-tracker/background.js) — service worker for badge + desktop notifications
 - [linkedin-tracker/popup.html](linkedin-tracker/popup.html), [popup.js](linkedin-tracker/popup.js), [popup.css](linkedin-tracker/popup.css) — UI
+- [linkedin-tracker/icons/](linkedin-tracker/icons/) — toolbar + notification icons (regenerate with `.venv/bin/python scripts/make_icons.py`)
 
 ## Notes
 

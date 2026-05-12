@@ -20,9 +20,7 @@ function notifyNewlyAccepted(newlyAccepted) {
     : `Including ${first.name}${newlyAccepted.length > 1 ? ` and ${newlyAccepted.length - 1} more` : ''}.`;
   chrome.notifications.create({
     type: 'basic',
-    iconUrl: 'data:image/svg+xml;utf8,' + encodeURIComponent(
-      '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128"><rect width="128" height="128" fill="#0a66c2"/><text x="64" y="86" font-size="72" text-anchor="middle" fill="white" font-family="Arial">in</text></svg>'
-    ),
+    iconUrl: chrome.runtime.getURL('icons/icon128.png'),
     title,
     message,
     priority: 1,
