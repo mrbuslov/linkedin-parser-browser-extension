@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>LinkedIn Connection Tracker</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <div class="tabs">
+      <button class="tab active" data-tab="pending">Pending</button>
+      <button class="tab" data-tab="accepted">Accepted</button>
+    </div>
+    <div class="actions">
+      <button id="open-sent" title="Open sent invitations page">Scan</button>
+      <button id="export-csv" title="Export everything as CSV">CSV</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="pending-panel" class="panel active">
+      <div class="summary" id="pending-summary"></div>
+      <ul class="list" id="pending-list"></ul>
+      <p class="empty" id="pending-empty" hidden>No pending invitations yet. Open the sent invitations page to scan.</p>
+    </section>
+
+    <section id="accepted-panel" class="panel">
+      <div class="summary" id="accepted-summary"></div>
+      <ul class="list" id="accepted-list"></ul>
+      <p class="empty" id="accepted-empty" hidden>No accepted connections waiting for a welcome.</p>
+    </section>
+  </main>
+</body>
+<script src="popup.js"></script>
+</html>

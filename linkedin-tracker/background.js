@@ -1,0 +1,43 @@
+// Service worker. Receives SCAN_DONE messages from content.js, updates the
+// toolbar badge (= pending count of accepted that still need a welcome), and
+// pops a desktop notification when new connects come in.
+
+async function refreshBadge() {
+  const { accepted = {} } = await chrome.storage.local.get('accepted');
+  const needsWelcome = Object.values(accepted).filter((x) => !x.welcomeMessageSent).length;
+  await chrome.action.setBadgeText({ text: needsWelcome > 0 ? String(needsWelcome) : '' });
+  await chrome.action.setBadgeBackgroundColor({ color: '#0a66c2' });
+}
+
+function notifyNewlyAccepted(newlyAccepted) {
+  if (!newlyAccepted || newlyAccepted.length === 0) return;
+  const first = newlyAccepted[0];
+  const title = newlyAccepted.length === 1
+    ? `${first.name} accepted your invite`
+    : `${newlyAccepted.length} new connections accepted`;
+  const message = newlyAccepted.length === 1
+    ? 'Time to write a welcome message.'
+    : `Including ${first.name}${newlyAccepted.length > 1 ? ` and ${newlyAccepted.length - 1} more` : ''}.`;
+  chrome.notifications.create({
+    type: 'basic',
+    iconUrl: 'data:image/svg+xml;utf8,' + encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128"><rect width="128" height="128" fill="#0a66c2"/><text x="64" y="86" font-size="72" text-anchor="middle" fill="white" font-family="Arial">in</text></svg>'
+    ),
+    title,
+    message,
+    priority: 1,
+  });
+}
+
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg?.type === 'SCAN_DONE') {
+    notifyNewlyAccepted(msg.newlyAccepted);
+    refreshBadge();
+  }
+  if (msg?.type === 'REFRESH_BADGE') {
+    refreshBadge();
+  }
+});
+
+chrome.runtime.onInstalled.addListener(() => refreshBadge());
+chrome.runtime.onStartup.addListener(() => refreshBadge());
