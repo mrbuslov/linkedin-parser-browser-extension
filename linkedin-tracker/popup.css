@@ -34,34 +34,25 @@ header {
 .tab.active { background: #0a66c2; color: #fff; }
 
 .actions { display: flex; gap: 4px; }
-.actions #goto-sent {
-  background: #fff;
-  color: #0a66c2;
-  border: 1px solid #0a66c2;
-  padding: 5px 12px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 600;
-}
-.actions #goto-sent:hover { background: #eaf3fc; }
 .actions #open-sent {
-  background: #f57c00;
-  color: #fff;
-  border: 1px solid #f57c00;
   padding: 5px 12px;
   border-radius: 6px;
   cursor: pointer;
   font-size: 12px;
   font-weight: 600;
+  border: 1px solid transparent;
+  color: #fff;
 }
-.actions #open-sent:hover:not(:disabled) { background: #e56b00; border-color: #e56b00; }
-.actions #open-sent:disabled {
-  background: #e5e5e5;
-  border-color: #e5e5e5;
-  color: #999;
-  cursor: not-allowed;
+.actions #open-sent.mode-scan {
+  background: #f57c00;
+  border-color: #f57c00;
 }
+.actions #open-sent.mode-scan:hover { background: #e56b00; border-color: #e56b00; }
+.actions #open-sent.mode-goto {
+  background: #0a66c2;
+  border-color: #0a66c2;
+}
+.actions #open-sent.mode-goto:hover { background: #084a92; border-color: #084a92; }
 .actions #open-sent.scanning::before {
   content: '';
   display: inline-block;

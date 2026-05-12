@@ -188,19 +188,31 @@ function switchTab(name) {
 async function updateScanButton() {
   const btn = $('open-sent');
   const { scanInProgress } = await chrome.storage.local.get('scanInProgress');
+
+  btn.classList.remove('scanning', 'mode-scan', 'mode-goto');
+  btn.disabled = false;
+
   if (scanInProgress) {
-    btn.classList.add('scanning');
-    btn.disabled = false;
+    btn.classList.add('scanning', 'mode-scan');
     btn.textContent = 'Stop';
     btn.title = 'Click to cancel the scan';
+    btn.dataset.mode = 'stop';
     return;
   }
-  btn.classList.remove('scanning');
-  btn.textContent = 'Scan';
+
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const onSentPage = tab?.url?.startsWith(SENT_URL);
-  btn.disabled = !onSentPage;
-  btn.title = onSentPage ? 'Start a scan of this page' : 'Open the sent invitations page first';
+  if (onSentPage) {
+    btn.classList.add('mode-scan');
+    btn.textContent = 'Scan';
+    btn.title = 'Start a scan of this page';
+    btn.dataset.mode = 'scan';
+  } else {
+    btn.classList.add('mode-goto');
+    btn.textContent = 'Go to Sent page';
+    btn.title = 'Open the sent invitations page on LinkedIn';
+    btn.dataset.mode = 'goto';
+  }
 }
 
 chrome.storage.onChanged.addListener((changes) => {
@@ -213,13 +225,18 @@ document.querySelectorAll('.tab').forEach((tab) => {
 });
 
 $('open-sent').addEventListener('click', async () => {
+  const mode = $('open-sent').dataset.mode;
+  if (mode === 'goto') {
+    chrome.tabs.create({ url: SENT_URL });
+    return;
+  }
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.url?.startsWith(SENT_URL)) return;
-  chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_SCAN' });
+  if (tab?.url?.startsWith(SENT_URL)) {
+    chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_SCAN' });
+  }
 });
 
 $('empty-open-sent').addEventListener('click', () => chrome.tabs.create({ url: SENT_URL }));
-$('goto-sent').addEventListener('click', () => chrome.tabs.create({ url: SENT_URL }));
 $('export-csv').addEventListener('click', exportCsv);
 $('export-json').addEventListener('click', exportJson);
 $('import-json').addEventListener('click', () => $('import-file').click());
