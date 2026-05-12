@@ -43,9 +43,31 @@ function parseCards() {
   return Array.from(result.values());
 }
 
+async function waitForFirstCard(maxWaitMs = 20000) {
+  const start = Date.now();
+  while (Date.now() - start < maxWaitMs) {
+    if (document.querySelector('[role="listitem"]')) return true;
+    await sleep(500);
+  }
+  return false;
+}
+
+// Bring the last card into view. Works no matter which DOM ancestor is the
+// scroll container — window, <main>, or a custom overflow div — because the
+// browser figures out the right one for scrollIntoView.
+function scrollToLastCard() {
+  const items = document.querySelectorAll('[role="listitem"]');
+  if (items.length === 0) return;
+  items[items.length - 1].scrollIntoView({ block: 'end', behavior: 'smooth' });
+}
+
 async function autoScroll() {
+  if (!(await waitForFirstCard())) {
+    console.warn('[LI Tracker] no [role="listitem"] appeared within 20s — list may be empty');
+    return [];
+  }
+
   let stableRounds = 0;
-  let lastHeight = 0;
   let lastCount = 0;
   let iter = 0;
 
@@ -53,26 +75,23 @@ async function autoScroll() {
     iter++;
     const cards = parseCards();
     const added = cards.length - lastCount;
-    const h = document.documentElement.scrollHeight;
-    console.log(`[LI Tracker] tick ${iter}: total ${cards.length}, new ${added}, height ${h}`);
+    console.log(`[LI Tracker] tick ${iter}: total ${cards.length}, new ${added}`);
 
-    window.scrollTo({ top: h, behavior: 'smooth' });
+    scrollToLastCard();
 
-    await sleep(rand(2000, 4000));
-    if (Math.random() < 0.15) await sleep(rand(3000, 6000));
+    await sleep(rand(1500, 2500));
 
-    if (h === lastHeight && added === 0) {
+    if (added === 0) {
       stableRounds++;
       // wiggle to trigger lazy-load
       window.scrollBy(0, -300);
-      await sleep(rand(600, 1200));
-      window.scrollBy(0, 600);
-      await sleep(rand(800, 1500));
+      await sleep(rand(400, 700));
+      scrollToLastCard();
+      await sleep(rand(600, 1000));
     } else {
       stableRounds = 0;
     }
 
-    lastHeight = h;
     lastCount = cards.length;
   }
 
