@@ -185,13 +185,28 @@ function switchTab(name) {
   }
 }
 
-async function syncScanButton() {
+async function updateScanButton() {
   const btn = $('open-sent');
+  const { scanInProgress } = await chrome.storage.local.get('scanInProgress');
+  if (scanInProgress) {
+    btn.classList.add('scanning');
+    btn.disabled = false;
+    btn.textContent = 'Stop';
+    btn.title = 'Click to cancel the scan';
+    return;
+  }
+  btn.classList.remove('scanning');
+  btn.textContent = 'Scan';
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const onSentPage = tab?.url?.startsWith(SENT_URL);
   btn.disabled = !onSentPage;
-  btn.title = onSentPage ? 'Re-scan this page' : 'Open the sent invitations page first';
+  btn.title = onSentPage ? 'Start a scan of this page' : 'Open the sent invitations page first';
 }
+
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.scanInProgress) updateScanButton();
+  if (changes.sentInvitations || changes.accepted) loadData();
+});
 
 document.querySelectorAll('.tab').forEach((tab) => {
   tab.addEventListener('click', () => switchTab(tab.dataset.tab));
@@ -200,12 +215,11 @@ document.querySelectorAll('.tab').forEach((tab) => {
 $('open-sent').addEventListener('click', async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.url?.startsWith(SENT_URL)) return;
-  chrome.tabs.sendMessage(tab.id, { type: 'RESCAN' });
-  $('open-sent').textContent = 'Scanning…';
-  setTimeout(() => { $('open-sent').textContent = 'Scan'; loadData(); }, 1500);
+  chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_SCAN' });
 });
 
 $('empty-open-sent').addEventListener('click', () => chrome.tabs.create({ url: SENT_URL }));
+$('goto-sent').addEventListener('click', () => chrome.tabs.create({ url: SENT_URL }));
 $('export-csv').addEventListener('click', exportCsv);
 $('export-json').addEventListener('click', exportJson);
 $('import-json').addEventListener('click', () => $('import-file').click());
@@ -215,4 +229,4 @@ $('import-file').addEventListener('change', (e) => {
 });
 
 loadData();
-syncScanButton();
+updateScanButton();

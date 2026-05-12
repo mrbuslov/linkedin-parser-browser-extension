@@ -6,12 +6,35 @@
 
 console.log('[LI Tracker] content script INJECTED at', location.href);
 
+// Reset the scanInProgress flag on every injection: if a previous scan died
+// because the page was closed mid-flight, the popup would otherwise think it's
+// still running.
+chrome.storage.local.set({ scanInProgress: false });
+
 const DAY_MS = 86400000;
 const STABLE_ROUNDS_TO_STOP = 3;
 const HARD_LIMIT_ITERATIONS = 500;
 
+let cancelRequested = false;
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const rand = (min, max) => Math.random() * (max - min) + min;
+
+class ScanCancelled extends Error {}
+
+// Sleep that wakes up early if the user cancels. Polls in 100ms slices so
+// cancellation reacts within ~100ms regardless of the requested sleep length.
+async function cancellableSleep(ms) {
+  const step = 100;
+  let elapsed = 0;
+  while (elapsed < ms) {
+    if (cancelRequested) throw new ScanCancelled();
+    const slice = Math.min(step, ms - elapsed);
+    await sleep(slice);
+    elapsed += slice;
+  }
+  if (cancelRequested) throw new ScanCancelled();
+}
 
 function normalizeProfileUrl(href) {
   const u = new URL(href, location.origin);
@@ -47,7 +70,7 @@ async function waitForFirstCard(maxWaitMs = 20000) {
   const start = Date.now();
   while (Date.now() - start < maxWaitMs) {
     if (document.querySelector('[role="listitem"]')) return true;
-    await sleep(500);
+    await cancellableSleep(500);
   }
   return false;
 }
@@ -79,15 +102,14 @@ async function autoScroll() {
 
     scrollToLastCard();
 
-    await sleep(rand(1500, 2500));
+    await cancellableSleep(rand(1500, 2500));
 
     if (added === 0) {
       stableRounds++;
-      // wiggle to trigger lazy-load
       window.scrollBy(0, -300);
-      await sleep(rand(400, 700));
+      await cancellableSleep(rand(400, 700));
       scrollToLastCard();
-      await sleep(rand(600, 1000));
+      await cancellableSleep(rand(600, 1000));
     } else {
       stableRounds = 0;
     }
@@ -161,13 +183,12 @@ async function diffAndPersist(snapshot) {
 let scanInFlight = false;
 
 async function runScan() {
-  if (scanInFlight) {
-    console.log('[LI Tracker] scan already in progress, skipping');
-    return;
-  }
+  if (scanInFlight) return;
   scanInFlight = true;
+  cancelRequested = false;
+  await chrome.storage.local.set({ scanInProgress: true });
   try {
-    console.log('[LI Tracker] starting scan, auto-scrolling...');
+    console.log('[LI Tracker] starting scan...');
     const snapshot = await autoScroll();
     console.log(`[LI Tracker] parsed ${snapshot.length} invitations`);
 
@@ -185,13 +206,25 @@ async function runScan() {
       newlyAcceptedCount: result.newlyAccepted.length,
       newlyAccepted: result.newlyAccepted,
     });
+  } catch (err) {
+    if (err instanceof ScanCancelled) {
+      console.log('[LI Tracker] scan cancelled by user');
+    } else {
+      throw err;
+    }
   } finally {
     scanInFlight = false;
+    cancelRequested = false;
+    await chrome.storage.local.set({ scanInProgress: false });
   }
 }
 
-runScan();
-
 chrome.runtime.onMessage.addListener((msg) => {
-  if (msg?.type === 'RESCAN') runScan();
+  if (msg?.type === 'TOGGLE_SCAN') {
+    if (scanInFlight) {
+      cancelRequested = true;
+    } else {
+      runScan();
+    }
+  }
 });
