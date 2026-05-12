@@ -194,7 +194,11 @@ main {
   cursor: pointer;
   font-size: 12px;
 }
-.settings-actions button.cta { border-color: #0a66c2; }
+.settings-actions button.cta {
+  background: #0a66c2;
+  color: #fff;
+  border-color: #0a66c2;
+}
 .settings-actions button:hover { background: #f0f0f0; }
 .settings-actions button.cta:hover { background: #084a92; }
 

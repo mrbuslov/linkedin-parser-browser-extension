@@ -1,71 +1,106 @@
 // Runs on linkedin.com/mynetwork/invitation-manager/sent/.
-// Auto-scrolls to load the full list, parses invitation cards, then diffs against
-// the previous snapshot in chrome.storage.local. Anything missing now = accepted.
+// LinkedIn ships fully obfuscated CSS classes and doesn't expose data-view-name
+// on this page, so we anchor on the only stable thing: `<a href="/in/...">` links
+// inside <main>. Everything else (name, headline, "Sent X ago") is pulled from
+// the link's text and the nearest card-shaped ancestor.
 
 const SCROLL_STEP_MS = 800;
 const SCROLL_STABLE_TICKS = 3;
+const SCROLL_MAX_TICKS = 60;
+const INITIAL_RENDER_DELAY_MS = 1500;
 const DAY_MS = 86400000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function normalizeProfileUrl(href) {
-  // strip query/hash and trailing slash variations so the same person always gets the same key
   const u = new URL(href, location.origin);
   return `${u.origin}${u.pathname.replace(/\/+$/, '')}/`;
 }
 
-// LinkedIn rotates CSS class hashes, so we anchor on stable attributes (data-view-name,
-// the /in/ link) and fall back to structure. If both fail, we surface that loudly.
-function findInvitationCards() {
-  const byDataView = document.querySelectorAll('[data-view-name*="invitation"]');
-  if (byDataView.length) return Array.from(byDataView);
-
-  const cards = new Set();
-  for (const link of document.querySelectorAll('a[href*="/in/"]')) {
-    const card = link.closest('li, [class*="invitation"]');
-    if (card) cards.add(card);
+// Get every visible link to a profile inside <main>, deduped by profile URL.
+// One card can contain several links to the same person (avatar + name), we
+// keep the first one with non-empty text — that's the name link.
+function findProfileLinks() {
+  const root = document.querySelector('main') || document.body;
+  const byUrl = new Map();
+  for (const link of root.querySelectorAll('a[href*="/in/"]')) {
+    if (link.offsetParent === null) continue;
+    const text = (link.textContent || '').trim();
+    if (!text) continue;
+    const url = normalizeProfileUrl(link.href);
+    if (!byUrl.has(url)) byUrl.set(url, link);
   }
-  return Array.from(cards);
+  return Array.from(byUrl.values());
 }
 
-function parseCard(card) {
-  const profileLink = card.querySelector('a[href*="/in/"]');
-  if (!profileLink) return null;
+// Walk up a few levels until we hit a block that contains a "Sent ... ago"
+// or "N day(s) ago" string. That's our card. Falls back to a fixed depth if
+// the time text isn't there (rare — usually LinkedIn shows it).
+function findCardContainer(link) {
+  const TIME_RE = /(sent[^.]*ago|\d+\s+(second|minute|hour|day|week|month|year)s?\s+ago)/i;
+  let node = link.parentElement;
+  for (let i = 0; i < 8 && node; i++, node = node.parentElement) {
+    if (TIME_RE.test(node.textContent || '')) return node;
+  }
+  // fallback: 5 levels up — empirically that's where the card sits
+  node = link;
+  for (let i = 0; i < 5 && node.parentElement; i++) node = node.parentElement;
+  return node;
+}
 
-  const profileUrl = normalizeProfileUrl(profileLink.href);
-
-  const nameFromLink = (profileLink.textContent || '').trim();
-  const nameFromAttr = card.querySelector('[class*="title"], [class*="name"]')?.textContent?.trim() || '';
-  const name = nameFromLink || nameFromAttr;
-
-  const headline = card.querySelector('[class*="subtitle"], [class*="headline"], [class*="occupation"]')?.textContent?.trim() || '';
-  const sentDateRelative = card.querySelector('time, [class*="time"], [class*="sent"], [class*="caption"]')?.textContent?.trim() || '';
-
+function parseFromLink(link) {
+  const profileUrl = normalizeProfileUrl(link.href);
+  const name = (link.textContent || '').trim();
   if (!name) return null;
+
+  const card = findCardContainer(link);
+  const cardText = card.textContent || '';
+
+  const timeMatch = cardText.match(/sent[^.\n]*?ago/i)
+    || cardText.match(/\d+\s+(second|minute|hour|day|week|month|year)s?\s+ago/i);
+  const sentDateRelative = timeMatch ? timeMatch[0].trim().replace(/\s+/g, ' ') : '';
+
+  // Headline = the shortest descendant text that's not the name, not the time,
+  // and not obvious UI chrome ("Withdraw", "Message").
+  let headline = '';
+  const SKIP = /^(withdraw|message|connect|pending|follow|more|invitation sent|·)$/i;
+  for (const node of card.querySelectorAll('span, p, div')) {
+    if (node.children.length > 0) continue;
+    const t = (node.textContent || '').trim();
+    if (!t || t.length < 3 || t.length > 200) continue;
+    if (t === name || name.includes(t) || t.includes(name)) continue;
+    if (sentDateRelative && t.includes(sentDateRelative)) continue;
+    if (SKIP.test(t)) continue;
+    headline = t;
+    break;
+  }
+
   return { profileUrl, name, headline, sentDateRelative };
 }
 
 async function loadEntireList() {
   let prevCount = -1;
   let stableTicks = 0;
-  while (stableTicks < SCROLL_STABLE_TICKS) {
-    const count = findInvitationCards().length;
+  for (let tick = 0; tick < SCROLL_MAX_TICKS && stableTicks < SCROLL_STABLE_TICKS; tick++) {
+    const count = findProfileLinks().length;
     if (count === prevCount) {
       stableTicks++;
     } else {
       stableTicks = 0;
       prevCount = count;
+      console.log(`[LI Tracker] scroll tick ${tick}: ${count} profile links visible`);
     }
     window.scrollTo(0, document.body.scrollHeight);
     await sleep(SCROLL_STEP_MS);
   }
-  return findInvitationCards();
+  window.scrollTo(0, 0);
+  return findProfileLinks();
 }
 
-function snapshotFromCards(cards) {
+function buildSnapshot(links) {
   const byUrl = new Map();
-  for (const card of cards) {
-    const item = parseCard(card);
+  for (const link of links) {
+    const item = parseFromLink(link);
     if (item && !byUrl.has(item.profileUrl)) byUrl.set(item.profileUrl, item);
   }
   return Array.from(byUrl.values());
@@ -90,6 +125,7 @@ async function diffAndPersist(snapshot) {
       daysPending: Math.floor((now - item.firstSeenAt) / DAY_MS),
       welcomeMessageSent: false,
       welcomeMessageSentAt: null,
+      verified: null,
     };
     accepted[url] = entry;
     newlyAccepted.push(entry);
@@ -132,16 +168,22 @@ async function diffAndPersist(snapshot) {
 let scanInFlight = false;
 
 async function runScan() {
-  if (scanInFlight) return;
+  if (scanInFlight) {
+    console.log('[LI Tracker] scan already in progress, skipping');
+    return;
+  }
   scanInFlight = true;
   try {
+    console.log('[LI Tracker] waiting for initial render...');
+    await sleep(INITIAL_RENDER_DELAY_MS);
+
     console.log('[LI Tracker] scrolling to load all invitations...');
-    const cards = await loadEntireList();
-    const snapshot = snapshotFromCards(cards);
-    console.log(`[LI Tracker] parsed ${snapshot.length} cards from ${cards.length} DOM nodes`);
+    const links = await loadEntireList();
+    const snapshot = buildSnapshot(links);
+    console.log(`[LI Tracker] parsed ${snapshot.length} invitations from ${links.length} profile links`);
 
     if (snapshot.length === 0) {
-      console.warn('[LI Tracker] no cards parsed — selectors may be stale or the list is empty');
+      console.warn('[LI Tracker] nothing parsed — page may be empty or selectors are stale');
       return;
     }
 
@@ -159,25 +201,7 @@ async function runScan() {
   }
 }
 
-// Kick off once the first card appears. MutationObserver is more reliable than a
-// fixed timeout because LinkedIn renders the list async after document_idle.
-function waitForFirstCardThenScan() {
-  if (findInvitationCards().length > 0) {
-    runScan();
-    return;
-  }
-  const obs = new MutationObserver(() => {
-    if (findInvitationCards().length > 0) {
-      obs.disconnect();
-      runScan();
-    }
-  });
-  obs.observe(document.body, { childList: true, subtree: true });
-  // bail after 30s so we don't observe forever on an empty page
-  setTimeout(() => obs.disconnect(), 30000);
-}
-
-waitForFirstCardThenScan();
+runScan();
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg?.type === 'RESCAN') runScan();
