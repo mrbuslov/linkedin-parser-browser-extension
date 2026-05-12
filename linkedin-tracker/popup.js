@@ -4,16 +4,8 @@ const AGE_YELLOW_DAYS = 7;
 const AGE_RED_DAYS = 14;
 
 const $ = (id) => document.getElementById(id);
-
-function ageDays(timestamp) {
-  return Math.floor((Date.now() - timestamp) / DAY_MS);
-}
-
-function ageClassFromDays(days) {
-  if (days >= AGE_RED_DAYS) return 'age-red';
-  if (days >= AGE_YELLOW_DAYS) return 'age-yellow';
-  return '';
-}
+const ageDays = (ts) => Math.floor((Date.now() - ts) / DAY_MS);
+const ageClassFromDays = (d) => d >= AGE_RED_DAYS ? 'age-red' : d >= AGE_YELLOW_DAYS ? 'age-yellow' : '';
 
 function el(tag, props = {}, children = []) {
   const node = document.createElement(tag);
@@ -23,6 +15,12 @@ function el(tag, props = {}, children = []) {
     node.append(typeof child === 'string' ? document.createTextNode(child) : child);
   }
   return node;
+}
+
+function statusBadge(verified) {
+  if (verified === 'accepted') return el('span', { className: 'status-badge accepted' }, ['✓ accepted']);
+  if (verified === 'declined') return el('span', { className: 'status-badge declined' }, ['✗ declined']);
+  return el('span', { className: 'status-badge unverified', title: 'Open profile to verify' }, ['?']);
 }
 
 function renderPending(items) {
@@ -37,54 +35,73 @@ function renderPending(items) {
 
   for (const item of sorted) {
     const days = ageDays(item.firstSeenAt);
-    const row = el('li', { className: `row ${ageClassFromDays(days)}` }, [
-      el('a', { className: 'name', href: item.profileUrl, target: '_blank' }, [item.name]),
-      item.headline ? el('div', { className: 'headline' }, [item.headline]) : null,
-      el('div', { className: 'meta' }, [
-        `Pending ${days}d`,
-        item.sentDateRelative || '',
+    list.append(el('li', { className: `row ${ageClassFromDays(days)}` }, [
+      el('div', { className: 'name-row' }, [
+        el('a', { className: 'name', href: item.profileUrl, target: '_blank' }, [item.name]),
       ]),
-    ]);
-    list.append(row);
+      item.headline ? el('div', { className: 'headline' }, [item.headline]) : null,
+      el('div', { className: 'meta' }, [`Pending ${days}d`, item.sentDateRelative || '']),
+    ]));
   }
 }
 
 function renderAccepted(items, onMarkWelcome) {
   const list = $('accepted-list');
   list.innerHTML = '';
-  const waiting = items.filter((x) => !x.welcomeMessageSent);
-  $('accepted-empty').hidden = waiting.length > 0;
-  $('accepted-summary').textContent = waiting.length === 0
-    ? ''
-    : `${waiting.length} waiting for welcome message`;
+  $('accepted-empty').hidden = items.length > 0;
 
-  const sorted = waiting.slice().sort((a, b) => b.acceptedAt - a.acceptedAt);
+  const waiting = items.filter((x) => !x.welcomeMessageSent && x.verified !== 'declined');
+  $('accepted-summary').textContent = items.length === 0
+    ? ''
+    : `${waiting.length} waiting for welcome · ${items.length} total`;
+
+  const sorted = items.slice().sort((a, b) => b.acceptedAt - a.acceptedAt);
 
   for (const item of sorted) {
     const sinceAccepted = ageDays(item.acceptedAt);
-    const markBtn = el('button', { className: 'primary' }, ['Mark welcome sent']);
-    markBtn.addEventListener('click', () => onMarkWelcome(item.profileUrl));
+    const isDeclined = item.verified === 'declined';
+    const isAccepted = item.verified === 'accepted';
 
     const openBtn = el('button', {}, ['Open profile']);
     openBtn.addEventListener('click', () => chrome.tabs.create({ url: item.profileUrl }));
 
-    const row = el('li', { className: `row ${ageClassFromDays(sinceAccepted)}` }, [
-      el('a', { className: 'name', href: item.profileUrl, target: '_blank' }, [item.name]),
+    const actions = [openBtn];
+    if (!isDeclined && !item.welcomeMessageSent) {
+      const markBtn = el('button', { className: 'primary' }, ['Mark welcome sent']);
+      markBtn.addEventListener('click', () => onMarkWelcome(item.profileUrl));
+      actions.push(markBtn);
+    }
+
+    const rowClasses = ['row', ageClassFromDays(sinceAccepted)];
+    if (isDeclined) rowClasses.push('declined');
+
+    list.append(el('li', { className: rowClasses.filter(Boolean).join(' ') }, [
+      el('div', { className: 'name-row' }, [
+        el('a', { className: 'name', href: item.profileUrl, target: '_blank' }, [item.name]),
+        statusBadge(item.verified),
+      ]),
       item.headline ? el('div', { className: 'headline' }, [item.headline]) : null,
       el('div', { className: 'meta' }, [
         `Accepted ${sinceAccepted}d ago`,
         `was pending ${item.daysPending}d`,
       ]),
-      el('div', { className: 'row-actions' }, [openBtn, markBtn]),
-    ]);
-    list.append(row);
+      item.welcomeMessageSent ? null : el('div', { className: 'row-actions' }, actions),
+    ]));
   }
 }
 
 async function loadData() {
-  const { sentInvitations = {}, accepted = {} } = await chrome.storage.local.get(['sentInvitations', 'accepted']);
+  const { sentInvitations = {}, accepted = {}, scanHistory = [] } =
+    await chrome.storage.local.get(['sentInvitations', 'accepted', 'scanHistory']);
+
   renderPending(Object.values(sentInvitations));
   renderAccepted(Object.values(accepted), markWelcomeSent);
+
+  const lastScan = scanHistory[scanHistory.length - 1];
+  const stats = `pending: ${Object.keys(sentInvitations).length} · accepted: ${Object.keys(accepted).length} · scans: ${scanHistory.length}`;
+  $('stats-line').textContent = lastScan
+    ? `${stats} · last scan ${new Date(lastScan.timestamp).toLocaleString()}`
+    : stats;
 }
 
 async function markWelcomeSent(profileUrl) {
@@ -103,23 +120,54 @@ function csvEscape(value) {
   return s;
 }
 
-async function exportCsv() {
-  const { sentInvitations = {}, accepted = {} } = await chrome.storage.local.get(['sentInvitations', 'accepted']);
-  const rows = [['status', 'name', 'profileUrl', 'headline', 'firstSeenAt', 'acceptedAt', 'daysPending', 'welcomeSent']];
-  for (const x of Object.values(sentInvitations)) {
-    rows.push(['pending', x.name, x.profileUrl, x.headline, new Date(x.firstSeenAt).toISOString(), '', '', '']);
-  }
-  for (const x of Object.values(accepted)) {
-    rows.push(['accepted', x.name, x.profileUrl, x.headline, new Date(x.firstSeenAt).toISOString(), new Date(x.acceptedAt).toISOString(), x.daysPending, x.welcomeMessageSent]);
-  }
-  const csv = rows.map((r) => r.map(csvEscape).join(',')).join('\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
+function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `linkedin-tracker-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download = filename;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function exportCsv() {
+  const { sentInvitations = {}, accepted = {} } = await chrome.storage.local.get(['sentInvitations', 'accepted']);
+  const rows = [['status', 'verified', 'name', 'profileUrl', 'headline', 'firstSeenAt', 'acceptedAt', 'daysPending', 'welcomeSent']];
+  for (const x of Object.values(sentInvitations)) {
+    rows.push(['pending', '', x.name, x.profileUrl, x.headline, new Date(x.firstSeenAt).toISOString(), '', '', '']);
+  }
+  for (const x of Object.values(accepted)) {
+    rows.push(['accepted', x.verified || '', x.name, x.profileUrl, x.headline,
+      new Date(x.firstSeenAt).toISOString(), new Date(x.acceptedAt).toISOString(),
+      x.daysPending, x.welcomeMessageSent]);
+  }
+  const csv = rows.map((r) => r.map(csvEscape).join(',')).join('\n');
+  downloadBlob(new Blob([csv], { type: 'text/csv' }), `linkedin-tracker-${new Date().toISOString().slice(0, 10)}.csv`);
+}
+
+async function exportJson() {
+  const data = await chrome.storage.local.get(null);
+  const payload = { exportedAt: new Date().toISOString(), version: 1, data };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  downloadBlob(blob, `linkedin-tracker-${new Date().toISOString().slice(0, 10)}.json`);
+}
+
+async function importJson(file) {
+  const status = $('import-status');
+  status.classList.remove('error');
+  try {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    const data = parsed?.data;
+    if (!data || typeof data !== 'object') throw new Error('Missing `data` object — not a valid backup');
+    await chrome.storage.local.clear();
+    await chrome.storage.local.set(data);
+    status.textContent = `Imported ${Object.keys(data).length} keys.`;
+    chrome.runtime.sendMessage({ type: 'REFRESH_BADGE' });
+    loadData();
+  } catch (e) {
+    status.classList.add('error');
+    status.textContent = `Import failed: ${e.message}`;
+  }
 }
 
 function switchTab(name) {
@@ -131,11 +179,34 @@ function switchTab(name) {
   }
 }
 
+async function syncScanButton() {
+  const btn = $('open-sent');
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const onSentPage = tab?.url?.startsWith(SENT_URL);
+  btn.disabled = !onSentPage;
+  btn.title = onSentPage ? 'Re-scan this page' : 'Open the sent invitations page first';
+}
+
 document.querySelectorAll('.tab').forEach((tab) => {
   tab.addEventListener('click', () => switchTab(tab.dataset.tab));
 });
 
-$('open-sent').addEventListener('click', () => chrome.tabs.create({ url: SENT_URL }));
+$('open-sent').addEventListener('click', async () => {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.url?.startsWith(SENT_URL)) return;
+  chrome.tabs.sendMessage(tab.id, { type: 'RESCAN' });
+  $('open-sent').textContent = 'Scanning…';
+  setTimeout(() => { $('open-sent').textContent = 'Scan'; loadData(); }, 1500);
+});
+
+$('empty-open-sent').addEventListener('click', () => chrome.tabs.create({ url: SENT_URL }));
 $('export-csv').addEventListener('click', exportCsv);
+$('export-json').addEventListener('click', exportJson);
+$('import-json').addEventListener('click', () => $('import-file').click());
+$('import-file').addEventListener('change', (e) => {
+  const file = e.target.files?.[0];
+  if (file) importJson(file);
+});
 
 loadData();
+syncScanButton();

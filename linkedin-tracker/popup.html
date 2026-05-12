@@ -10,10 +10,10 @@
     <div class="tabs">
       <button class="tab active" data-tab="pending">Pending</button>
       <button class="tab" data-tab="accepted">Accepted</button>
+      <button class="tab" data-tab="settings">Settings</button>
     </div>
     <div class="actions">
       <button id="open-sent" title="Open sent invitations page">Scan</button>
-      <button id="export-csv" title="Export everything as CSV">CSV</button>
     </div>
   </header>
 
@@ -21,13 +21,44 @@
     <section id="pending-panel" class="panel active">
       <div class="summary" id="pending-summary"></div>
       <ul class="list" id="pending-list"></ul>
-      <p class="empty" id="pending-empty" hidden>No pending invitations yet. Open the sent invitations page to scan.</p>
+      <div class="empty" id="pending-empty" hidden>
+        <p>No pending invitations yet.</p>
+        <button class="cta" id="empty-open-sent">Open sent invitations page</button>
+        <p class="hint">The extension will auto-scan when you land there.</p>
+      </div>
     </section>
 
     <section id="accepted-panel" class="panel">
       <div class="summary" id="accepted-summary"></div>
       <ul class="list" id="accepted-list"></ul>
-      <p class="empty" id="accepted-empty" hidden>No accepted connections waiting for a welcome.</p>
+      <div class="empty" id="accepted-empty" hidden>
+        <p>No accepted connections yet.</p>
+        <p class="hint">When someone disappears from /sent/, they'll show up here.</p>
+      </div>
+    </section>
+
+    <section id="settings-panel" class="panel">
+      <div class="settings-block">
+        <h3>Backup</h3>
+        <p class="hint">All data lives in your browser only. Export to keep a copy.</p>
+        <div class="settings-actions">
+          <button class="cta" id="export-json">Download JSON</button>
+          <button id="export-csv">Export CSV</button>
+        </div>
+      </div>
+      <div class="settings-block">
+        <h3>Restore</h3>
+        <p class="hint">Import a JSON backup. This replaces all current data.</p>
+        <div class="settings-actions">
+          <input type="file" id="import-file" accept="application/json" hidden>
+          <button id="import-json">Import JSON…</button>
+        </div>
+        <p class="import-status" id="import-status"></p>
+      </div>
+      <div class="settings-block">
+        <h3>Stats</h3>
+        <p class="hint" id="stats-line">—</p>
+      </div>
     </section>
   </main>
 </body>

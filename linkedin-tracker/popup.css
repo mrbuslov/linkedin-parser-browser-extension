@@ -34,15 +34,23 @@ header {
 .tab.active { background: #0a66c2; color: #fff; }
 
 .actions { display: flex; gap: 4px; }
-.actions button {
-  background: #fff;
-  border: 1px solid #ccc;
-  padding: 5px 10px;
+.actions #open-sent {
+  background: #f57c00;
+  color: #fff;
+  border: 1px solid #f57c00;
+  padding: 5px 12px;
   border-radius: 6px;
   cursor: pointer;
   font-size: 12px;
+  font-weight: 600;
 }
-.actions button:hover { background: #f0f0f0; }
+.actions #open-sent:hover:not(:disabled) { background: #e56b00; border-color: #e56b00; }
+.actions #open-sent:disabled {
+  background: #e5e5e5;
+  border-color: #e5e5e5;
+  color: #999;
+  cursor: not-allowed;
+}
 
 main {
   overflow-y: auto;
@@ -75,6 +83,13 @@ main {
 }
 .row.age-yellow { border-left-color: #e9b949; background: #fffaeb; }
 .row.age-red    { border-left-color: #d93025; background: #fdecea; }
+.row.declined   { opacity: 0.55; }
+
+.row .name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 
 .row .name {
   font-weight: 600;
@@ -82,6 +97,18 @@ main {
   text-decoration: none;
 }
 .row .name:hover { text-decoration: underline; }
+
+.status-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.status-badge.accepted { background: #e6f4ea; color: #1e7e34; }
+.status-badge.declined { background: #fdecea; color: #c2231a; }
+.status-badge.unverified { background: #f1f3f4; color: #777; }
 
 .row .headline {
   color: #555;
@@ -121,7 +148,59 @@ main {
 
 .empty {
   text-align: center;
-  color: #888;
-  padding: 24px 16px;
+  padding: 32px 16px;
+}
+.empty p { color: #555; margin: 8px 0; }
+.empty .hint { color: #999; font-size: 11px; }
+
+.cta {
+  background: #0a66c2;
+  color: #fff;
+  border: 0;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  margin: 8px 0;
+}
+.cta:hover { background: #084a92; }
+
+.settings-block {
+  padding: 14px 16px;
+  border-bottom: 1px solid #f0f0f0;
+}
+.settings-block h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #444;
+}
+.settings-block .hint {
+  margin: 0 0 10px;
+  color: #777;
   font-size: 12px;
 }
+.settings-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.settings-actions button {
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.settings-actions button.cta { border-color: #0a66c2; }
+.settings-actions button:hover { background: #f0f0f0; }
+.settings-actions button.cta:hover { background: #084a92; }
+
+.import-status {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #1e7e34;
+}
+.import-status.error { color: #c2231a; }

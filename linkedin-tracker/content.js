@@ -178,3 +178,7 @@ function waitForFirstCardThenScan() {
 }
 
 waitForFirstCardThenScan();
+
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg?.type === 'RESCAN') runScan();
+});
