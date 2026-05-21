@@ -76,11 +76,26 @@ main {
 .panel.active { display: block; }
 
 .summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 8px 12px;
   font-size: 12px;
   color: #666;
   border-bottom: 1px solid #f0f0f0;
 }
+
+.text-action {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: #0a66c2;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.text-action:hover { text-decoration: underline; }
 
 .list {
   list-style: none;

@@ -4,8 +4,10 @@
 
 async function refreshBadge() {
   const { accepted = {} } = await chrome.storage.local.get('accepted');
-  const needsWelcome = Object.values(accepted).filter((x) => !x.welcomeMessageSent).length;
-  await chrome.action.setBadgeText({ text: needsWelcome > 0 ? String(needsWelcome) : '' });
+  const unmarked = Object.values(accepted)
+    .filter((x) => !x.marked && !x.welcomeMessageSent && x.verified !== 'declined')
+    .length;
+  await chrome.action.setBadgeText({ text: unmarked > 0 ? String(unmarked) : '' });
   await chrome.action.setBadgeBackgroundColor({ color: '#0a66c2' });
 }
 

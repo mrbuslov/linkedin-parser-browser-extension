@@ -81,7 +81,10 @@ async function waitForFirstCard(maxWaitMs = 20000) {
 function scrollToLastCard() {
   const items = document.querySelectorAll('[role="listitem"]');
   if (items.length === 0) return;
-  items[items.length - 1].scrollIntoView({ block: 'end', behavior: 'smooth' });
+  // behavior:'auto' (instant) instead of 'smooth' so the scroll still works
+  // when the LinkedIn tab is in the background (Chrome pauses rAF there, and
+  // smooth scrolling depends on it — page wouldn't move).
+  items[items.length - 1].scrollIntoView({ block: 'end' });
 }
 
 async function autoScroll() {
@@ -137,8 +140,8 @@ async function diffAndPersist(snapshot) {
       ...item,
       acceptedAt: now,
       daysPending: Math.floor((now - item.firstSeenAt) / DAY_MS),
-      welcomeMessageSent: false,
-      welcomeMessageSentAt: null,
+      marked: false,
+      markedAt: null,
       verified: null,
     };
     accepted[url] = entry;

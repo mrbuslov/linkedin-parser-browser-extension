@@ -10,6 +10,7 @@
     <div class="tabs">
       <button class="tab active" data-tab="pending">Pending</button>
       <button class="tab" data-tab="accepted">Accepted</button>
+      <button class="tab" data-tab="marked">Marked</button>
       <button class="tab" data-tab="settings">Settings</button>
     </div>
     <div class="actions">
@@ -29,11 +30,23 @@
     </section>
 
     <section id="accepted-panel" class="panel">
-      <div class="summary" id="accepted-summary"></div>
+      <div class="summary" id="accepted-summary">
+        <span id="accepted-summary-text"></span>
+        <button id="mark-all" class="text-action" hidden>Mark all</button>
+      </div>
       <ul class="list" id="accepted-list"></ul>
       <div class="empty" id="accepted-empty" hidden>
         <p>No accepted connections yet.</p>
         <p class="hint">When someone disappears from /sent/, they'll show up here.</p>
+      </div>
+    </section>
+
+    <section id="marked-panel" class="panel">
+      <div class="summary" id="marked-summary"></div>
+      <ul class="list" id="marked-list"></ul>
+      <div class="empty" id="marked-empty" hidden>
+        <p>Nothing marked yet.</p>
+        <p class="hint">Use the Mark button in Accepted to hide people you've already handled.</p>
       </div>
     </section>
 

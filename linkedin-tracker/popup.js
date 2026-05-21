@@ -48,51 +48,81 @@ function renderPending(items) {
   }
 }
 
-function renderAccepted(items, onMarkWelcome) {
+function isMarked(item) {
+  // welcomeMessageSent kept for backwards-compat with older storage entries
+  return Boolean(item.marked || item.welcomeMessageSent);
+}
+
+function renderAcceptedRow(item, { primaryAction, primaryLabel }) {
+  const sinceAccepted = ageDays(item.acceptedAt);
+  const isDeclined = item.verified === 'declined';
+
+  const openBtn = el('button', {}, ['Open profile']);
+  openBtn.addEventListener('click', () => chrome.tabs.create({ url: item.profileUrl }));
+
+  const actions = [openBtn];
+  if (!isDeclined) {
+    const actionBtn = el('button', { className: 'primary' }, [primaryLabel]);
+    actionBtn.addEventListener('click', () => primaryAction(item.profileUrl));
+    actions.push(actionBtn);
+  }
+
+  const rowClasses = ['row', ageClassFromDays(sinceAccepted)];
+  if (isDeclined) rowClasses.push('declined');
+
+  return el('li', { className: rowClasses.filter(Boolean).join(' ') }, [
+    item.avatar ? el('img', { className: 'avatar', src: item.avatar, alt: '' }) : null,
+    el('div', { className: 'row-body' }, [
+      el('div', { className: 'name-row' }, [
+        el('a', { className: 'name', href: item.profileUrl, target: '_blank' }, [item.name]),
+        statusBadge(item.verified),
+      ]),
+      item.headline ? el('div', { className: 'headline' }, [item.headline]) : null,
+      el('div', { className: 'meta' }, [
+        `Accepted ${sinceAccepted}d ago`,
+        `was pending ${item.daysPending}d`,
+      ]),
+      el('div', { className: 'row-actions' }, actions),
+    ]),
+  ]);
+}
+
+function renderAccepted(items) {
   const list = $('accepted-list');
   list.innerHTML = '';
-  $('accepted-empty').hidden = items.length > 0;
 
-  const waiting = items.filter((x) => !x.welcomeMessageSent && x.verified !== 'declined');
-  $('accepted-summary').textContent = items.length === 0
+  const visible = items.filter((x) => !isMarked(x));
+  $('accepted-empty').hidden = visible.length > 0;
+  $('accepted-summary-text').textContent = visible.length === 0
     ? ''
-    : `${waiting.length} waiting for welcome · ${items.length} total`;
+    : `${visible.length} to handle`;
+  $('mark-all').hidden = visible.filter((x) => x.verified !== 'declined').length === 0;
 
-  const sorted = items.slice().sort((a, b) => b.acceptedAt - a.acceptedAt);
-
+  const sorted = visible.slice().sort((a, b) => b.acceptedAt - a.acceptedAt);
   for (const item of sorted) {
-    const sinceAccepted = ageDays(item.acceptedAt);
-    const isDeclined = item.verified === 'declined';
-    const isAccepted = item.verified === 'accepted';
+    list.append(renderAcceptedRow(item, {
+      primaryAction: (url) => setMarked(url, true),
+      primaryLabel: 'Mark',
+    }));
+  }
+}
 
-    const openBtn = el('button', {}, ['Open profile']);
-    openBtn.addEventListener('click', () => chrome.tabs.create({ url: item.profileUrl }));
+function renderMarked(items) {
+  const list = $('marked-list');
+  list.innerHTML = '';
 
-    const actions = [openBtn];
-    if (!isDeclined && !item.welcomeMessageSent) {
-      const markBtn = el('button', { className: 'primary' }, ['Mark welcome sent']);
-      markBtn.addEventListener('click', () => onMarkWelcome(item.profileUrl));
-      actions.push(markBtn);
-    }
+  const visible = items.filter(isMarked);
+  $('marked-empty').hidden = visible.length > 0;
+  $('marked-summary').textContent = visible.length === 0
+    ? ''
+    : `${visible.length} marked`;
 
-    const rowClasses = ['row', ageClassFromDays(sinceAccepted)];
-    if (isDeclined) rowClasses.push('declined');
-
-    list.append(el('li', { className: rowClasses.filter(Boolean).join(' ') }, [
-      item.avatar ? el('img', { className: 'avatar', src: item.avatar, alt: '' }) : null,
-      el('div', { className: 'row-body' }, [
-        el('div', { className: 'name-row' }, [
-          el('a', { className: 'name', href: item.profileUrl, target: '_blank' }, [item.name]),
-          statusBadge(item.verified),
-        ]),
-        item.headline ? el('div', { className: 'headline' }, [item.headline]) : null,
-        el('div', { className: 'meta' }, [
-          `Accepted ${sinceAccepted}d ago`,
-          `was pending ${item.daysPending}d`,
-        ]),
-        item.welcomeMessageSent ? null : el('div', { className: 'row-actions' }, actions),
-      ]),
-    ]));
+  const sorted = visible.slice().sort((a, b) => (b.markedAt || b.acceptedAt) - (a.markedAt || a.acceptedAt));
+  for (const item of sorted) {
+    list.append(renderAcceptedRow(item, {
+      primaryAction: (url) => setMarked(url, false),
+      primaryLabel: 'Unmark',
+    }));
   }
 }
 
@@ -101,7 +131,8 @@ async function loadData() {
     await chrome.storage.local.get(['sentInvitations', 'accepted', 'scanHistory']);
 
   renderPending(Object.values(sentInvitations));
-  renderAccepted(Object.values(accepted), markWelcomeSent);
+  renderAccepted(Object.values(accepted));
+  renderMarked(Object.values(accepted));
 
   const lastScan = scanHistory[scanHistory.length - 1];
   const stats = `pending: ${Object.keys(sentInvitations).length} · accepted: ${Object.keys(accepted).length} · scans: ${scanHistory.length}`;
@@ -110,14 +141,30 @@ async function loadData() {
     : stats;
 }
 
-async function markWelcomeSent(profileUrl) {
+async function setMarked(profileUrl, value) {
   const { accepted = {} } = await chrome.storage.local.get('accepted');
   if (!accepted[profileUrl]) return;
-  accepted[profileUrl].welcomeMessageSent = true;
-  accepted[profileUrl].welcomeMessageSentAt = Date.now();
+  accepted[profileUrl].marked = value;
+  accepted[profileUrl].markedAt = value ? Date.now() : null;
+  if (!value) accepted[profileUrl].welcomeMessageSent = false; // unmark also clears legacy flag
   await chrome.storage.local.set({ accepted });
   chrome.runtime.sendMessage({ type: 'REFRESH_BADGE' });
-  loadData();
+}
+
+async function markAllAccepted() {
+  const { accepted = {} } = await chrome.storage.local.get('accepted');
+  const now = Date.now();
+  let changed = 0;
+  for (const item of Object.values(accepted)) {
+    if (isMarked(item)) continue;
+    if (item.verified === 'declined') continue;
+    item.marked = true;
+    item.markedAt = now;
+    changed++;
+  }
+  if (changed === 0) return;
+  await chrome.storage.local.set({ accepted });
+  chrome.runtime.sendMessage({ type: 'REFRESH_BADGE' });
 }
 
 function csvEscape(value) {
@@ -237,6 +284,7 @@ $('open-sent').addEventListener('click', async () => {
 });
 
 $('empty-open-sent').addEventListener('click', () => chrome.tabs.create({ url: SENT_URL }));
+$('mark-all').addEventListener('click', markAllAccepted);
 $('export-csv').addEventListener('click', exportCsv);
 $('export-json').addEventListener('click', exportJson);
 $('import-json').addEventListener('click', () => $('import-file').click());
