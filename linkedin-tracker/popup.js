@@ -253,10 +253,12 @@ function switchTab(name) {
 
 async function updateScanButton() {
   const btn = $('open-sent');
+  const hint = $('scan-hint');
   const { scanInProgress } = await dbGet('scanInProgress');
 
   btn.classList.remove('scanning', 'mode-scan', 'mode-goto');
   btn.disabled = false;
+  hint.hidden = !scanInProgress;
 
   if (scanInProgress) {
     btn.classList.add('scanning', 'mode-scan');
