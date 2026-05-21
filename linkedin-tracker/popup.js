@@ -268,6 +268,7 @@ async function updateScanButton() {
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const onSentPage = tab?.url?.startsWith(SENT_URL);
+  document.body.classList.toggle('is-on-sent', onSentPage);
   if (onSentPage) {
     btn.classList.add('mode-scan');
     btn.textContent = 'Scan';
