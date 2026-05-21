@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "LinkedIn Connection Tracker",
-  "version": "0.1.0",
-  "description": "Read-only tracker of sent LinkedIn invitations. Detects accepted connects by diffing the /sent/ page.",
+  "name": "LinkedIn Parser: Invites & Contacts",
+  "version": "1.0.0",
+  "description": "LinkedIn parser & tracker. Sent invitations, accepted/declined connections, contacts auto-saved. 100% local.",
   "permissions": ["notifications"],
   "host_permissions": ["https://www.linkedin.com/*"],
   "action": {
