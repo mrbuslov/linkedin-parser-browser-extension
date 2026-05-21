@@ -12,8 +12,9 @@ console.log('[LI Tracker] content script INJECTED at', location.href);
 dbSet({ scanInProgress: false });
 
 const DAY_MS = 86400000;
-const STABLE_ROUNDS_TO_STOP = 3;
+const STABLE_ROUNDS_TO_STOP = 4;
 const HARD_LIMIT_ITERATIONS = 500;
+const SANITY_SHRINK_RATIO = 0.5; // if new snapshot < 50% of old pending, treat as partial scan
 
 let cancelRequested = false;
 
@@ -105,14 +106,15 @@ async function autoScroll() {
 
     scrollToLastCard();
 
-    await cancellableSleep(rand(1500, 2500));
+    await cancellableSleep(rand(2000, 3500));
+    if (Math.random() < 0.15) await cancellableSleep(rand(2000, 4000));
 
     if (added === 0) {
       stableRounds++;
       window.scrollBy(0, -300);
-      await cancellableSleep(rand(400, 700));
+      await cancellableSleep(rand(500, 900));
       scrollToLastCard();
-      await cancellableSleep(rand(600, 1000));
+      await cancellableSleep(rand(800, 1400));
     } else {
       stableRounds = 0;
     }
@@ -134,19 +136,31 @@ async function diffAndPersist(snapshot) {
   const newlyAccepted = [];
   const newlyPending = [];
 
-  for (const [url, item] of Object.entries(pending)) {
-    if (currentUrls.has(url)) continue;
-    const entry = {
-      ...item,
-      acceptedAt: now,
-      daysPending: Math.floor((now - item.firstSeenAt) / DAY_MS),
-      marked: false,
-      markedAt: null,
-      verified: null,
-    };
-    accepted[url] = entry;
-    newlyAccepted.push(entry);
-    delete pending[url];
+  // Sanity check: if we used to track many invites and this scan saw far fewer,
+  // it's almost certainly a partial scroll, not 100+ people accepting at once.
+  // Skip the "missing = accepted" move in that case — we'll still add new ones,
+  // just won't falsely mark anyone as accepted.
+  const prevCount = Object.keys(pending).length;
+  const partial = prevCount > 5 && snapshot.length < prevCount * SANITY_SHRINK_RATIO;
+  if (partial) {
+    console.warn(`[LI Tracker] partial scan detected (prev pending: ${prevCount}, this scan: ${snapshot.length}). Skipping "missing→accepted" diff to avoid false positives.`);
+  }
+
+  if (!partial) {
+    for (const [url, item] of Object.entries(pending)) {
+      if (currentUrls.has(url)) continue;
+      const entry = {
+        ...item,
+        acceptedAt: now,
+        daysPending: Math.floor((now - item.firstSeenAt) / DAY_MS),
+        marked: false,
+        markedAt: null,
+        verified: null,
+      };
+      accepted[url] = entry;
+      newlyAccepted.push(entry);
+      delete pending[url];
+    }
   }
 
   for (const item of snapshot) {

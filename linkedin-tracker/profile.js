@@ -16,8 +16,8 @@ function normalizeProfileUrl(href) {
 // that for people you're connected to (and the URL is the same in every locale).
 function detectConnectionStatus() {
   const root = document.querySelector('main') || document.body;
-  // h1 = profile name. If absent, top card hasn't rendered yet.
-  if (!root.querySelector('h1')) return null;
+  // Top card uses h1 on some layouts and h2 on others — both work as a "rendered" signal.
+  if (!root.querySelector('h1, h2')) return null;
   const messageLink = root.querySelector('a[href*="/messaging/"]');
   if (messageLink && messageLink.offsetParent !== null) return 'connected';
   return 'not_connected';
@@ -48,26 +48,26 @@ function parseCountry(location) {
 
 function extractProfileInfo() {
   const root = document.querySelector('main') || document.body;
-  const h1 = root.querySelector('h1');
-  const name = (h1?.textContent || '').trim();
+  const heading = root.querySelector('h1') || root.querySelector('h2');
+  const name = (heading?.textContent || '').trim();
   if (!name) return null;
 
-  // Headline: shortest direct-text descendant that comes after the h1 in DOM order
+  // Headline: shortest direct-text descendant that comes after the heading in DOM order
   let headline = '';
-  for (const node of root.querySelectorAll('div, span')) {
+  for (const node of root.querySelectorAll('div, span, p')) {
     if (node.children.length > 0) continue;
     const t = (node.textContent || '').trim();
     if (!t || t.length < 3 || t.length > 200) continue;
     if (t === name) continue;
-    if (h1.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING) {
+    if (heading.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING) {
       headline = t;
       break;
     }
   }
 
-  // Avatar: first non-data img within a few ancestor levels of h1
+  // Avatar: first non-data img within a few ancestor levels of the heading
   let avatar = '';
-  let parent = h1.parentElement;
+  let parent = heading.parentElement;
   for (let i = 0; i < 6 && parent && !avatar; i++) {
     const img = parent.querySelector('img[src]');
     if (img?.src && !img.src.startsWith('data:')) avatar = img.src;
