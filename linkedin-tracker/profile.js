@@ -65,13 +65,24 @@ function extractProfileInfo() {
     }
   }
 
-  // Avatar: first non-data img within a few ancestor levels of the heading
+  // Avatar: LinkedIn profile photos always have `profile-displayphoto` in the
+  // image URL — works across languages and survives class renames. If we can't
+  // find one (rare — when the user has no photo), fall back to the first image
+  // near the heading, which may be a company logo but at least isn't blank.
   let avatar = '';
-  let parent = heading.parentElement;
-  for (let i = 0; i < 6 && parent && !avatar; i++) {
-    const img = parent.querySelector('img[src]');
-    if (img?.src && !img.src.startsWith('data:')) avatar = img.src;
-    parent = parent.parentElement;
+  for (const img of root.querySelectorAll('img[src]')) {
+    if (img.src.includes('profile-displayphoto')) {
+      avatar = img.src;
+      break;
+    }
+  }
+  if (!avatar) {
+    let parent = heading.parentElement;
+    for (let i = 0; i < 6 && parent && !avatar; i++) {
+      const img = parent.querySelector('img[src]');
+      if (img?.src && !img.src.startsWith('data:')) avatar = img.src;
+      parent = parent.parentElement;
+    }
   }
 
   const location = extractLocation();
@@ -119,7 +130,8 @@ async function persistVisit() {
     if (info.location && !accepted[profileUrl].location) accepted[profileUrl].location = info.location;
     if (info.country && !accepted[profileUrl].country) accepted[profileUrl].country = info.country;
   } else if (status === 'connected') {
-    // Connected but never appeared in our /sent/ scans — still accepted.
+    // Connected but never appeared in our /sent/ scans — pre-existing contact.
+    // Auto-mark so they go straight to Marked, not the Accepted "to handle" list.
     accepted[profileUrl] = {
       profileUrl,
       name: info.name,
@@ -129,13 +141,14 @@ async function persistVisit() {
       country: info.country || '',
       acceptedAt: now,
       daysPending: 0,
-      marked: false,
-      markedAt: null,
+      marked: true,
+      markedAt: now,
       verified: 'accepted',
       verifiedAt: now,
+      autoMarked: true,
     };
     acceptedChanged = true;
-    console.log(`[LI Tracker] accepted contact added from profile visit: ${info.name}`);
+    console.log(`[LI Tracker] auto-marked pre-existing contact: ${info.name}`);
   }
 
   await dbSet({
