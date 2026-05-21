@@ -22,6 +22,22 @@ header {
 
 .tabs { display: flex; gap: 4px; }
 
+#search {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: inherit;
+  background: #fff;
+  box-sizing: border-box;
+}
+#search:focus {
+  outline: none;
+  border-color: #0a66c2;
+  box-shadow: 0 0 0 2px rgba(10, 102, 194, 0.15);
+}
+
 .tab {
   background: transparent;
   border: 0;
@@ -154,7 +170,39 @@ main {
 }
 .status-badge.accepted { background: #e6f4ea; color: #1e7e34; }
 .status-badge.declined { background: #fdecea; color: #c2231a; }
-.status-badge.unverified { background: #f1f3f4; color: #777; }
+.status-badge.unverified {
+  background: #f1f3f4;
+  color: #777;
+  position: relative;
+  cursor: help;
+}
+.status-badge.unverified::after {
+  content: 'Status unknown. Click Open profile — the extension checks if there\'s a Message button (you\'re connected ✓) or only Connect/Pending (they didn\'t accept ✗).';
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: 220px;
+  padding: 8px 10px;
+  background: #2c2c2c;
+  color: #fff;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  font-size: 11px;
+  font-weight: normal;
+  letter-spacing: 0;
+  text-transform: none;
+  line-height: 1.4;
+  white-space: normal;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition: opacity 0.15s, transform 0.15s;
+  z-index: 20;
+}
+.status-badge.unverified:hover::after {
+  opacity: 1;
+  transform: translateY(0);
+}
 
 .row .headline {
   color: #555;
@@ -162,6 +210,10 @@ main {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.row .location {
+  color: #888;
+  font-size: 11px;
 }
 
 .row .meta {

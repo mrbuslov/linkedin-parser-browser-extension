@@ -7,6 +7,15 @@ const $ = (id) => document.getElementById(id);
 const ageDays = (ts) => Math.floor((Date.now() - ts) / DAY_MS);
 const ageClassFromDays = (d) => d >= AGE_RED_DAYS ? 'age-red' : d >= AGE_YELLOW_DAYS ? 'age-yellow' : '';
 
+let searchQuery = '';
+
+function matchesSearch(item) {
+  if (!searchQuery) return true;
+  const q = searchQuery.toLowerCase();
+  return (item.name || '').toLowerCase().includes(q)
+    || (item.headline || '').toLowerCase().includes(q);
+}
+
 function el(tag, props = {}, children = []) {
   const node = document.createElement(tag);
   Object.assign(node, props);
@@ -20,18 +29,21 @@ function el(tag, props = {}, children = []) {
 function statusBadge(verified) {
   if (verified === 'accepted') return el('span', { className: 'status-badge accepted' }, ['✓ accepted']);
   if (verified === 'declined') return el('span', { className: 'status-badge declined' }, ['✗ declined']);
-  return el('span', { className: 'status-badge unverified', title: 'Open profile to verify' }, ['?']);
+  return el('span', { className: 'status-badge unverified' }, ['?']);
 }
 
 function renderPending(items) {
   const list = $('pending-list');
   list.innerHTML = '';
+  const filtered = items.filter(matchesSearch);
   $('pending-empty').hidden = items.length > 0;
   $('pending-summary').textContent = items.length === 0
     ? ''
-    : `${items.length} pending · sorted oldest first`;
+    : searchQuery
+      ? `${filtered.length} of ${items.length} match`
+      : `${items.length} pending · sorted oldest first`;
 
-  const sorted = items.slice().sort((a, b) => a.firstSeenAt - b.firstSeenAt);
+  const sorted = filtered.slice().sort((a, b) => a.firstSeenAt - b.firstSeenAt);
 
   for (const item of sorted) {
     const days = ageDays(item.firstSeenAt);
@@ -42,7 +54,10 @@ function renderPending(items) {
           el('a', { className: 'name', href: item.profileUrl, target: '_blank' }, [item.name]),
         ]),
         item.headline ? el('div', { className: 'headline' }, [item.headline]) : null,
-        el('div', { className: 'meta' }, [`Pending ${days}d`, item.sentDateRelative || '']),
+        el('div', { className: 'meta' }, [
+          el('span', {}, [`Pending ${days}d`]),
+          item.sentDateRelative ? el('span', {}, [item.sentDateRelative]) : null,
+        ]),
       ]),
     ]));
   }
@@ -78,9 +93,10 @@ function renderAcceptedRow(item, { primaryAction, primaryLabel }) {
         statusBadge(item.verified),
       ]),
       item.headline ? el('div', { className: 'headline' }, [item.headline]) : null,
+      item.location ? el('div', { className: 'location' }, [item.location]) : null,
       el('div', { className: 'meta' }, [
-        `Accepted ${sinceAccepted}d ago`,
-        `was pending ${item.daysPending}d`,
+        el('span', {}, [`Accepted ${sinceAccepted}d ago`]),
+        el('span', {}, [`was pending ${item.daysPending}d`]),
       ]),
       el('div', { className: 'row-actions' }, actions),
     ]),
@@ -91,12 +107,15 @@ function renderAccepted(items) {
   const list = $('accepted-list');
   list.innerHTML = '';
 
-  const visible = items.filter((x) => !isMarked(x));
-  $('accepted-empty').hidden = visible.length > 0;
-  $('accepted-summary-text').textContent = visible.length === 0
+  const unmarked = items.filter((x) => !isMarked(x));
+  const visible = unmarked.filter(matchesSearch);
+  $('accepted-empty').hidden = unmarked.length > 0;
+  $('accepted-summary-text').textContent = unmarked.length === 0
     ? ''
-    : `${visible.length} to handle`;
-  $('mark-all').hidden = visible.filter((x) => x.verified !== 'declined').length === 0;
+    : searchQuery
+      ? `${visible.length} of ${unmarked.length} match`
+      : `${unmarked.length} to handle`;
+  $('mark-all').hidden = unmarked.filter((x) => x.verified !== 'declined').length === 0;
 
   const sorted = visible.slice().sort((a, b) => b.acceptedAt - a.acceptedAt);
   for (const item of sorted) {
@@ -111,11 +130,14 @@ function renderMarked(items) {
   const list = $('marked-list');
   list.innerHTML = '';
 
-  const visible = items.filter(isMarked);
-  $('marked-empty').hidden = visible.length > 0;
-  $('marked-summary').textContent = visible.length === 0
+  const all = items.filter(isMarked);
+  const visible = all.filter(matchesSearch);
+  $('marked-empty').hidden = all.length > 0;
+  $('marked-summary').textContent = all.length === 0
     ? ''
-    : `${visible.length} marked`;
+    : searchQuery
+      ? `${visible.length} of ${all.length} match`
+      : `${all.length} marked`;
 
   const sorted = visible.slice().sort((a, b) => (b.markedAt || b.acceptedAt) - (a.markedAt || a.acceptedAt));
   for (const item of sorted) {
@@ -285,6 +307,10 @@ $('open-sent').addEventListener('click', async () => {
 
 $('empty-open-sent').addEventListener('click', () => chrome.tabs.create({ url: SENT_URL }));
 $('mark-all').addEventListener('click', markAllAccepted);
+$('search').addEventListener('input', (e) => {
+  searchQuery = e.target.value.trim();
+  loadData();
+});
 $('export-csv').addEventListener('click', exportCsv);
 $('export-json').addEventListener('click', exportJson);
 $('import-json').addEventListener('click', () => $('import-file').click());
