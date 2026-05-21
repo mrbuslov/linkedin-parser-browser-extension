@@ -3,7 +3,7 @@
   "name": "LinkedIn Connection Tracker",
   "version": "0.1.0",
   "description": "Read-only tracker of sent LinkedIn invitations. Detects accepted connects by diffing the /sent/ page.",
-  "permissions": ["storage", "notifications"],
+  "permissions": ["notifications"],
   "host_permissions": ["https://www.linkedin.com/*"],
   "action": {
     "default_popup": "popup.html",
@@ -25,12 +25,12 @@
   "content_scripts": [
     {
       "matches": ["https://www.linkedin.com/mynetwork/invitation-manager/sent/*"],
-      "js": ["content.js"],
+      "js": ["db-client.js", "content.js"],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://www.linkedin.com/in/*"],
-      "js": ["profile.js"],
+      "js": ["db-client.js", "profile.js"],
       "run_at": "document_idle"
     }
   ]

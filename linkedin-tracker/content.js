@@ -9,7 +9,7 @@ console.log('[LI Tracker] content script INJECTED at', location.href);
 // Reset the scanInProgress flag on every injection: if a previous scan died
 // because the page was closed mid-flight, the popup would otherwise think it's
 // still running.
-chrome.storage.local.set({ scanInProgress: false });
+dbSet({ scanInProgress: false });
 
 const DAY_MS = 86400000;
 const STABLE_ROUNDS_TO_STOP = 3;
@@ -124,7 +124,7 @@ async function autoScroll() {
 }
 
 async function diffAndPersist(snapshot) {
-  const stored = await chrome.storage.local.get(['sentInvitations', 'accepted', 'scanHistory']);
+  const stored = await dbGet(['sentInvitations', 'accepted', 'scanHistory']);
   const pending = stored.sentInvitations || {};
   const accepted = stored.accepted || {};
   const history = stored.scanHistory || [];
@@ -174,7 +174,7 @@ async function diffAndPersist(snapshot) {
     { timestamp: now, pendingCount: snapshot.length, newAccepted: newlyAccepted.length },
   ].slice(-100);
 
-  await chrome.storage.local.set({
+  await dbSet({
     sentInvitations: pending,
     accepted,
     scanHistory: newHistory,
@@ -189,7 +189,7 @@ async function runScan() {
   if (scanInFlight) return;
   scanInFlight = true;
   cancelRequested = false;
-  await chrome.storage.local.set({ scanInProgress: true });
+  await dbSet({ scanInProgress: true });
   try {
     console.log('[LI Tracker] starting scan...');
     const snapshot = await autoScroll();
@@ -218,7 +218,7 @@ async function runScan() {
   } finally {
     scanInFlight = false;
     cancelRequested = false;
-    await chrome.storage.local.set({ scanInProgress: false });
+    await dbSet({ scanInProgress: false });
   }
 }
 

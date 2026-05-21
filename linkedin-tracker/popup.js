@@ -150,7 +150,7 @@ function renderMarked(items) {
 
 async function loadData() {
   const { sentInvitations = {}, accepted = {}, scanHistory = [] } =
-    await chrome.storage.local.get(['sentInvitations', 'accepted', 'scanHistory']);
+    await dbGet(['sentInvitations', 'accepted', 'scanHistory']);
 
   renderPending(Object.values(sentInvitations));
   renderAccepted(Object.values(accepted));
@@ -164,17 +164,16 @@ async function loadData() {
 }
 
 async function setMarked(profileUrl, value) {
-  const { accepted = {} } = await chrome.storage.local.get('accepted');
+  const { accepted = {} } = await dbGet('accepted');
   if (!accepted[profileUrl]) return;
   accepted[profileUrl].marked = value;
   accepted[profileUrl].markedAt = value ? Date.now() : null;
-  if (!value) accepted[profileUrl].welcomeMessageSent = false; // unmark also clears legacy flag
-  await chrome.storage.local.set({ accepted });
-  chrome.runtime.sendMessage({ type: 'REFRESH_BADGE' });
+  if (!value) accepted[profileUrl].welcomeMessageSent = false;
+  await dbSet({ accepted });
 }
 
 async function markAllAccepted() {
-  const { accepted = {} } = await chrome.storage.local.get('accepted');
+  const { accepted = {} } = await dbGet('accepted');
   const now = Date.now();
   let changed = 0;
   for (const item of Object.values(accepted)) {
@@ -185,8 +184,7 @@ async function markAllAccepted() {
     changed++;
   }
   if (changed === 0) return;
-  await chrome.storage.local.set({ accepted });
-  chrome.runtime.sendMessage({ type: 'REFRESH_BADGE' });
+  await dbSet({ accepted });
 }
 
 function csvEscape(value) {
@@ -205,7 +203,7 @@ function downloadBlob(blob, filename) {
 }
 
 async function exportCsv() {
-  const { sentInvitations = {}, accepted = {} } = await chrome.storage.local.get(['sentInvitations', 'accepted']);
+  const { sentInvitations = {}, accepted = {} } = await dbGet(['sentInvitations', 'accepted']);
   const rows = [['status', 'verified', 'name', 'profileUrl', 'headline', 'firstSeenAt', 'acceptedAt', 'daysPending', 'welcomeSent']];
   for (const x of Object.values(sentInvitations)) {
     rows.push(['pending', '', x.name, x.profileUrl, x.headline, new Date(x.firstSeenAt).toISOString(), '', '', '']);
@@ -220,7 +218,7 @@ async function exportCsv() {
 }
 
 async function exportJson() {
-  const data = await chrome.storage.local.get(null);
+  const data = await dbGet(null);
   const payload = { exportedAt: new Date().toISOString(), version: 1, data };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   downloadBlob(blob, `linkedin-tracker-${new Date().toISOString().slice(0, 10)}.json`);
@@ -234,10 +232,9 @@ async function importJson(file) {
     const parsed = JSON.parse(text);
     const data = parsed?.data;
     if (!data || typeof data !== 'object') throw new Error('Missing `data` object — not a valid backup');
-    await chrome.storage.local.clear();
-    await chrome.storage.local.set(data);
+    await dbClear();
+    await dbSet(data);
     status.textContent = `Imported ${Object.keys(data).length} keys.`;
-    chrome.runtime.sendMessage({ type: 'REFRESH_BADGE' });
     loadData();
   } catch (e) {
     status.classList.add('error');
@@ -256,7 +253,7 @@ function switchTab(name) {
 
 async function updateScanButton() {
   const btn = $('open-sent');
-  const { scanInProgress } = await chrome.storage.local.get('scanInProgress');
+  const { scanInProgress } = await dbGet('scanInProgress');
 
   btn.classList.remove('scanning', 'mode-scan', 'mode-goto');
   btn.disabled = false;
@@ -284,9 +281,12 @@ async function updateScanButton() {
   }
 }
 
-chrome.storage.onChanged.addListener((changes) => {
-  if (changes.scanInProgress) updateScanButton();
-  if (changes.sentInvitations || changes.accepted) loadData();
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg?.type !== 'DB_CHANGED') return;
+  const keys = msg.keys || [];
+  const all = keys.includes('*');
+  if (all || keys.includes('scanInProgress')) updateScanButton();
+  if (all || keys.includes('sentInvitations') || keys.includes('accepted')) loadData();
 });
 
 document.querySelectorAll('.tab').forEach((tab) => {

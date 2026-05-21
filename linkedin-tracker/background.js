@@ -1,9 +1,96 @@
-// Service worker. Receives SCAN_DONE messages from content.js, updates the
-// toolbar badge (= pending count of accepted that still need a welcome), and
-// pops a desktop notification when new connects come in.
+// Service worker. Owns the IndexedDB store and forwards all reads/writes
+// from other extension contexts. On every write, broadcasts a DB_CHANGED
+// message so the popup can live-rerender. Also refreshes the toolbar badge
+// when `accepted` changes and pops a notification when SCAN_DONE arrives.
+
+const DB_NAME = 'linkedin-tracker';
+const DB_VERSION = 1;
+const STORE = 'kv';
+
+let _dbPromise = null;
+
+function openDB() {
+  if (_dbPromise) return _dbPromise;
+  _dbPromise = new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  return _dbPromise;
+}
+
+async function dbGet(keys) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readonly');
+    const store = tx.objectStore(STORE);
+
+    if (keys == null) {
+      const result = {};
+      const req = store.openCursor();
+      req.onsuccess = (e) => {
+        const cursor = e.target.result;
+        if (cursor) {
+          result[cursor.key] = cursor.value;
+          cursor.continue();
+        } else {
+          resolve(result);
+        }
+      };
+      req.onerror = () => reject(req.error);
+      return;
+    }
+
+    const keyList = Array.isArray(keys) ? keys : [keys];
+    const result = {};
+    let remaining = keyList.length;
+    if (remaining === 0) { resolve(result); return; }
+    for (const key of keyList) {
+      const r = store.get(key);
+      r.onsuccess = () => {
+        if (r.result !== undefined) result[key] = r.result;
+        if (--remaining === 0) resolve(result);
+      };
+      r.onerror = () => reject(r.error);
+    }
+  });
+}
+
+async function dbSet(data) {
+  const db = await openDB();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    const store = tx.objectStore(STORE);
+    for (const [k, v] of Object.entries(data)) store.put(v, k);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  notifyChange(Object.keys(data));
+}
+
+async function dbClear() {
+  const db = await openDB();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  notifyChange(['*']);
+}
+
+function notifyChange(keys) {
+  // Goes to popup and other extension pages. Content scripts don't subscribe.
+  chrome.runtime.sendMessage({ type: 'DB_CHANGED', keys }).catch(() => {});
+  if (keys.includes('accepted') || keys.includes('*')) refreshBadge();
+}
 
 async function refreshBadge() {
-  const { accepted = {} } = await chrome.storage.local.get('accepted');
+  const { accepted = {} } = await dbGet('accepted');
   const unmarked = Object.values(accepted)
     .filter((x) => !x.marked && !x.welcomeMessageSent && x.verified !== 'declined')
     .length;
@@ -29,13 +116,27 @@ function notifyNewlyAccepted(newlyAccepted) {
   });
 }
 
-chrome.runtime.onMessage.addListener((msg) => {
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type === 'DB_GET') {
+    dbGet(msg.keys).then(sendResponse, (e) => { console.error('[LI Tracker] DB_GET', e); sendResponse({}); });
+    return true;
+  }
+  if (msg?.type === 'DB_SET') {
+    dbSet(msg.data).then(() => sendResponse(true), (e) => { console.error('[LI Tracker] DB_SET', e); sendResponse(false); });
+    return true;
+  }
+  if (msg?.type === 'DB_CLEAR') {
+    dbClear().then(() => sendResponse(true), (e) => { console.error('[LI Tracker] DB_CLEAR', e); sendResponse(false); });
+    return true;
+  }
   if (msg?.type === 'SCAN_DONE') {
     notifyNewlyAccepted(msg.newlyAccepted);
     refreshBadge();
+    return;
   }
   if (msg?.type === 'REFRESH_BADGE') {
     refreshBadge();
+    return;
   }
 });
 

@@ -87,7 +87,7 @@ async function persistVisit() {
   if (!info || !status) return;
 
   const now = Date.now();
-  const stored = await chrome.storage.local.get(['contacts', 'accepted']);
+  const stored = await dbGet(['contacts', 'accepted']);
   const contacts = stored.contacts || {};
   const accepted = stored.accepted || {};
 
@@ -138,12 +138,10 @@ async function persistVisit() {
     console.log(`[LI Tracker] accepted contact added from profile visit: ${info.name}`);
   }
 
-  await chrome.storage.local.set({
+  await dbSet({
     contacts,
     ...(acceptedChanged ? { accepted } : {}),
   });
-
-  if (acceptedChanged) chrome.runtime.sendMessage({ type: 'REFRESH_BADGE' });
   console.log(`[LI Tracker] visited ${info.name} (${status})`);
 }
 
