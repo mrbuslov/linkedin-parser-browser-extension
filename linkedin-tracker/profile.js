@@ -148,45 +148,36 @@ async function persistVisit() {
     firstSeenAt: prev.firstSeenAt || now,
   };
 
+  // Invariant: a profile lives in ONE bucket at a time — sentInvitations OR
+  // accepted OR neither (only in contacts). The current LinkedIn status decides
+  // which one; we clean up any stale entries in the other buckets.
   let acceptedChanged = false;
-  const entry = accepted[profileUrl];
+  let sentChanged = false;
 
-  if (entry) {
-    // Self-heal: if this entry was auto-added by profile.js (autoMarked flag)
-    // and we now confirm they're NOT a connection, delete it — it was a wrong add
-    // from the old buggy detector that treated InMail-able profiles as connected.
-    if (entry.autoMarked && status !== 'connected') {
+  const refreshMetadata = (target) => {
+    let changed = false;
+    if (info.avatar && !target.avatar)   { target.avatar = info.avatar; changed = true; }
+    if (info.headline && !target.headline) { target.headline = info.headline; changed = true; }
+    if (info.location && !target.location) { target.location = info.location; changed = true; }
+    if (info.country && !target.country)   { target.country = info.country; changed = true; }
+    return changed;
+  };
+
+  if (status === 'pending') {
+    // Should be in sentInvitations only. If a stale accepted entry exists (e.g.,
+    // previously declined or removed, now re-invited), drop it so we don't show
+    // them in both Pending and Accepted at once.
+    if (accepted[profileUrl]) {
       delete accepted[profileUrl];
       acceptedChanged = true;
-      console.log(`[LI Tracker] removed wrongly-added contact: ${info.name} (status: ${status})`);
-    } else {
-      // Update verified flag based on real-time status
-      const newVerified = status === 'connected' ? 'accepted'
-        : status === 'pending' ? null  // pending = our sent invite, not a verdict
-        : 'declined';
-      if (newVerified !== null && entry.verified !== newVerified) {
-        entry.verified = newVerified;
-        entry.verifiedAt = now;
-        acceptedChanged = true;
-      }
-      // Refresh metadata
-      if (info.avatar && !entry.avatar) entry.avatar = info.avatar;
-      if (info.headline && !entry.headline) entry.headline = info.headline;
-      if (info.location && !entry.location) entry.location = info.location;
-      if (info.country && !entry.country) entry.country = info.country;
+      console.log(`[LI Tracker] cleared stale accepted entry on re-invite: ${info.name}`);
     }
-  }
-
-  let sentChanged = false;
-  if (status === 'pending') {
-    // You sent them an invite from the profile page — surface them in Pending immediately
     const existing = sentInvitations[profileUrl];
     if (existing) {
       existing.lastSeenAt = now;
       existing.name = info.name || existing.name;
       existing.headline = info.headline || existing.headline;
       existing.avatar = info.avatar || existing.avatar;
-      sentChanged = true;
     } else {
       sentInvitations[profileUrl] = {
         profileUrl,
@@ -200,14 +191,13 @@ async function persistVisit() {
         tags: [],
         addedFrom: 'profile',
       };
-      sentChanged = true;
       console.log(`[LI Tracker] new pending invite captured from profile: ${info.name}`);
     }
-  } else if (sentInvitations[profileUrl]) {
-    // Was pending, now isn't — they either accepted (status=connected) or we withdrew (not_connected)
-    const sentEntry = sentInvitations[profileUrl];
-    if (status === 'connected') {
-      // Promote to accepted, preserving the original firstSeenAt for daysPending
+    sentChanged = true;
+  } else if (status === 'connected') {
+    // Should be in accepted only. Promote from sentInvitations if present.
+    if (sentInvitations[profileUrl]) {
+      const sentEntry = sentInvitations[profileUrl];
       const existingAccepted = accepted[profileUrl];
       accepted[profileUrl] = {
         ...sentEntry,
@@ -221,37 +211,64 @@ async function persistVisit() {
         verified: 'accepted',
         verifiedAt: now,
       };
+      delete sentInvitations[profileUrl];
+      sentChanged = true;
       acceptedChanged = true;
       console.log(`[LI Tracker] promoted pending → accepted: ${info.name}`);
+    } else if (accepted[profileUrl]) {
+      // Already in accepted — update verified + refresh metadata
+      const entry = accepted[profileUrl];
+      if (entry.verified !== 'accepted') {
+        entry.verified = 'accepted';
+        entry.verifiedAt = now;
+        acceptedChanged = true;
+      }
+      if (refreshMetadata(entry)) acceptedChanged = true;
     } else {
-      console.log(`[LI Tracker] removed from pending (withdrew, status: ${status}): ${info.name}`);
+      // Brand-new connected person never in our tracking → pre-existing contact.
+      accepted[profileUrl] = {
+        profileUrl,
+        name: info.name,
+        headline: info.headline || '',
+        avatar: info.avatar || '',
+        location: info.location || '',
+        country: info.country || '',
+        acceptedAt: now,
+        daysPending: 0,
+        marked: true,
+        markedAt: now,
+        verified: 'accepted',
+        verifiedAt: now,
+        autoMarked: true,
+      };
+      acceptedChanged = true;
+      console.log(`[LI Tracker] auto-marked pre-existing contact: ${info.name}`);
     }
-    delete sentInvitations[profileUrl];
-    sentChanged = true;
-  }
-
-
-  // Re-check accepted because the pending→accepted promotion above may have just added it
-  if (!accepted[profileUrl] && status === 'connected') {
-    // Connected but never appeared in our /sent/ scans — pre-existing contact.
-    // Auto-mark so they go straight to Marked, not the Accepted "to handle" list.
-    accepted[profileUrl] = {
-      profileUrl,
-      name: info.name,
-      headline: info.headline || '',
-      avatar: info.avatar || '',
-      location: info.location || '',
-      country: info.country || '',
-      acceptedAt: now,
-      daysPending: 0,
-      marked: true,
-      markedAt: now,
-      verified: 'accepted',
-      verifiedAt: now,
-      autoMarked: true,
-    };
-    acceptedChanged = true;
-    console.log(`[LI Tracker] auto-marked pre-existing contact: ${info.name}`);
+  } else {
+    // status === 'not_connected' — should be in neither sentInvitations nor accepted.
+    if (sentInvitations[profileUrl]) {
+      delete sentInvitations[profileUrl];
+      sentChanged = true;
+      console.log(`[LI Tracker] removed from pending (withdrew): ${info.name}`);
+    }
+    const entry = accepted[profileUrl];
+    if (entry) {
+      // If they were ever confirmed accepted, this is a removed connection (by us
+      // or by them) — drop the entry rather than mark "declined" (which would imply
+      // they rejected our invite, which isn't the case here).
+      // Also drop autoMarked entries that were never real (legacy wrong-adds).
+      if (entry.verified === 'accepted' || entry.autoMarked) {
+        delete accepted[profileUrl];
+        acceptedChanged = true;
+        console.log(`[LI Tracker] removed accepted entry (no longer connected): ${info.name}`);
+      } else if (entry.verified !== 'declined') {
+        // Was tracked via /sent/ flow, never confirmed → person declined our invite
+        entry.verified = 'declined';
+        entry.verifiedAt = now;
+        acceptedChanged = true;
+        if (refreshMetadata(entry)) {} // already true
+      }
+    }
   }
 
   await dbSet({
