@@ -23,19 +23,20 @@ function detectConnectionStatus() {
   const root = document.querySelector('main') || document.body;
   if (!root.querySelector('h1, h2')) return null;
 
-  const buttons = root.querySelectorAll('button');
+  // LinkedIn uses a mix of <button> and <a> for top-card actions. Pending in
+  // particular is an <a aria-label="Pending, click to withdraw..."> link.
+  const actions = root.querySelectorAll('button, a');
   let hasFollow = false, hasConnect = false, hasPending = false;
-  for (const btn of buttons) {
+  for (const btn of actions) {
     if (btn.offsetParent === null) continue;
     const text = (btn.textContent || '').trim().toLowerCase();
     const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
-    // English + Russian + Ukrainian + a few common languages
     if (/^(follow|following|подписаться|вы подписаны|підписатися|ви підписані|folgen|seguir|suivre)$/.test(text)
         || /^(follow|подписаться|підписатися)\s/.test(aria)) hasFollow = true;
     if (/^(connect|установить контакт|встановити контакт|vernetzen|conectar)$/.test(text)
         || /\binvite\b.*\bconnect\b/.test(aria)) hasConnect = true;
     if (/^(pending|в ожидании|очікує|ожидает|очікування|ausstehend|pendiente)$/.test(text)
-        || /\bpending\b/.test(aria)) hasPending = true;
+        || /\bpending\b.*\b(withdraw|invitation|отозвать|скасувати)/.test(aria)) hasPending = true;
   }
 
   // URL-based Connect detection works regardless of UI language
