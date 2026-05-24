@@ -127,9 +127,10 @@ async function persistVisit() {
   if (!info || !status) return;
 
   const now = Date.now();
-  const stored = await dbGet(['contacts', 'accepted']);
+  const stored = await dbGet(['contacts', 'accepted', 'sentInvitations']);
   const contacts = stored.contacts || {};
   const accepted = stored.accepted || {};
+  const sentInvitations = stored.sentInvitations || {};
 
   const prev = contacts[profileUrl] || {};
   contacts[profileUrl] = {
@@ -171,7 +172,38 @@ async function persistVisit() {
       if (info.location && !entry.location) entry.location = info.location;
       if (info.country && !entry.country) entry.country = info.country;
     }
-  } else if (status === 'connected') {
+  }
+
+  let sentChanged = false;
+  if (status === 'pending') {
+    // You sent them an invite from the profile page — surface them in Pending immediately
+    const existing = sentInvitations[profileUrl];
+    if (existing) {
+      existing.lastSeenAt = now;
+      existing.name = info.name || existing.name;
+      existing.headline = info.headline || existing.headline;
+      existing.avatar = info.avatar || existing.avatar;
+      sentChanged = true;
+    } else {
+      sentInvitations[profileUrl] = {
+        profileUrl,
+        name: info.name,
+        headline: info.headline || '',
+        avatar: info.avatar || '',
+        sentDateRelative: '',
+        firstSeenAt: now,
+        lastSeenAt: now,
+        notes: '',
+        tags: [],
+        addedFrom: 'profile',
+      };
+      sentChanged = true;
+      console.log(`[LI Tracker] new pending invite captured from profile: ${info.name}`);
+    }
+  }
+
+
+  if (!entry && status === 'connected') {
     // Connected but never appeared in our /sent/ scans — pre-existing contact.
     // Auto-mark so they go straight to Marked, not the Accepted "to handle" list.
     accepted[profileUrl] = {
@@ -196,22 +228,30 @@ async function persistVisit() {
   await dbSet({
     contacts,
     ...(acceptedChanged ? { accepted } : {}),
+    ...(sentChanged ? { sentInvitations } : {}),
   });
   console.log(`[LI Tracker] visited ${info.name} (${status})`);
 }
 
-function tryRun() {
-  if (extractProfileInfo() && detectConnectionStatus()) {
-    persistVisit();
-    return true;
-  }
-  return false;
+// Always-on observer: catches both the initial render delay AND in-page status
+// changes (e.g. you click Connect — button becomes Pending, mutation fires, we
+// re-persist). Debounced so we don't run on every micro-mutation.
+let lastDetected = { url: null, status: null };
+
+async function tick() {
+  const info = extractProfileInfo();
+  const status = detectConnectionStatus();
+  if (!info || !status) return;
+  const url = normalizeProfileUrl(location.href);
+  if (lastDetected.url === url && lastDetected.status === status) return;
+  lastDetected = { url, status };
+  await persistVisit();
 }
 
-if (!tryRun()) {
-  const obs = new MutationObserver(() => {
-    if (tryRun()) obs.disconnect();
-  });
-  obs.observe(document.body, { childList: true, subtree: true });
-  setTimeout(() => obs.disconnect(), 20000);
-}
+let scheduled = null;
+const observer = new MutationObserver(() => {
+  clearTimeout(scheduled);
+  scheduled = setTimeout(tick, 500);
+});
+observer.observe(document.body, { childList: true, subtree: true });
+tick();
