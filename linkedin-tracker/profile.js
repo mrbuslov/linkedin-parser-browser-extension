@@ -6,6 +6,8 @@
 
 console.log('[LI Tracker] profile script loaded:', location.pathname);
 
+const DAY_MS = 86400000;
+
 function normalizeProfileUrl(href) {
   const u = new URL(href, location.origin);
   return `${u.origin}${u.pathname.replace(/\/+$/, '')}/`;
@@ -201,10 +203,36 @@ async function persistVisit() {
       sentChanged = true;
       console.log(`[LI Tracker] new pending invite captured from profile: ${info.name}`);
     }
+  } else if (sentInvitations[profileUrl]) {
+    // Was pending, now isn't — they either accepted (status=connected) or we withdrew (not_connected)
+    const sentEntry = sentInvitations[profileUrl];
+    if (status === 'connected') {
+      // Promote to accepted, preserving the original firstSeenAt for daysPending
+      const existingAccepted = accepted[profileUrl];
+      accepted[profileUrl] = {
+        ...sentEntry,
+        ...(existingAccepted || {}),
+        profileUrl,
+        name: info.name || sentEntry.name,
+        acceptedAt: existingAccepted?.acceptedAt || now,
+        daysPending: Math.floor(((existingAccepted?.acceptedAt || now) - sentEntry.firstSeenAt) / DAY_MS),
+        marked: existingAccepted?.marked || false,
+        markedAt: existingAccepted?.markedAt || null,
+        verified: 'accepted',
+        verifiedAt: now,
+      };
+      acceptedChanged = true;
+      console.log(`[LI Tracker] promoted pending → accepted: ${info.name}`);
+    } else {
+      console.log(`[LI Tracker] removed from pending (withdrew, status: ${status}): ${info.name}`);
+    }
+    delete sentInvitations[profileUrl];
+    sentChanged = true;
   }
 
 
-  if (!entry && status === 'connected') {
+  // Re-check accepted because the pending→accepted promotion above may have just added it
+  if (!accepted[profileUrl] && status === 'connected') {
     // Connected but never appeared in our /sent/ scans — pre-existing contact.
     // Auto-mark so they go straight to Marked, not the Accepted "to handle" list.
     accepted[profileUrl] = {
