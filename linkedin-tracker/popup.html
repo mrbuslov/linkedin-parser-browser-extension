@@ -23,6 +23,7 @@
   <main>
     <section id="pending-panel" class="panel active">
       <div class="summary" id="pending-summary"></div>
+      <div class="scan-info" id="pending-scan-info"></div>
       <ul class="list" id="pending-list"></ul>
       <div class="empty" id="pending-empty" hidden>
         <p>No pending invitations yet.</p>
@@ -39,8 +40,12 @@
     <section id="accepted-panel" class="panel">
       <div class="summary" id="accepted-summary">
         <span id="accepted-summary-text"></span>
-        <button id="mark-all" class="text-action" hidden>Mark all</button>
+        <span class="summary-actions">
+          <button id="scan-connections" class="text-action" title="Open or scan the connections page">Scan connections</button>
+          <button id="mark-all" class="text-action" hidden>Mark all</button>
+        </span>
       </div>
+      <div class="scan-info" id="accepted-scan-info"></div>
       <ul class="list" id="accepted-list"></ul>
       <div class="empty" id="accepted-empty" hidden>
         <p>No accepted connections yet.</p>
@@ -78,6 +83,13 @@
       <div class="settings-block">
         <h3>Stats</h3>
         <p class="hint" id="stats-line">—</p>
+      </div>
+      <div class="settings-block">
+        <h3>Support</h3>
+        <p class="hint">Found a bug, have a feature idea, or selectors broke? Open an issue on GitHub.</p>
+        <div class="settings-actions">
+          <button id="open-support">Contact support / Report issue</button>
+        </div>
       </div>
     </section>
   </main>

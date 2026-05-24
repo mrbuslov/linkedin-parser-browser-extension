@@ -199,6 +199,12 @@ async function diffAndPersist(snapshot) {
 
 let scanInFlight = false;
 
+async function updateScanState(patch) {
+  const { scanState = {} } = await dbGet('scanState');
+  scanState.sent = { ...(scanState.sent || {}), ...patch };
+  await dbSet({ scanState });
+}
+
 async function runScan() {
   if (scanInFlight) return;
   scanInFlight = true;
@@ -211,11 +217,21 @@ async function runScan() {
 
     if (snapshot.length === 0) {
       console.warn('[LI Tracker] nothing parsed — page may be empty or selectors are stale');
+      await updateScanState({
+        lastScannedAt: Date.now(),
+        lastCount: 0,
+        lastError: 'Nothing parsed — page may be empty, or LinkedIn changed its DOM. Refresh and try again.',
+      });
       return;
     }
 
     const result = await diffAndPersist(snapshot);
     console.log('[LI Tracker] scan complete:', result);
+    await updateScanState({
+      lastScannedAt: Date.now(),
+      lastCount: result.pendingCount,
+      lastError: null,
+    });
 
     chrome.runtime.sendMessage({
       type: 'SCAN_DONE',
@@ -226,8 +242,13 @@ async function runScan() {
   } catch (err) {
     if (err instanceof ScanCancelled) {
       console.log('[LI Tracker] scan cancelled by user');
+      await updateScanState({ lastScannedAt: Date.now(), lastError: 'Cancelled by user' });
     } else {
-      throw err;
+      console.error('[LI Tracker] scan failed:', err);
+      await updateScanState({
+        lastScannedAt: Date.now(),
+        lastError: `${err.name || 'Error'}: ${err.message || String(err)}`,
+      });
     }
   } finally {
     scanInFlight = false;

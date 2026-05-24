@@ -8,6 +8,37 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
+### Added
+- Parser for `linkedin.com/mynetwork/invite-connect/connections/` — the canonical
+  list of accepted connections. Each entry includes LinkedIn's own "Connected on"
+  date which we use as the source of truth for `acceptedAt`. Multi-locale date
+  parser (English native, Russian/Ukrainian/German via regex fallback).
+- "Scan connections" button in the Accepted tab — opens the connections page if
+  not already there, triggers a scan if already there.
+- Per-tab last-scanned indicator under each summary row showing relative time
+  and either count of items captured or the failure reason in red.
+- "Contact support / Report issue" button in Settings → opens GitHub Issues.
+- `scanState` storage key tracking per-source scan metadata (`sent`, `connections`).
+
+### Fixed
+- profile.js: "phantom-accepted" — visiting a 2nd/3rd-degree profile no longer
+  adds them to Accepted just because LinkedIn renders a `/messaging/` link
+  (used for InMail). Now requires absence of Follow/Connect/Pending buttons +
+  presence of Message link.
+- profile.js: Pending button (an `<a>`, not `<button>`) now detected.
+- profile.js: enforces "one bucket at a time" invariant — sending Connect after
+  withdrawing no longer leaves a stale accepted entry visible alongside Pending.
+- profile.js: removing a real connection drops the entry from Accepted instead
+  of mis-labelling it as Declined.
+- profile.js: clicking Connect from a profile page now adds the person to
+  Pending in real time via an always-on MutationObserver.
+
+### Changed
+- Profile-name links in the popup now navigate the current active tab via
+  `chrome.tabs.update` instead of opening a new tab. Cmd/Ctrl-click preserves
+  new-tab behavior.
+- "Open profile" button removed from Accepted/Marked rows (name is already a link).
+
 ## [1.0.0] — 2026-05-21
 
 First public release on the Chrome Web Store.

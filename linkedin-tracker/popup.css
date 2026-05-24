@@ -125,6 +125,28 @@ main {
 }
 .text-action:hover { text-decoration: underline; }
 
+.summary-actions {
+  display: inline-flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.scan-info {
+  padding: 4px 12px 6px;
+  font-size: 11px;
+  border-bottom: 1px solid #f0f0f0;
+  background: #fcfcfc;
+}
+.scan-info-text { display: block; }
+.scan-info-text.muted { color: #888; }
+.scan-info-text.error {
+  color: #c2231a;
+  background: #fdecea;
+  padding: 4px 6px;
+  border-radius: 4px;
+  margin: 2px 0;
+}
+
 .list {
   list-style: none;
   padding: 0;

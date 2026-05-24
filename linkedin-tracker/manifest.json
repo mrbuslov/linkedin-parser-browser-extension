@@ -32,6 +32,11 @@
       "matches": ["https://www.linkedin.com/in/*"],
       "js": ["db-client.js", "profile.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.linkedin.com/mynetwork/invite-connect/connections/*"],
+      "js": ["db-client.js", "connections.js"],
+      "run_at": "document_idle"
     }
   ]
 }

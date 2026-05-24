@@ -1,7 +1,41 @@
 const SENT_URL = 'https://www.linkedin.com/mynetwork/invitation-manager/sent/';
+const CONNECTIONS_URL = 'https://www.linkedin.com/mynetwork/invite-connect/connections/';
+const SUPPORT_URL = 'https://github.com/mrbuslov/linkedin-parser-browser-extension/issues/new';
 const DAY_MS = 86400000;
 const AGE_YELLOW_DAYS = 7;
 const AGE_RED_DAYS = 14;
+
+function relativeTime(ts) {
+  if (!ts) return null;
+  const diffMs = Date.now() - ts;
+  const s = Math.floor(diffMs / 1000);
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
+}
+
+function renderScanInfo(container, state) {
+  container.innerHTML = '';
+  if (!state || !state.lastScannedAt) {
+    container.append(el('span', { className: 'scan-info-text muted' }, ['Never scanned']));
+    return;
+  }
+  const when = relativeTime(state.lastScannedAt);
+  if (state.lastError) {
+    container.append(
+      el('span', { className: 'scan-info-text error' }, [`Last scan ${when} failed: ${state.lastError}`])
+    );
+  } else {
+    const count = state.lastCount != null ? ` · ${state.lastCount} captured` : '';
+    container.append(
+      el('span', { className: 'scan-info-text muted' }, [`Last scan ${when}${count}`])
+    );
+  }
+}
 
 const $ = (id) => document.getElementById(id);
 const ageDays = (ts) => Math.floor((Date.now() - ts) / DAY_MS);
@@ -159,12 +193,14 @@ function renderMarked(items) {
 }
 
 async function loadData() {
-  const { sentInvitations = {}, accepted = {}, scanHistory = [] } =
-    await dbGet(['sentInvitations', 'accepted', 'scanHistory']);
+  const { sentInvitations = {}, accepted = {}, scanHistory = [], scanState = {} } =
+    await dbGet(['sentInvitations', 'accepted', 'scanHistory', 'scanState']);
 
   renderPending(Object.values(sentInvitations));
   renderAccepted(Object.values(accepted));
   renderMarked(Object.values(accepted));
+  renderScanInfo($('pending-scan-info'), scanState.sent);
+  renderScanInfo($('accepted-scan-info'), scanState.connections);
 
   const lastScan = scanHistory[scanHistory.length - 1];
   const stats = `pending: ${Object.keys(sentInvitations).length} · accepted: ${Object.keys(accepted).length} · scans: ${scanHistory.length}`;
@@ -299,7 +335,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   const keys = msg.keys || [];
   const all = keys.includes('*');
   if (all || keys.includes('scanInProgress')) updateScanButton();
-  if (all || keys.includes('sentInvitations') || keys.includes('accepted')) loadData();
+  if (all || keys.includes('sentInvitations') || keys.includes('accepted') || keys.includes('scanState')) loadData();
 });
 
 document.querySelectorAll('.tab').forEach((tab) => {
@@ -320,6 +356,17 @@ $('open-sent').addEventListener('click', async () => {
 
 $('empty-open-sent').addEventListener('click', () => chrome.tabs.create({ url: SENT_URL }));
 $('mark-all').addEventListener('click', markAllAccepted);
+
+$('scan-connections').addEventListener('click', async () => {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tab?.url?.startsWith(CONNECTIONS_URL)) {
+    chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_SCAN' });
+  } else {
+    chrome.tabs.create({ url: CONNECTIONS_URL });
+  }
+});
+
+$('open-support').addEventListener('click', () => chrome.tabs.create({ url: SUPPORT_URL }));
 $('search').addEventListener('input', (e) => {
   searchQuery = e.target.value.trim();
   loadData();
