@@ -13,32 +13,39 @@ function normalizeProfileUrl(href) {
   return `${u.origin}${u.pathname.replace(/\/+$/, '')}/`;
 }
 
-// Cross-language: rather than matching button text in N languages, look for a
-// visible link to `/messaging/` in the profile top card — LinkedIn only renders
-// that for people you're connected to (and the URL is the same in every locale).
-// LinkedIn renders the Message link for EVERY profile (1st/2nd/3rd) — for non-1st
-// it's the InMail entry point. So messaging-link presence alone is not a "connected"
-// signal. Instead we check for the primary-action buttons that are ONLY shown for
-// non-connections (Follow, Connect, Pending) and only fall back to Message as proof
-// of connection when none of those are present.
+// LinkedIn renders the Message link on EVERY profile (1st/2nd/3rd) — for non-1st
+// it's the InMail entry point. So Message alone isn't a "connected" signal. We
+// check the primary-action buttons that are ONLY shown for non-connections (Follow,
+// Connect, Pending) first and only fall back to Message when none of those are present.
+//
+// Text matching is `startsWith` (\b) not strict equality (`$`) — LinkedIn often
+// embeds hidden screen-reader text inside the button ("Pending\nClick to withdraw…"),
+// and localized labels can be longer than the English single word ("Очікує на розгляд").
+const FOLLOW_TEXT_RE   = /^(follow|following|подписаться|вы\s+подписаны|підписатися|ви\s+підписані|folgen|seguir|suivre)\b/i;
+const CONNECT_TEXT_RE  = /^(connect|установить\s+контакт|встановити\s+контакт|vernetzen|conectar|se\s+connecter)\b/i;
+const PENDING_TEXT_RE  = /^(pending|в\s*ожидании|очікує|очікування|ожидает|ausstehend|pendiente|en\s+attente)\b/i;
+const PENDING_ARIA_RE  = /\b(pending|очікує|очікування|ожидает|в\s*ожидании|ausstehend|pendiente)\b/i;
+const WITHDRAW_ARIA_RE = /(withdraw|invit|запрош|приглаш|отозвать|скасувати|zurückziehen|retirar)/i;
+
 function detectConnectionStatus() {
   const root = document.querySelector('main') || document.body;
   if (!root.querySelector('h1, h2')) return null;
 
-  // LinkedIn uses a mix of <button> and <a> for top-card actions. Pending in
-  // particular is an <a aria-label="Pending, click to withdraw..."> link.
-  const actions = root.querySelectorAll('button, a');
+  // <button>, <a>, plus role="button" — LinkedIn uses all three for top-card actions.
+  // Pending is usually <a aria-label="Pending, click to withdraw invitation…">.
+  const actions = root.querySelectorAll('button, a, [role="button"]');
   let hasFollow = false, hasConnect = false, hasPending = false;
   for (const btn of actions) {
     if (btn.offsetParent === null) continue;
-    const text = (btn.textContent || '').trim().toLowerCase();
+    const text = (btn.textContent || '').trim();
+    if (text.length > 80) continue;  // skip long blocks that happen to contain a keyword
     const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
-    if (/^(follow|following|подписаться|вы подписаны|підписатися|ви підписані|folgen|seguir|suivre)$/.test(text)
-        || /^(follow|подписаться|підписатися)\s/.test(aria)) hasFollow = true;
-    if (/^(connect|установить контакт|встановити контакт|vernetzen|conectar)$/.test(text)
-        || /\binvite\b.*\bconnect\b/.test(aria)) hasConnect = true;
-    if (/^(pending|в ожидании|очікує|ожидает|очікування|ausstehend|pendiente)$/.test(text)
-        || /\bpending\b.*\b(withdraw|invitation|отозвать|скасувати)/.test(aria)) hasPending = true;
+
+    if (FOLLOW_TEXT_RE.test(text) || /^(follow|подписаться|підписатися)\s/.test(aria)) hasFollow = true;
+    if (CONNECT_TEXT_RE.test(text) || /\binvite\b.*\bconnect\b/.test(aria)
+        || /пригласить.*контакт|запросити.*контакт/.test(aria)) hasConnect = true;
+    if (PENDING_TEXT_RE.test(text)
+        || (PENDING_ARIA_RE.test(aria) && WITHDRAW_ARIA_RE.test(aria))) hasPending = true;
   }
 
   // URL-based Connect detection works regardless of UI language

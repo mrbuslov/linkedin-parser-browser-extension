@@ -149,21 +149,42 @@ function renderAcceptedRow(item, { primaryAction, primaryLabel }) {
 
 function renderAccepted(items) {
   const list = $('accepted-list');
+  const declinedList = $('declined-list');
+  const declinedBlock = $('declined-block');
   list.innerHTML = '';
+  declinedList.innerHTML = '';
 
   const unmarked = items.filter((x) => !isMarked(x));
-  const visible = unmarked.filter(matchesSearch);
+  const active = unmarked.filter((x) => x.verified !== 'declined');
+  const declined = unmarked.filter((x) => x.verified === 'declined');
+  const visible = active.filter(matchesSearch);
+  const declinedVisible = declined.filter(matchesSearch);
+
   $('accepted-empty').hidden = unmarked.length > 0;
-  $('accepted-summary-text').textContent = unmarked.length === 0
+  $('accepted-summary-text').textContent = active.length === 0
     ? ''
     : searchQuery
-      ? `${visible.length} of ${unmarked.length} match`
-      : `${unmarked.length} to handle`;
-  $('mark-all').hidden = unmarked.filter((x) => x.verified !== 'declined').length === 0;
+      ? `${visible.length} of ${active.length} match`
+      : `${active.length} to handle`;
+  $('mark-all').hidden = active.length === 0;
 
   const sorted = visible.slice().sort((a, b) => b.acceptedAt - a.acceptedAt);
   for (const item of sorted) {
     list.append(renderAcceptedRow(item, {
+      primaryAction: (url) => setMarked(url, true),
+      primaryLabel: 'Mark',
+    }));
+  }
+
+  declinedBlock.hidden = declined.length === 0;
+  $('declined-summary').textContent = declined.length === 0
+    ? "Didn't accept"
+    : searchQuery
+      ? `Didn't accept (${declinedVisible.length} of ${declined.length})`
+      : `Didn't accept (${declined.length})`;
+  const declinedSorted = declinedVisible.slice().sort((a, b) => b.acceptedAt - a.acceptedAt);
+  for (const item of declinedSorted) {
+    declinedList.append(renderAcceptedRow(item, {
       primaryAction: (url) => setMarked(url, true),
       primaryLabel: 'Mark',
     }));
