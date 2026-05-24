@@ -9,7 +9,7 @@ console.log('[LI Tracker] content script INJECTED at', location.href);
 // Reset the scanInProgress flag on every injection: if a previous scan died
 // because the page was closed mid-flight, the popup would otherwise think it's
 // still running.
-dbSet({ scanInProgress: false });
+dbSet({ scanInProgress: null });
 
 const DAY_MS = 86400000;
 const STABLE_ROUNDS_TO_STOP = 4;
@@ -209,7 +209,7 @@ async function runScan() {
   if (scanInFlight) return;
   scanInFlight = true;
   cancelRequested = false;
-  await dbSet({ scanInProgress: true });
+  await dbSet({ scanInProgress: 'sent' });
   try {
     console.log('[LI Tracker] starting scan...');
     const snapshot = await autoScroll();
@@ -253,7 +253,7 @@ async function runScan() {
   } finally {
     scanInFlight = false;
     cancelRequested = false;
-    await dbSet({ scanInProgress: false });
+    await dbSet({ scanInProgress: null });
   }
 }
 

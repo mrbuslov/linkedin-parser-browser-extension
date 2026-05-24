@@ -5,7 +5,7 @@
 
 console.log('[LI Tracker] connections script INJECTED at', location.href);
 
-dbSet({ scanInProgress: false });
+dbSet({ scanInProgress: null });
 
 const DAY_MS = 86400000;
 const STABLE_ROUNDS_TO_STOP = 4;
@@ -239,7 +239,7 @@ async function runScan() {
   if (scanInFlight) return;
   scanInFlight = true;
   cancelRequested = false;
-  await dbSet({ scanInProgress: true });
+  await dbSet({ scanInProgress: 'connections' });
   try {
     console.log('[LI Tracker] starting connections scan...');
     const links = await autoScroll();
@@ -275,7 +275,7 @@ async function runScan() {
   } finally {
     scanInFlight = false;
     cancelRequested = false;
-    await dbSet({ scanInProgress: false });
+    await dbSet({ scanInProgress: null });
   }
 }
 

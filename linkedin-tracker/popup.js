@@ -297,16 +297,41 @@ function switchTab(name) {
   }
 }
 
+// Maps each popup tab to the LinkedIn page it scans. Marked and Settings have
+// no scan target — for those tabs the button is hidden.
+const TAB_SCAN_TARGETS = {
+  pending:  { url: SENT_URL,        source: 'sent',        gotoLabel: 'Go to Sent page' },
+  accepted: { url: CONNECTIONS_URL, source: 'connections', gotoLabel: 'Go to Connections page' },
+};
+
+function activeTabName() {
+  return document.querySelector('.tab.active')?.dataset.tab || 'pending';
+}
+
 async function updateScanButton() {
   const btn = $('open-sent');
   const hint = $('scan-hint');
-  const { scanInProgress } = await dbGet('scanInProgress');
+  const target = TAB_SCAN_TARGETS[activeTabName()];
 
   btn.classList.remove('scanning', 'mode-scan', 'mode-goto');
   btn.disabled = false;
-  hint.hidden = !scanInProgress;
 
-  if (scanInProgress) {
+  if (!target) {
+    // Marked / Settings — no scan applies, hide the button entirely
+    btn.hidden = true;
+    hint.hidden = true;
+    return;
+  }
+  btn.hidden = false;
+
+  const { scanInProgress } = await dbGet('scanInProgress');
+  const isScanningThisSource = scanInProgress === target.source;
+  hint.hidden = !isScanningThisSource;
+
+  btn.dataset.target = target.url;
+  btn.dataset.source = target.source;
+
+  if (isScanningThisSource) {
     btn.classList.add('scanning', 'mode-scan');
     btn.textContent = 'Stop';
     btn.title = 'Click to cancel the scan';
@@ -315,17 +340,18 @@ async function updateScanButton() {
   }
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const onSentPage = tab?.url?.startsWith(SENT_URL);
-  document.body.classList.toggle('is-on-sent', onSentPage);
-  if (onSentPage) {
+  const onTargetPage = tab?.url?.startsWith(target.url);
+  document.body.classList.toggle('is-on-sent', onTargetPage && target.source === 'sent');
+
+  if (onTargetPage) {
     btn.classList.add('mode-scan');
     btn.textContent = 'Scan';
     btn.title = 'Start a scan of this page';
     btn.dataset.mode = 'scan';
   } else {
     btn.classList.add('mode-goto');
-    btn.textContent = 'Go to Sent page';
-    btn.title = 'Open the sent invitations page on LinkedIn';
+    btn.textContent = target.gotoLabel;
+    btn.title = `Open ${target.gotoLabel.replace(/^Go to /, '')} on LinkedIn`;
     btn.dataset.mode = 'goto';
   }
 }
@@ -339,33 +365,28 @@ chrome.runtime.onMessage.addListener((msg) => {
 });
 
 document.querySelectorAll('.tab').forEach((tab) => {
-  tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+  tab.addEventListener('click', () => {
+    switchTab(tab.dataset.tab);
+    updateScanButton();
+  });
 });
 
 $('open-sent').addEventListener('click', async () => {
-  const mode = $('open-sent').dataset.mode;
-  if (mode === 'goto') {
-    chrome.tabs.create({ url: SENT_URL });
+  const btn = $('open-sent');
+  const targetUrl = btn.dataset.target;
+  if (!targetUrl) return;
+  if (btn.dataset.mode === 'goto') {
+    chrome.tabs.create({ url: targetUrl });
     return;
   }
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab?.url?.startsWith(SENT_URL)) {
+  if (tab?.url?.startsWith(targetUrl)) {
     chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_SCAN' });
   }
 });
 
 $('empty-open-sent').addEventListener('click', () => chrome.tabs.create({ url: SENT_URL }));
 $('mark-all').addEventListener('click', markAllAccepted);
-
-$('scan-connections').addEventListener('click', async () => {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab?.url?.startsWith(CONNECTIONS_URL)) {
-    chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_SCAN' });
-  } else {
-    chrome.tabs.create({ url: CONNECTIONS_URL });
-  }
-});
-
 $('open-support').addEventListener('click', () => chrome.tabs.create({ url: SUPPORT_URL }));
 $('search').addEventListener('input', (e) => {
   searchQuery = e.target.value.trim();
