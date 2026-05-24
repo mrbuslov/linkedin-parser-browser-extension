@@ -1,38 +1,90 @@
-# LinkedIn Connection Tracker
+# LinkedIn Parser: Invites & Contacts
 
-Read-only Chrome extension (Manifest V3) that tracks sent LinkedIn invitations. When someone disappears from the `/sent/` page they accepted (or you withdrew, or they declined), so the extension diffs every visit and surfaces newly-accepted connections to write a welcome message to.
+A Chrome extension that helps you keep track of your LinkedIn networking.
 
-See [linkedin-tracker-extension-spec.md](linkedin-tracker-extension-spec.md) for the full design and rationale.
+It tells you **who accepted your invites**, **who hasn't replied yet**, and quietly **builds a database of every contact you visit** — all stored on your own computer, nothing sent to any server.
 
-## Install (unpacked)
+## Install
 
-1. Open `chrome://extensions`
-2. Turn on **Developer mode** (top-right toggle)
-3. Click **Load unpacked** and select the [linkedin-tracker/](linkedin-tracker/) folder
-4. Pin the extension to the toolbar for easier access
+### Option 1 — Chrome Web Store (easy)
 
-## Usage
+[Install from the Chrome Web Store](https://chromewebstore.google.com/detail/linkedin-parser-invites-c/jmfogopmjhijliikailejnmajckoeklo)
 
-1. Go to https://www.linkedin.com/mynetwork/invitation-manager/sent/
-2. The extension auto-scrolls to load the full list, then parses every card silently
-3. Click the toolbar icon to see Pending and Accepted tabs
-4. Badge number = accepted connections still waiting for a welcome message
-5. Click **CSV** in the popup to export all data
+Click **Add to Chrome** and that's it. Pin the icon to your toolbar so you can find it quickly.
 
-## Files
+### Option 2 — From source (for developers)
 
-- [linkedin-tracker/manifest.json](linkedin-tracker/manifest.json) — MV3 manifest, minimal permissions (`storage`, `notifications`)
-- [linkedin-tracker/content.js](linkedin-tracker/content.js) — DOM parser, auto-scroll, diff against previous snapshot
-- [linkedin-tracker/background.js](linkedin-tracker/background.js) — service worker for badge + desktop notifications
-- [linkedin-tracker/popup.html](linkedin-tracker/popup.html), [popup.js](linkedin-tracker/popup.js), [popup.css](linkedin-tracker/popup.css) — UI
-- [linkedin-tracker/icons/](linkedin-tracker/icons/) — toolbar + notification icons (regenerate with `.venv/bin/python scripts/make_icons.py`)
+1. Download or clone this repo
+2. Open `chrome://extensions` in Chrome
+3. Turn on **Developer mode** (toggle in the top-right)
+4. Click **Load unpacked** and select the `linkedin-tracker/` folder
+5. Pin the extension to your toolbar
 
-## Notes
+## How to use it
 
-- The extension never clicks anything on LinkedIn UI and never opens LinkedIn in the background. It only reads the DOM on the page you opened yourself.
-- DOM selectors are defensive (data-view-name attribute first, then structural fallback via `/in/` links). If LinkedIn rebrands and the parse breaks, check the DevTools console for `[LI Tracker] parsed N cards` — if N is 0, selectors need updating in [content.js](linkedin-tracker/content.js).
-- All data is stored locally in `chrome.storage.local`. Nothing leaves your browser.
+### 1. Track your sent invites
 
-## Roadmap
+Open LinkedIn → click the toolbar icon → **Go to Sent page**.
 
-MVP shipped. Next up per spec: welcome templates with `{firstName}` substitution, reminders via `chrome.alarms`, notes & tags per invite, target list.
+You'll land on `linkedin.com/mynetwork/invitation-manager/sent/`. Click the orange **Scan** button.
+
+The extension will scroll the page for you and capture everyone you've invited. They show up in the **Pending** tab in the popup.
+
+> Keep the LinkedIn tab visible during the scan. Chrome pauses background tabs and the scan will stall otherwise.
+
+### 2. See who accepted
+
+Open the popup → **Accepted** tab → click **Go to Connections page** → click **Scan**.
+
+The extension pulls your full connections list with the real "Connected on" date from LinkedIn. People who accepted your invites move from Pending to Accepted automatically.
+
+### 3. Follow up with new connections
+
+The popup shows a badge with how many people are waiting for a welcome message.
+
+For each one:
+- Click their name to open their profile in the same tab
+- Write your welcome message manually
+- Come back to the popup → click **Mark** to move them out of the "to handle" list
+
+### 4. Auto-capture everyone you browse
+
+Just browse LinkedIn normally. Every profile page you open gets saved into your local database — name, headline, country, photo, current company, last-seen status. No clicks needed.
+
+This is your private LinkedIn CRM that grows by itself.
+
+### 5. Search and filter
+
+Use the search field in the popup header to find people by name or headline. Works across Pending, Accepted, and Marked tabs.
+
+### 6. Back up your data
+
+**Settings** tab → **Download JSON**. Save the file somewhere safe.
+
+To restore on a new device: install the extension → Settings → **Import JSON…** → pick the file.
+
+You can also export to CSV if you want to analyze in Excel/Google Sheets.
+
+## Privacy
+
+- All data lives in your browser's IndexedDB on your own machine
+- Nothing is sent to any server, ever
+- No analytics, no telemetry, no accounts
+- See [PRIVACY.md](PRIVACY.md) for the full policy
+
+## Something broke?
+
+LinkedIn changes its page structure from time to time and the extension parser might miss things.
+
+If the popup shows a red error line under the summary (like _"Last scan failed: …"_), open an issue with the message: **Settings → Contact support / Report issue**.
+
+## Contributing
+
+The code is open under [MIT License](LICENSE). PRs welcome — see [plan.md](plan.md) for the roadmap.
+
+## Tech notes for the curious
+
+- Manifest V3, vanilla JS, no frameworks
+- Three content scripts: `/sent/`, `/in/*` profile pages, `/mynetwork/invite-connect/connections/`
+- IndexedDB-backed storage with effectively unlimited space (handles 100k+ contacts)
+- Read-only — never clicks LinkedIn buttons, never opens pages in background, never calls LinkedIn's internal APIs. Safe against the kind of detection that bans automation tools.
