@@ -26,6 +26,19 @@ function el(tag, props = {}, children = []) {
   return node;
 }
 
+// Profile link that navigates the current active tab instead of opening a new one.
+// Cmd/Ctrl-click still opens in a new tab (browser-native, via the href fallback).
+function profileLink(url, text) {
+  const a = el('a', { className: 'name', href: url }, [text]);
+  a.addEventListener('click', (e) => {
+    if (e.metaKey || e.ctrlKey || e.button === 1) return; // let browser handle new-tab
+    e.preventDefault();
+    chrome.tabs.update({ url });
+    window.close();
+  });
+  return a;
+}
+
 function statusBadge(verified) {
   if (verified === 'accepted') return el('span', { className: 'status-badge accepted' }, ['✓ accepted']);
   if (verified === 'declined') return el('span', { className: 'status-badge declined' }, ['✗ declined']);
@@ -51,7 +64,7 @@ function renderPending(items) {
       item.avatar ? el('img', { className: 'avatar', src: item.avatar, alt: '' }) : null,
       el('div', { className: 'row-body' }, [
         el('div', { className: 'name-row' }, [
-          el('a', { className: 'name', href: item.profileUrl, target: '_blank' }, [item.name]),
+          profileLink(item.profileUrl, item.name),
         ]),
         item.headline ? el('div', { className: 'headline' }, [item.headline]) : null,
         el('div', { className: 'meta' }, [
@@ -72,10 +85,7 @@ function renderAcceptedRow(item, { primaryAction, primaryLabel }) {
   const sinceAccepted = ageDays(item.acceptedAt);
   const isDeclined = item.verified === 'declined';
 
-  const openBtn = el('button', {}, ['Open profile']);
-  openBtn.addEventListener('click', () => chrome.tabs.create({ url: item.profileUrl }));
-
-  const actions = [openBtn];
+  const actions = [];
   if (!isDeclined) {
     const actionBtn = el('button', { className: 'primary' }, [primaryLabel]);
     actionBtn.addEventListener('click', () => primaryAction(item.profileUrl));
@@ -98,7 +108,7 @@ function renderAcceptedRow(item, { primaryAction, primaryLabel }) {
         el('span', {}, [`Accepted ${sinceAccepted}d ago`]),
         el('span', {}, [`was pending ${item.daysPending}d`]),
       ]),
-      el('div', { className: 'row-actions' }, actions),
+      actions.length > 0 ? el('div', { className: 'row-actions' }, actions) : null,
     ]),
   ]);
 }

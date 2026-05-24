@@ -14,13 +14,42 @@ function normalizeProfileUrl(href) {
 // Cross-language: rather than matching button text in N languages, look for a
 // visible link to `/messaging/` in the profile top card — LinkedIn only renders
 // that for people you're connected to (and the URL is the same in every locale).
+// LinkedIn renders the Message link for EVERY profile (1st/2nd/3rd) — for non-1st
+// it's the InMail entry point. So messaging-link presence alone is not a "connected"
+// signal. Instead we check for the primary-action buttons that are ONLY shown for
+// non-connections (Follow, Connect, Pending) and only fall back to Message as proof
+// of connection when none of those are present.
 function detectConnectionStatus() {
   const root = document.querySelector('main') || document.body;
-  // Top card uses h1 on some layouts and h2 on others — both work as a "rendered" signal.
   if (!root.querySelector('h1, h2')) return null;
-  const messageLink = root.querySelector('a[href*="/messaging/"]');
+
+  const buttons = root.querySelectorAll('button');
+  let hasFollow = false, hasConnect = false, hasPending = false;
+  for (const btn of buttons) {
+    if (btn.offsetParent === null) continue;
+    const text = (btn.textContent || '').trim().toLowerCase();
+    const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+    // English + Russian + Ukrainian + a few common languages
+    if (/^(follow|following|подписаться|вы подписаны|підписатися|ви підписані|folgen|seguir|suivre)$/.test(text)
+        || /^(follow|подписаться|підписатися)\s/.test(aria)) hasFollow = true;
+    if (/^(connect|установить контакт|встановити контакт|vernetzen|conectar)$/.test(text)
+        || /\binvite\b.*\bconnect\b/.test(aria)) hasConnect = true;
+    if (/^(pending|в ожидании|очікує|ожидает|очікування|ausstehend|pendiente)$/.test(text)
+        || /\bpending\b/.test(aria)) hasPending = true;
+  }
+
+  // URL-based Connect detection works regardless of UI language
+  const inviteLink = root.querySelector('a[href*="/preload/custom-invite/"]');
+  const hasInviteLink = inviteLink && inviteLink.offsetParent !== null;
+
+  if (hasPending) return 'pending';
+  if (hasFollow || hasConnect || hasInviteLink) return 'not_connected';
+
+  // No Follow/Connect/Pending → confirm via Message link presence
+  const messageLink = root.querySelector('a[href*="/messaging/compose/"]');
   if (messageLink && messageLink.offsetParent !== null) return 'connected';
-  return 'not_connected';
+
+  return null;
 }
 
 // Location lives in a row with exactly three <p> children:
@@ -116,19 +145,32 @@ async function persistVisit() {
   };
 
   let acceptedChanged = false;
+  const entry = accepted[profileUrl];
 
-  if (accepted[profileUrl]) {
-    const newVerified = status === 'connected' ? 'accepted' : 'declined';
-    if (accepted[profileUrl].verified !== newVerified) {
-      accepted[profileUrl].verified = newVerified;
-      accepted[profileUrl].verifiedAt = now;
+  if (entry) {
+    // Self-heal: if this entry was auto-added by profile.js (autoMarked flag)
+    // and we now confirm they're NOT a connection, delete it — it was a wrong add
+    // from the old buggy detector that treated InMail-able profiles as connected.
+    if (entry.autoMarked && status !== 'connected') {
+      delete accepted[profileUrl];
       acceptedChanged = true;
+      console.log(`[LI Tracker] removed wrongly-added contact: ${info.name} (status: ${status})`);
+    } else {
+      // Update verified flag based on real-time status
+      const newVerified = status === 'connected' ? 'accepted'
+        : status === 'pending' ? null  // pending = our sent invite, not a verdict
+        : 'declined';
+      if (newVerified !== null && entry.verified !== newVerified) {
+        entry.verified = newVerified;
+        entry.verifiedAt = now;
+        acceptedChanged = true;
+      }
+      // Refresh metadata
+      if (info.avatar && !entry.avatar) entry.avatar = info.avatar;
+      if (info.headline && !entry.headline) entry.headline = info.headline;
+      if (info.location && !entry.location) entry.location = info.location;
+      if (info.country && !entry.country) entry.country = info.country;
     }
-    // Refresh metadata we now have a better source for
-    if (info.avatar && !accepted[profileUrl].avatar) accepted[profileUrl].avatar = info.avatar;
-    if (info.headline && !accepted[profileUrl].headline) accepted[profileUrl].headline = info.headline;
-    if (info.location && !accepted[profileUrl].location) accepted[profileUrl].location = info.location;
-    if (info.country && !accepted[profileUrl].country) accepted[profileUrl].country = info.country;
   } else if (status === 'connected') {
     // Connected but never appeared in our /sent/ scans — pre-existing contact.
     // Auto-mark so they go straight to Marked, not the Accepted "to handle" list.
