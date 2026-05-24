@@ -1,13 +1,12 @@
 // Parser for linkedin.com/mynetwork/invite-connect/connections/
-// The canonical "who has accepted my invitations + everyone in my network"
-// list, with LinkedIn-provided `Connected on DATE` strings. We use these dates
-// as the source of truth for `acceptedAt`, overriding our /sent/-based guesses.
+// Canonical "who has accepted my invitations + everyone in my network" list,
+// with LinkedIn-provided `Connected on DATE` strings. Pure merge logic lives
+// in core/merge-connections.js; this file does DOM scraping and persistence.
 
 console.log('[LI Tracker] connections script INJECTED at', location.href);
 
 dbSet({ scanInProgress: null });
 
-const DAY_MS = 86400000;
 const STABLE_ROUNDS_TO_STOP = 4;
 const HARD_LIMIT_ITERATIONS = 800;
 
@@ -31,55 +30,6 @@ async function cancellableSleep(ms) {
   if (cancelRequested) throw new ScanCancelled();
 }
 
-function normalizeProfileUrl(href) {
-  const u = new URL(href, location.origin);
-  return `${u.origin}${u.pathname.replace(/\/+$/, '')}/`;
-}
-
-// Multi-locale month parser. LinkedIn locales we've seen: English ("May 24, 2026"),
-// Russian ("24 мая 2026 г."), Ukrainian ("24 травня 2026 р."), German.
-const MONTH_INDEX = {
-  january: 0, jan: 0, february: 1, feb: 1, march: 2, mar: 2, april: 3, apr: 3,
-  may: 4, june: 5, jun: 5, july: 6, jul: 6, august: 7, aug: 7,
-  september: 8, sep: 8, sept: 8, october: 9, oct: 9, november: 10, nov: 10, december: 11, dec: 11,
-  января: 0, февраля: 1, марта: 2, апреля: 3, мая: 4, июня: 5,
-  июля: 6, августа: 7, сентября: 8, октября: 9, ноября: 10, декабря: 11,
-  січня: 0, лютого: 1, березня: 2, квітня: 3, травня: 4, червня: 5,
-  липня: 6, серпня: 7, вересня: 8, жовтня: 9, листопада: 10, грудня: 11,
-  januar: 0, februar: 1, märz: 2, mai: 4, juni: 5, juli: 6, oktober: 9, dezember: 11,
-};
-
-function parseConnectedDate(text) {
-  if (!text) return null;
-
-  // Native parser handles English ("May 24, 2026") even with prefix words
-  const native = Date.parse(text.replace(/^[^\d\w]*[a-zа-яёі]+\s+/i, ''));
-  if (!isNaN(native)) return native;
-  const native2 = Date.parse(text);
-  if (!isNaN(native2)) return native2;
-
-  // Manual extraction: find month name + 4-digit year + 1-2 digit day
-  const lower = text.toLowerCase();
-  let monthIdx = -1;
-  for (const [name, idx] of Object.entries(MONTH_INDEX)) {
-    if (new RegExp(`(?:^|[^a-zа-яёі])${name}(?:[^a-zа-яёі]|$)`, 'i').test(lower)) {
-      monthIdx = idx;
-      break;
-    }
-  }
-  if (monthIdx === -1) return null;
-
-  const yearMatch = text.match(/\b(20\d{2})\b/);
-  if (!yearMatch) return null;
-  const year = parseInt(yearMatch[1], 10);
-
-  const numbers = (text.match(/\b\d{1,2}\b/g) || []).map((n) => parseInt(n, 10));
-  const day = numbers.find((n) => n >= 1 && n <= 31);
-  if (!day) return null;
-
-  return new Date(year, monthIdx, day).getTime();
-}
-
 // Find profile name links in the connection grid. Each card has a profile link
 // (sometimes two: one on avatar, one on name) — dedupe by profileUrl.
 function findCards() {
@@ -88,14 +38,14 @@ function findCards() {
     const text = (link.textContent || '').trim();
     if (!text) continue;
     if (text.length > 100) continue;  // skip non-name links with rich content
-    const url = normalizeProfileUrl(link.href);
+    const url = LITUrl.normalizeProfileUrl(link.href);
     if (!byUrl.has(url)) byUrl.set(url, link);
   }
   return byUrl;
 }
 
 function findCardContainer(link) {
-  // Walk up until we find a container that includes a "Connected on" / "В контактах с" string
+  // Walk up until a container that includes a "Connected on" / "В контактах с" string
   let node = link.parentElement;
   for (let i = 0; i < 10 && node; i++, node = node.parentElement) {
     const t = (node.textContent || '');
@@ -103,22 +53,19 @@ function findCardContainer(link) {
       return node;
     }
   }
-  // Fallback: a fixed depth ancestor
+  // Fallback: fixed depth ancestor
   node = link;
   for (let i = 0; i < 5 && node.parentElement; i++) node = node.parentElement;
   return node;
 }
 
 function parseCard(link) {
-  const profileUrl = normalizeProfileUrl(link.href);
+  const profileUrl = LITUrl.normalizeProfileUrl(link.href);
   const card = findCardContainer(link);
-  const cardText = card.textContent || '';
 
-  // Name: try the link text first, fall back to first <p> with class hint
   const name = (link.textContent || '').trim();
   if (!name) return null;
 
-  // Headline: shortest non-name, non-date text in the card
   let headline = '';
   for (const p of card.querySelectorAll('p, span')) {
     if (p.children.length > 0) continue;
@@ -131,7 +78,6 @@ function parseCard(link) {
     break;
   }
 
-  // "Connected on" line — try multiple language patterns
   let dateText = '';
   for (const p of card.querySelectorAll('p')) {
     const t = (p.textContent || '').trim();
@@ -140,9 +86,8 @@ function parseCard(link) {
       break;
     }
   }
-  const connectedAt = parseConnectedDate(dateText);
+  const connectedAt = LITParseDate.parseConnectedDate(dateText);
 
-  // Avatar: img inside the card with profile-photo URL pattern
   let avatar = '';
   for (const img of card.querySelectorAll('img[src]')) {
     if (img.src.includes('profile-displayphoto') || img.src.includes('profile-framedphoto')) {
@@ -186,47 +131,16 @@ async function autoScroll() {
   return findCards();
 }
 
-async function mergeIntoAccepted(links) {
-  const { accepted = {}, sentInvitations = {} } = await dbGet(['accepted', 'sentInvitations']);
-  const now = Date.now();
-  let touched = 0;
-
+async function persistConnections(links) {
+  const snapshot = [];
   for (const link of links.values()) {
     const item = parseCard(link);
-    if (!item) continue;
-
-    // LinkedIn says they're connected → remove from sentInvitations if there
-    if (sentInvitations[item.profileUrl]) {
-      delete sentInvitations[item.profileUrl];
-    }
-
-    const existing = accepted[item.profileUrl];
-    const linkedinAcceptedAt = item.connectedAt || existing?.acceptedAt || now;
-    const firstSeenAt = existing?.firstSeenAt || linkedinAcceptedAt;
-
-    accepted[item.profileUrl] = {
-      ...(existing || {}),
-      profileUrl: item.profileUrl,
-      name: item.name || existing?.name || '',
-      headline: item.headline || existing?.headline || '',
-      avatar: item.avatar || existing?.avatar || '',
-      acceptedAt: linkedinAcceptedAt,
-      firstSeenAt,
-      daysPending: Math.floor((linkedinAcceptedAt - firstSeenAt) / DAY_MS),
-      marked: existing?.marked ?? false,
-      markedAt: existing?.markedAt ?? null,
-      verified: 'accepted',
-      verifiedAt: now,
-      connectedOnText: item.dateText || existing?.connectedOnText || '',
-      // Clear the autoMarked flag — they're now confirmed via canonical source
-      autoMarked: false,
-      addedFrom: existing?.addedFrom || 'connections-page',
-    };
-    touched++;
+    if (item) snapshot.push(item);
   }
-
-  await dbSet({ accepted, sentInvitations });
-  return touched;
+  const stored = await dbGet(['accepted', 'sentInvitations']);
+  const result = LITMergeConnections.mergeConnections(snapshot, stored, Date.now());
+  await dbSet({ accepted: result.accepted, sentInvitations: result.sentInvitations });
+  return result.touched;
 }
 
 async function updateScanState(patch) {
@@ -254,7 +168,7 @@ async function runScan() {
       return;
     }
 
-    const touched = await mergeIntoAccepted(links);
+    const touched = await persistConnections(links);
     console.log(`[LI Tracker] merged ${touched} connections into accepted`);
     await updateScanState({
       lastScannedAt: Date.now(),

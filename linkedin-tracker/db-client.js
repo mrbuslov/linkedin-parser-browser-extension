@@ -16,3 +16,9 @@ async function dbSet(data) {
 async function dbClear() {
   await chrome.runtime.sendMessage({ type: 'DB_CLEAR' });
 }
+
+// Expose explicitly so other content scripts (loaded later via manifest)
+// can see them, and so ESLint stops warning "defined but never used".
+globalThis.dbGet = dbGet;
+globalThis.dbSet = dbSet;
+globalThis.dbClear = dbClear;

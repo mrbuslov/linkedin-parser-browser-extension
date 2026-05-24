@@ -8,6 +8,13 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
+## [1.1.0] — 2026-05-25
+
+Stability release. Several real-user bug reports fixed plus the long-awaited
+canonical connections-page parser. Internals refactored for testability: pure
+logic now lives in `linkedin-tracker/core/` and is covered by 66 Vitest unit tests
+that run in CI on every push and pull request.
+
 ### Added
 - Parser for `linkedin.com/mynetwork/invite-connect/connections/` — the canonical
   list of accepted connections. Each entry includes LinkedIn's own "Connected on"
@@ -19,6 +26,14 @@ In development for the next release. See [plan.md](plan.md) for the prioritized 
   and either count of items captured or the failure reason in red.
 - "Contact support / Report issue" button in Settings → opens GitHub Issues.
 - `scanState` storage key tracking per-source scan metadata (`sent`, `connections`).
+- Declined entries collapsed into a `<details>` block at the bottom of the
+  Accepted tab — they no longer clutter the main "to handle" count.
+- Withdraw click listener on /sent/: explicitly withdrawn invites are stamped
+  with `withdrawnAt` and excluded from the missing→accepted diff for 7 days.
+- Vitest test suite (66 tests) covering the date parser, status detector,
+  profile state transitions, /sent/ diff, and /connections/ merge.
+- GitHub Actions CI: ESLint + tests run on every push and PR; tagged releases
+  produce a CWS-ready zip artifact.
 
 ### Fixed
 - profile.js: "phantom-accepted" — visiting a 2nd/3rd-degree profile no longer
@@ -26,18 +41,28 @@ In development for the next release. See [plan.md](plan.md) for the prioritized 
   (used for InMail). Now requires absence of Follow/Connect/Pending buttons +
   presence of Message link.
 - profile.js: Pending button (an `<a>`, not `<button>`) now detected.
+- profile.js: Pending detection no longer breaks on non-English UIs ("Очікує на
+  розгляд") or buttons with embedded screen-reader text. Uses Unicode-friendly
+  prefix matching instead of ASCII `\b` boundaries.
 - profile.js: enforces "one bucket at a time" invariant — sending Connect after
   withdrawing no longer leaves a stale accepted entry visible alongside Pending.
 - profile.js: removing a real connection drops the entry from Accepted instead
   of mis-labelling it as Declined.
 - profile.js: clicking Connect from a profile page now adds the person to
   Pending in real time via an always-on MutationObserver.
+- parseConnectedDate: rejects dates without an explicit 4-digit 20xx year
+  (previously `Date.parse("May 24")` would silently fall back to year 2001).
+- popup: "N to handle" count in the Accepted tab no longer includes declined
+  entries.
 
 ### Changed
 - Profile-name links in the popup now navigate the current active tab via
   `chrome.tabs.update` instead of opening a new tab. Cmd/Ctrl-click preserves
   new-tab behavior.
 - "Open profile" button removed from Accepted/Marked rows (name is already a link).
+- Project structure: pure logic extracted to `linkedin-tracker/core/`, content
+  scripts now consume it via the manifest's `js:` array. No bundler — each
+  core file is dual-mode (classic script + CJS module).
 
 ## [1.0.0] — 2026-05-21
 

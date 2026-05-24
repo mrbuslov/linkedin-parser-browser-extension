@@ -1,0 +1,86 @@
+// Connection-status detector for a LinkedIn /in/* profile page.
+// Returns one of: 'connected' | 'not_connected' | 'pending' | null.
+//
+// Strategy: look for the primary-action buttons that are ONLY rendered for
+// non-connections (Follow, Connect, Pending). The Message link alone is NOT
+// a "connected" signal — LinkedIn renders it on every profile for InMail too.
+//
+// Text matching is `startsWith` (\b), not exact (`$`) — LinkedIn often embeds
+// hidden screen-reader text inside the button ("Pending\nClick to withdraw…"),
+// and localized labels can be longer than English ("Очікує на розгляд").
+
+// We can't use \b for Cyrillic — JS regex word boundary is ASCII-only. Instead
+// we normalize whitespace and check prefix-with-terminator (space/punct/end).
+const FOLLOW_PREFIXES  = ['follow', 'following', 'подписаться', 'вы подписаны', 'підписатися', 'ви підписані', 'folgen', 'seguir', 'suivre'];
+const CONNECT_PREFIXES = ['connect', 'установить контакт', 'встановити контакт', 'vernetzen', 'conectar', 'se connecter'];
+const PENDING_PREFIXES = ['pending', 'в ожидании', 'очікує', 'очікування', 'ожидает', 'ausstehend', 'pendiente', 'en attente'];
+
+const PENDING_ARIA_SUBSTRS  = ['pending', 'очікує', 'очікування', 'ожидает', 'в ожидании', 'ausstehend', 'pendiente'];
+const WITHDRAW_ARIA_SUBSTRS = ['withdraw', 'invit', 'запрош', 'приглаш', 'отозвать', 'скасувати', 'zurückziehen', 'retirar'];
+
+function normWhitespace(s) {
+  return (s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function matchesPrefix(text, prefixes) {
+  const t = normWhitespace(text);
+  if (!t) return false;
+  for (const p of prefixes) {
+    if (t === p) return true;
+    if (t.startsWith(p + ' ') || t.startsWith(p + ',') || t.startsWith(p + '.')) return true;
+  }
+  return false;
+}
+
+function containsAny(text, needles) {
+  const t = normWhitespace(text);
+  return needles.some((n) => t.includes(n));
+}
+
+// Visibility check that works in both Chrome (real layout) and jsdom (no layout).
+// We DON'T use offsetParent because jsdom always reports null. We check `hidden`
+// and computed display/visibility — covers the common ways LinkedIn hides UI.
+function isVisible(el) {
+  if (el.hidden) return false;
+  const win = el.ownerDocument && el.ownerDocument.defaultView;
+  if (win && typeof win.getComputedStyle === 'function') {
+    const style = win.getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+  }
+  return true;
+}
+
+function detectConnectionStatus(root) {
+  if (!root || !root.querySelector('h1, h2')) return null;
+
+  const actions = root.querySelectorAll('button, a, [role="button"]');
+  let hasFollow = false, hasConnect = false, hasPending = false;
+  for (const btn of actions) {
+    if (!isVisible(btn)) continue;
+    const text = (btn.textContent || '').trim();
+    if (text.length > 80) continue;
+    const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+
+    if (matchesPrefix(text, FOLLOW_PREFIXES)) hasFollow = true;
+    if (matchesPrefix(text, CONNECT_PREFIXES)
+        || /\binvite\b.*\bconnect\b/.test(aria)
+        || containsAny(aria, ['пригласить', 'запросити'])) hasConnect = true;
+    if (matchesPrefix(text, PENDING_PREFIXES)
+        || (containsAny(aria, PENDING_ARIA_SUBSTRS) && containsAny(aria, WITHDRAW_ARIA_SUBSTRS))) hasPending = true;
+  }
+
+  const inviteLink = root.querySelector('a[href*="/preload/custom-invite/"]');
+  const hasInviteLink = inviteLink != null && isVisible(inviteLink);
+
+  if (hasPending) return 'pending';
+  if (hasFollow || hasConnect || hasInviteLink) return 'not_connected';
+
+  const messageLink = root.querySelector('a[href*="/messaging/compose/"]');
+  if (messageLink && isVisible(messageLink)) return 'connected';
+
+  return null;
+}
+
+const LITDetect = { detectConnectionStatus, isVisible };
+if (typeof globalThis !== 'undefined') globalThis.LITDetect = LITDetect;
+if (typeof module !== 'undefined' && module.exports) module.exports = LITDetect;

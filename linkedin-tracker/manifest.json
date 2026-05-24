@@ -25,17 +25,34 @@
   "content_scripts": [
     {
       "matches": ["https://www.linkedin.com/mynetwork/invitation-manager/sent/*"],
-      "js": ["db-client.js", "content.js"],
+      "js": [
+        "db-client.js",
+        "core/url.js",
+        "core/diff-sent.js",
+        "content.js"
+      ],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://www.linkedin.com/in/*"],
-      "js": ["db-client.js", "profile.js"],
+      "js": [
+        "db-client.js",
+        "core/url.js",
+        "core/detect.js",
+        "core/profile-state.js",
+        "profile.js"
+      ],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://www.linkedin.com/mynetwork/invite-connect/connections/*"],
-      "js": ["db-client.js", "connections.js"],
+      "js": [
+        "db-client.js",
+        "core/url.js",
+        "core/parseDate.js",
+        "core/merge-connections.js",
+        "connections.js"
+      ],
       "run_at": "document_idle"
     }
   ]

@@ -1,30 +1,27 @@
 // Runs on linkedin.com/mynetwork/invitation-manager/sent/.
-// Parser based on the tested console script: anchor on [role="listitem"] (stable
-// across LinkedIn rebrandings since ARIA roles are accessibility-mandated),
-// then pull the /in/ link, three <p> elements (name / headline / sent info),
-// and the avatar img.
+// Parser anchored on [role="listitem"] — stable across LinkedIn rebrandings
+// since ARIA roles are accessibility-mandated.
+//
+// Pure logic lives in core/diff-sent.js (testable). This file does the DOM
+// scraping, auto-scroll, and persistence; it owns side effects only.
 
 console.log('[LI Tracker] content script INJECTED at', location.href);
 
-// Reset the scanInProgress flag on every injection: if a previous scan died
-// because the page was closed mid-flight, the popup would otherwise think it's
-// still running.
+// Reset scanInProgress on injection: if a previous scan died because the page
+// was closed mid-flight, the popup would otherwise think it's still running.
 dbSet({ scanInProgress: null });
 
-const DAY_MS = 86400000;
 const STABLE_ROUNDS_TO_STOP = 4;
 const HARD_LIMIT_ITERATIONS = 500;
-const SANITY_SHRINK_RATIO = 0.5; // if new snapshot < 50% of old pending, treat as partial scan
 
 let cancelRequested = false;
+let scanInFlight = false;
+
+class ScanCancelled extends Error {}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const rand = (min, max) => Math.random() * (max - min) + min;
 
-class ScanCancelled extends Error {}
-
-// Sleep that wakes up early if the user cancels. Polls in 100ms slices so
-// cancellation reacts within ~100ms regardless of the requested sleep length.
 async function cancellableSleep(ms) {
   const step = 100;
   let elapsed = 0;
@@ -37,18 +34,13 @@ async function cancellableSleep(ms) {
   if (cancelRequested) throw new ScanCancelled();
 }
 
-function normalizeProfileUrl(href) {
-  const u = new URL(href, location.origin);
-  return `${u.origin}${u.pathname.replace(/\/+$/, '')}/`;
-}
-
 function parseCards() {
   const cards = document.querySelectorAll('[role="listitem"]');
   const result = new Map();
   for (const card of cards) {
     const link = card.querySelector('a[href*="/in/"]');
     if (!link) continue;
-    const profileUrl = normalizeProfileUrl(link.href);
+    const profileUrl = LITUrl.normalizeProfileUrl(link.href);
     if (result.has(profileUrl)) continue;
 
     const paragraphs = [...card.querySelectorAll('p')]
@@ -76,16 +68,43 @@ async function waitForFirstCard(maxWaitMs = 20000) {
   return false;
 }
 
-// Bring the last card into view. Works no matter which DOM ancestor is the
-// scroll container — window, <main>, or a custom overflow div — because the
-// browser figures out the right one for scrollIntoView.
 function scrollToLastCard() {
   const items = document.querySelectorAll('[role="listitem"]');
   if (items.length === 0) return;
-  // behavior:'auto' (instant) instead of 'smooth' so the scroll still works
-  // when the LinkedIn tab is in the background (Chrome pauses rAF there, and
-  // smooth scrolling depends on it — page wouldn't move).
+  // behavior:'auto' (instant) — 'smooth' uses rAF, which Chrome pauses in
+  // background tabs, so the page wouldn't move at all.
   items[items.length - 1].scrollIntoView({ block: 'end' });
+}
+
+// Withdraw click listener (P0.2). When the user clicks the Withdraw button on
+// /sent/, the card disappears just like an accepted one — and our diff would
+// misclassify it as accepted. Capture withdraws BEFORE the diff runs so the
+// pure function can respect a `withdrawnAt` stamp.
+const WITHDRAW_BTN_RE = /^(withdraw|отозвать|скасувати|zurückziehen|retirar)\b/i;
+const WITHDRAW_ARIA_RE = /(withdraw|invitation|отозвать|скасувати|запрош|приглаш)/i;
+
+function setupWithdrawListener() {
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('button, a');
+    if (!btn) return;
+    const text = (btn.textContent || '').trim();
+    const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+    const isWithdraw = WITHDRAW_BTN_RE.test(text)
+      || (WITHDRAW_ARIA_RE.test(aria) && /withdraw|отозвать|скасувати|zurückziehen|retirar/i.test(aria));
+    if (!isWithdraw) return;
+
+    const card = btn.closest('[role="listitem"]');
+    if (!card) return;
+    const link = card.querySelector('a[href*="/in/"]');
+    if (!link) return;
+    const profileUrl = LITUrl.normalizeProfileUrl(link.href);
+
+    const { sentInvitations = {} } = await dbGet('sentInvitations');
+    if (!sentInvitations[profileUrl]) return;
+    sentInvitations[profileUrl].withdrawnAt = Date.now();
+    await dbSet({ sentInvitations });
+    console.log(`[LI Tracker] marked withdrawn: ${sentInvitations[profileUrl].name}`);
+  }, true);
 }
 
 async function autoScroll() {
@@ -127,77 +146,19 @@ async function autoScroll() {
 
 async function diffAndPersist(snapshot) {
   const stored = await dbGet(['sentInvitations', 'accepted', 'scanHistory']);
-  const pending = stored.sentInvitations || {};
-  const accepted = stored.accepted || {};
-  const history = stored.scanHistory || [];
-
-  const currentUrls = new Set(snapshot.map((x) => x.profileUrl));
-  const now = Date.now();
-  const newlyAccepted = [];
-  const newlyPending = [];
-
-  // Sanity check: if we used to track many invites and this scan saw far fewer,
-  // it's almost certainly a partial scroll, not 100+ people accepting at once.
-  // Skip the "missing = accepted" move in that case — we'll still add new ones,
-  // just won't falsely mark anyone as accepted.
-  const prevCount = Object.keys(pending).length;
-  const partial = prevCount > 5 && snapshot.length < prevCount * SANITY_SHRINK_RATIO;
-  if (partial) {
-    console.warn(`[LI Tracker] partial scan detected (prev pending: ${prevCount}, this scan: ${snapshot.length}). Skipping "missing→accepted" diff to avoid false positives.`);
-  }
-
-  if (!partial) {
-    for (const [url, item] of Object.entries(pending)) {
-      if (currentUrls.has(url)) continue;
-      const entry = {
-        ...item,
-        acceptedAt: now,
-        daysPending: Math.floor((now - item.firstSeenAt) / DAY_MS),
-        marked: false,
-        markedAt: null,
-        verified: null,
-      };
-      accepted[url] = entry;
-      newlyAccepted.push(entry);
-      delete pending[url];
-    }
-  }
-
-  for (const item of snapshot) {
-    const existing = pending[item.profileUrl];
-    if (existing) {
-      existing.lastSeenAt = now;
-      existing.sentDateRelative = item.sentDateRelative || existing.sentDateRelative;
-      existing.name = item.name || existing.name;
-      existing.headline = item.headline || existing.headline;
-      existing.avatar = item.avatar || existing.avatar;
-    } else {
-      pending[item.profileUrl] = {
-        ...item,
-        firstSeenAt: now,
-        lastSeenAt: now,
-        notes: '',
-        tags: [],
-      };
-      newlyPending.push(pending[item.profileUrl]);
-    }
-  }
-
-  const newHistory = [
-    ...history,
-    { timestamp: now, pendingCount: snapshot.length, newAccepted: newlyAccepted.length },
-  ].slice(-100);
+  const result = LITDiffSent.diffSentInvitations(snapshot, stored, Date.now());
 
   await dbSet({
-    sentInvitations: pending,
-    accepted,
-    scanHistory: newHistory,
+    sentInvitations: result.sentInvitations,
+    accepted: result.accepted,
+    scanHistory: result.scanHistory,
   });
 
-  return { newlyAccepted, newlyPending, pendingCount: snapshot.length };
+  if (result.partial) {
+    console.warn(`[LI Tracker] partial scan detected — skipped missing→accepted diff to avoid false positives`);
+  }
+  return result;
 }
-
-let scanInFlight = false;
 
 async function updateScanState(patch) {
   const { scanState = {} } = await dbGet('scanState');
@@ -216,7 +177,6 @@ async function runScan() {
     console.log(`[LI Tracker] parsed ${snapshot.length} invitations`);
 
     if (snapshot.length === 0) {
-      console.warn('[LI Tracker] nothing parsed — page may be empty or selectors are stale');
       await updateScanState({
         lastScannedAt: Date.now(),
         lastCount: 0,
@@ -257,12 +217,11 @@ async function runScan() {
   }
 }
 
+setupWithdrawListener();
+
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg?.type === 'TOGGLE_SCAN') {
-    if (scanInFlight) {
-      cancelRequested = true;
-    } else {
-      runScan();
-    }
+    if (scanInFlight) cancelRequested = true;
+    else runScan();
   }
 });

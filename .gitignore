@@ -217,3 +217,10 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 .claude
+
+# Node / Vitest
+node_modules/
+coverage/
+.vitest-cache/
+dist-zip/
+*.tgz
