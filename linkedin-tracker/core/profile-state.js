@@ -8,14 +8,6 @@
 // that didn't touch certain keys (small perf optimization for IndexedDB).
 
 const DAY_MS = 86400000;
-const MINUTE_MS = 60000;
-
-// Grace period after a fresh verification: if `verifiedAt` is within the last
-// five minutes, we don't honor a `not_connected` detection on that entry.
-// This protects against transient mid-page-load false positives — LinkedIn's
-// top card sometimes renders Follow/Connect briefly before settling on Message
-// for an existing connection.
-const VERIFY_GRACE_MS = 5 * MINUTE_MS;
 
 function refreshMetadata(target, info) {
   let changed = false;
@@ -131,20 +123,23 @@ function applyProfileVisit(stored, info, status, now) {
     }
     const entry = accepted[profileUrl];
     if (entry) {
-      // Don't act on a freshly-verified entry — LinkedIn's profile DOM can
-      // briefly render Follow/Connect on top-card before settling on Message,
-      // and we'd otherwise nuke an entry we just confirmed seconds ago.
-      const recentlyVerified = entry.verifiedAt && (now - entry.verifiedAt) < VERIFY_GRACE_MS;
-      if (recentlyVerified) {
-        // Caller can still surface this via contacts; we just refuse to touch
-        // the accepted bucket inside the grace window.
-      } else if (entry.verified === 'accepted' || entry.autoMarked) {
-        // Ever confirmed accepted → user removed the connection → DELETE.
-        // Marking "declined" would imply they rejected our invite, not the case.
-        // Also drop autoMarked entries — those were never real.
+      if (entry.autoMarked) {
+        // Auto-added "pre-existing contact" that turned out to not be connected
+        // (or no longer is) — never a real confirmed connection. Drop it.
+        delete accepted[profileUrl];
+        acceptedChanged = true;
+      } else if (entry.verified === 'accepted' && entry.connectedOnText) {
+        // Hard-confirmed via /connections/ scan (LinkedIn-provided "Connected on
+        // DATE"). User removed the real connection → drop the entry. Marking
+        // "declined" would imply they rejected our invite, not the case here.
         delete accepted[profileUrl];
         acceptedChanged = true;
       } else if (entry.verified !== 'declined') {
+        // Verified only by /sent/ disappearance or a previous profile.js call
+        // (both fallible). Preserve the record; flip badge to ✗ declined so the
+        // popup reflects the truth that LinkedIn currently shows Connect — they
+        // either never accepted or unconnected without us seeing the canonical
+        // /connections/ entry.
         entry.verified = 'declined';
         entry.verifiedAt = now;
         refreshMetadata(entry, info);

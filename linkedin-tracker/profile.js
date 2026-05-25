@@ -105,6 +105,24 @@ async function persistVisit() {
 // changes (you click Connect → button becomes Pending → mutation fires → we
 // re-persist). Debounced so we don't run on every micro-mutation.
 let lastDetected = { url: null, status: null };
+let pendingDestructiveConfirm = null;
+const STABILITY_DELAY_MS = 1500;
+
+// Decide whether the detected status would be a destructive change vs current
+// storage. Destructive = removes or downgrades an existing entry (delete from
+// accepted, demote to declined, remove from sentInvitations, etc.). For these
+// cases we require the detection to be stable over ~1.5s — LinkedIn's profile
+// top card sometimes briefly renders a Connect button on a 1st-degree contact
+// before settling on Message, and we don't want to nuke real data on that flash.
+async function isDestructiveChange(profileUrl, status) {
+  if (status === 'connected') return false;
+  const { accepted = {}, sentInvitations = {} } = await dbGet(['accepted', 'sentInvitations']);
+  const inAccepted = !!accepted[profileUrl];
+  const inPending = !!sentInvitations[profileUrl];
+  if (status === 'not_connected') return inAccepted || inPending;
+  if (status === 'pending') return inAccepted;
+  return false;
+}
 
 async function tick() {
   const info = extractProfileInfo();
@@ -112,6 +130,22 @@ async function tick() {
   const status = LITDetect.detectConnectionStatus(root);
   if (!info || !status) return;
   if (lastDetected.url === info.profileUrl && lastDetected.status === status) return;
+
+  if (await isDestructiveChange(info.profileUrl, status)) {
+    clearTimeout(pendingDestructiveConfirm);
+    pendingDestructiveConfirm = setTimeout(async () => {
+      const root2 = document.querySelector('main') || document.body;
+      const status2 = LITDetect.detectConnectionStatus(root2);
+      // Only commit if the destructive status is still the verdict after the
+      // delay — protects against transient mid-render false positives.
+      if (status2 === status) {
+        lastDetected = { url: info.profileUrl, status };
+        await persistVisit();
+      }
+    }, STABILITY_DELAY_MS);
+    return;
+  }
+
   lastDetected = { url: info.profileUrl, status };
   await persistVisit();
 }

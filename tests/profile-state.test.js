@@ -179,18 +179,45 @@ describe('applyProfileVisit — status:not_connected', () => {
     expect(r.sentChanged).toBe(true);
   });
 
-  it('DELETES (not declines) a confirmed-accepted entry when no longer connected (user removed connection)', () => {
+  it('DELETES a confirmed-accepted entry with connectedOnText (was real /connections/ contact, now removed)', () => {
+    // Came from /connections/ scan (has connectedOnText = LinkedIn's "Connected
+    // on …" string) → was definitely 1st-degree at some point. User removed it.
     const stored = {
       accepted: {
         'https://www.linkedin.com/in/jane/': {
           profileUrl: 'https://www.linkedin.com/in/jane/',
           verified: 'accepted',
           verifiedAt: NOW - 5 * DAY,
+          connectedOnText: 'Connected on May 12, 2024',
         },
       },
     };
     const r = applyProfileVisit(stored, info(), 'not_connected', NOW);
     expect(r.accepted['https://www.linkedin.com/in/jane/']).toBeUndefined();
+    expect(r.acceptedChanged).toBe(true);
+  });
+
+  it('marks verified-accepted entry as declined when there is no connectedOnText (Vlad case: never hard-confirmed)', () => {
+    // Entry has verified='accepted' but no connectedOnText — it was upgraded by
+    // a previous profile.js detection (possibly transient/wrong) rather than via
+    // the canonical /connections/ scan. LinkedIn now shows Connect on the profile.
+    // Preserve the record but flip badge to ✗ declined so the popup reflects reality.
+    const stored = {
+      accepted: {
+        'https://www.linkedin.com/in/vlad/': {
+          profileUrl: 'https://www.linkedin.com/in/vlad/',
+          verified: 'accepted',
+          verifiedAt: NOW - 5 * DAY,
+          marked: true,
+          markedAt: NOW - 1 * DAY,
+        },
+      },
+    };
+    const r = applyProfileVisit(stored, info({ profileUrl: 'https://www.linkedin.com/in/vlad/' }), 'not_connected', NOW);
+    const entry = r.accepted['https://www.linkedin.com/in/vlad/'];
+    expect(entry).toBeDefined();
+    expect(entry.verified).toBe('declined');
+    expect(entry.marked).toBe(true); // preserve marked status
     expect(r.acceptedChanged).toBe(true);
   });
 
@@ -235,45 +262,6 @@ describe('applyProfileVisit — status:not_connected', () => {
     };
     const r = applyProfileVisit(stored, info(), 'not_connected', NOW);
     expect(r.acceptedChanged).toBe(false);
-  });
-});
-
-describe('applyProfileVisit — grace period on freshly verified entries', () => {
-  const url = 'https://www.linkedin.com/in/anastasia/';
-
-  it('does NOT delete a verified-accepted entry when the verification is less than 5 minutes old', () => {
-    // Scenario: /connections/ scan just confirmed her (verifiedAt = now - 30s).
-    // User clicks her profile, page is mid-render, detect transiently returns
-    // 'not_connected'. We must NOT delete the freshly-verified entry.
-    const stored = {
-      accepted: {
-        [url]: {
-          profileUrl: url, name: 'Anastasia',
-          verified: 'accepted', verifiedAt: NOW - 30000, // 30s ago
-          autoMarked: false,
-        },
-      },
-    };
-    const r = applyProfileVisit(stored, info({ profileUrl: url }), 'not_connected', NOW);
-    expect(r.accepted[url]).toBeDefined();
-    expect(r.accepted[url].verified).toBe('accepted');
-    expect(r.acceptedChanged).toBe(false);
-  });
-
-  it('DOES delete a verified-accepted entry when the verification is older than 5 minutes', () => {
-    // The legit case: user actually removed the connection, an hour after scan.
-    const stored = {
-      accepted: {
-        [url]: {
-          profileUrl: url, name: 'Anastasia',
-          verified: 'accepted', verifiedAt: NOW - 60 * 60 * 1000, // 1h ago
-          autoMarked: false,
-        },
-      },
-    };
-    const r = applyProfileVisit(stored, info({ profileUrl: url }), 'not_connected', NOW);
-    expect(r.accepted[url]).toBeUndefined();
-    expect(r.acceptedChanged).toBe(true);
   });
 });
 
