@@ -8,6 +8,27 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
+## [1.1.1] — 2026-05-25
+
+Reliability patch for profile-visit status detection. Two real-user bugs fixed
+plus a behavioral simplification.
+
+### Fixed
+- profile.js: 1st-degree contacts no longer get nuked on profile visit because
+  of a transient mid-page-load false positive. Destructive status changes are
+  now confirmed via a 1.5-second stability re-check before being committed.
+- profile-state.js: visiting a profile that LinkedIn now shows as `not_connected`
+  (Connect button visible) no longer silently deletes the entry. The badge
+  flips to ✗ declined and the record is preserved in the "Didn't accept"
+  collapsible block at the bottom of the Accepted tab.
+
+### Changed
+- not_connected handling unified: regardless of how the entry got `verified='accepted'`
+  (via /connections/ scan or a previous profile.js detection), the entry is now
+  preserved and marked declined rather than auto-deleted. Surprise removals
+  erode trust in the data more than a stale label does. User can clean up
+  manually if desired.
+
 ## [1.1.0] — 2026-05-25
 
 Stability release. Several real-user bug reports fixed plus the long-awaited
