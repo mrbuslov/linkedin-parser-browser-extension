@@ -179,9 +179,11 @@ describe('applyProfileVisit — status:not_connected', () => {
     expect(r.sentChanged).toBe(true);
   });
 
-  it('DELETES a confirmed-accepted entry with connectedOnText (was real /connections/ contact, now removed)', () => {
-    // Came from /connections/ scan (has connectedOnText = LinkedIn's "Connected
-    // on …" string) → was definitely 1st-degree at some point. User removed it.
+  it('marks a verified-accepted entry with connectedOnText as declined (was real /connections/ contact, now not connected)', () => {
+    // Was on /connections/ at some point (has connectedOnText). User then
+    // either removed the connection or it expired. We DON'T delete — silent
+    // deletions erode trust. Instead we flip the badge to ✗ declined; the
+    // popup shows it in the collapsed "Didn't accept" block.
     const stored = {
       accepted: {
         'https://www.linkedin.com/in/jane/': {
@@ -193,15 +195,14 @@ describe('applyProfileVisit — status:not_connected', () => {
       },
     };
     const r = applyProfileVisit(stored, info(), 'not_connected', NOW);
-    expect(r.accepted['https://www.linkedin.com/in/jane/']).toBeUndefined();
+    expect(r.accepted['https://www.linkedin.com/in/jane/']).toBeDefined();
+    expect(r.accepted['https://www.linkedin.com/in/jane/'].verified).toBe('declined');
     expect(r.acceptedChanged).toBe(true);
   });
 
-  it('marks verified-accepted entry as declined when there is no connectedOnText (Vlad case: never hard-confirmed)', () => {
-    // Entry has verified='accepted' but no connectedOnText — it was upgraded by
-    // a previous profile.js detection (possibly transient/wrong) rather than via
-    // the canonical /connections/ scan. LinkedIn now shows Connect on the profile.
-    // Preserve the record but flip badge to ✗ declined so the popup reflects reality.
+  it('marks a verified-accepted entry without connectedOnText as declined (Vlad case)', () => {
+    // Verified upgraded by a previous profile.js detection (possibly transient).
+    // LinkedIn now shows Connect — record stays in Marked, badge flips to ✗ declined.
     const stored = {
       accepted: {
         'https://www.linkedin.com/in/vlad/': {
@@ -221,7 +222,11 @@ describe('applyProfileVisit — status:not_connected', () => {
     expect(r.acceptedChanged).toBe(true);
   });
 
-  it('DELETES an autoMarked entry that was never a real connection', () => {
+  it('marks an autoMarked entry as declined (preserves the record over silent deletion)', () => {
+    // Auto-added "pre-existing" entry from a profile visit. If status now says
+    // not_connected, the past detection was wrong OR they disconnected since.
+    // Either way, preserve and surface via declined badge — surprise deletes
+    // are worse than a stale label.
     const stored = {
       accepted: {
         'https://www.linkedin.com/in/jane/': {
@@ -232,7 +237,8 @@ describe('applyProfileVisit — status:not_connected', () => {
       },
     };
     const r = applyProfileVisit(stored, info(), 'not_connected', NOW);
-    expect(r.accepted['https://www.linkedin.com/in/jane/']).toBeUndefined();
+    expect(r.accepted['https://www.linkedin.com/in/jane/']).toBeDefined();
+    expect(r.accepted['https://www.linkedin.com/in/jane/'].verified).toBe('declined');
   });
 
   it('marks verified:declined when entry was tracked via /sent/ but never confirmed', () => {

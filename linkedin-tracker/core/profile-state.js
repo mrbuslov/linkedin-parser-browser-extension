@@ -122,29 +122,17 @@ function applyProfileVisit(stored, info, status, now) {
       sentChanged = true;
     }
     const entry = accepted[profileUrl];
-    if (entry) {
-      if (entry.autoMarked) {
-        // Auto-added "pre-existing contact" that turned out to not be connected
-        // (or no longer is) — never a real confirmed connection. Drop it.
-        delete accepted[profileUrl];
-        acceptedChanged = true;
-      } else if (entry.verified === 'accepted' && entry.connectedOnText) {
-        // Hard-confirmed via /connections/ scan (LinkedIn-provided "Connected on
-        // DATE"). User removed the real connection → drop the entry. Marking
-        // "declined" would imply they rejected our invite, not the case here.
-        delete accepted[profileUrl];
-        acceptedChanged = true;
-      } else if (entry.verified !== 'declined') {
-        // Verified only by /sent/ disappearance or a previous profile.js call
-        // (both fallible). Preserve the record; flip badge to ✗ declined so the
-        // popup reflects the truth that LinkedIn currently shows Connect — they
-        // either never accepted or unconnected without us seeing the canonical
-        // /connections/ entry.
-        entry.verified = 'declined';
-        entry.verifiedAt = now;
-        refreshMetadata(entry, info);
-        acceptedChanged = true;
-      }
+    if (entry && entry.verified !== 'declined') {
+      // Preserve the record, flip the badge. "Declined" here means "not
+      // currently connected per LinkedIn" — covers both "they didn't accept
+      // our invite" and "we used to be connected, no longer are". The popup
+      // shows these in the "Didn't accept" <details> block; user can decide
+      // manually whether to keep or purge. We deliberately don't auto-delete:
+      // surprise removals erode trust in the data more than a stale label does.
+      entry.verified = 'declined';
+      entry.verifiedAt = now;
+      refreshMetadata(entry, info);
+      acceptedChanged = true;
     }
   }
 
