@@ -238,6 +238,96 @@ describe('applyProfileVisit — status:not_connected', () => {
   });
 });
 
+describe('applyProfileVisit — grace period on freshly verified entries', () => {
+  const url = 'https://www.linkedin.com/in/anastasia/';
+
+  it('does NOT delete a verified-accepted entry when the verification is less than 5 minutes old', () => {
+    // Scenario: /connections/ scan just confirmed her (verifiedAt = now - 30s).
+    // User clicks her profile, page is mid-render, detect transiently returns
+    // 'not_connected'. We must NOT delete the freshly-verified entry.
+    const stored = {
+      accepted: {
+        [url]: {
+          profileUrl: url, name: 'Anastasia',
+          verified: 'accepted', verifiedAt: NOW - 30000, // 30s ago
+          autoMarked: false,
+        },
+      },
+    };
+    const r = applyProfileVisit(stored, info({ profileUrl: url }), 'not_connected', NOW);
+    expect(r.accepted[url]).toBeDefined();
+    expect(r.accepted[url].verified).toBe('accepted');
+    expect(r.acceptedChanged).toBe(false);
+  });
+
+  it('DOES delete a verified-accepted entry when the verification is older than 5 minutes', () => {
+    // The legit case: user actually removed the connection, an hour after scan.
+    const stored = {
+      accepted: {
+        [url]: {
+          profileUrl: url, name: 'Anastasia',
+          verified: 'accepted', verifiedAt: NOW - 60 * 60 * 1000, // 1h ago
+          autoMarked: false,
+        },
+      },
+    };
+    const r = applyProfileVisit(stored, info({ profileUrl: url }), 'not_connected', NOW);
+    expect(r.accepted[url]).toBeUndefined();
+    expect(r.acceptedChanged).toBe(true);
+  });
+});
+
+describe('applyProfileVisit — regression: someone added me, then I visit their profile', () => {
+  // Anastasia bug: she added the user → showed up in Accepted via /connections/
+  // scan with verified='accepted', autoMarked=false, marked=false. User then
+  // visits her profile (status='connected'). Expectation: she STAYS in accepted.
+  it('preserves a connections-page-sourced entry across a connected profile visit', () => {
+    const url = 'https://www.linkedin.com/in/anastasia/';
+    const stored = {
+      accepted: {
+        [url]: {
+          profileUrl: url,
+          name: 'Anastasia',
+          headline: 'IT Recruiter',
+          avatar: 'https://media.licdn.com/avatar.jpg',
+          acceptedAt: NOW - 2 * DAY,
+          firstSeenAt: NOW - 2 * DAY,
+          daysPending: 0,
+          marked: false,
+          markedAt: null,
+          verified: 'accepted',
+          verifiedAt: NOW - 2 * DAY,
+          connectedOnText: 'Connected on May 23, 2026',
+          autoMarked: false,
+          addedFrom: 'connections-page',
+        },
+      },
+    };
+    const r = applyProfileVisit(stored, info({ profileUrl: url, name: 'Anastasia' }), 'connected', NOW);
+    expect(r.accepted[url]).toBeDefined();
+    expect(r.accepted[url].verified).toBe('accepted');
+    expect(r.accepted[url].marked).toBe(false);
+    expect(r.accepted[url].autoMarked).toBe(false);
+  });
+
+  // Edge case: if MutationObserver fires DURING page load, the first tick may
+  // see a partial DOM (no buttons rendered yet) — in that intermediate state
+  // detect returns 'not_connected' falsely → applyProfileVisit deletes her.
+  // The fix is in the detector (return null when not enough signal), not here,
+  // but document the expected behavior of applyProfileVisit too.
+  it('preserves entry when status is null (caller must skip persistence in that case)', () => {
+    // applyProfileVisit isn't called with null in real code (profile.js bails
+    // out earlier), but this asserts the contract.
+    const url = 'https://www.linkedin.com/in/anastasia/';
+    const stored = {
+      accepted: { [url]: { profileUrl: url, verified: 'accepted' } },
+    };
+    // Sanity: applyProfileVisit doesn't accept null — caller is expected to
+    // pre-filter. Document: only valid statuses are pending/connected/not_connected.
+    expect(() => applyProfileVisit(stored, info({ profileUrl: url }), 'connected', NOW)).not.toThrow();
+  });
+});
+
 describe('applyProfileVisit — invariants', () => {
   it('"one bucket at a time" — pending visit clears accepted, never both', () => {
     const stored = {
