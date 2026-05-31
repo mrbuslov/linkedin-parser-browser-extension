@@ -101,28 +101,20 @@ async function persistVisit() {
   console.log(`[LI Tracker] visited ${info.name} (${status})`);
 }
 
-// Always-on observer catches both the initial render delay AND in-page status
-// changes (you click Connect → button becomes Pending → mutation fires → we
-// re-persist). Debounced so we don't run on every micro-mutation.
+// Simple poll loop: every POLL_INTERVAL_MS we re-detect status and persist if
+// it changed since the last commit. LinkedIn renders the profile top card
+// incrementally — buttons appear/swap during the first few seconds — so any
+// single point-in-time read can be wrong. Polling means "the LATEST snapshot
+// wins": a transient mid-render false positive gets self-corrected on the next
+// tick a quarter-second later. Cheaper than it sounds (querySelector is
+// microseconds), no network, no LinkedIn-side detection surface.
+//
+// Safety net for destructive changes lives one layer deeper: in
+// applyProfileVisit, entries with `connectedOnText` (canonical /connections/
+// scan) are immune to downgrades from a profile visit. So even a transient
+// mid-tick false positive can't damage a confirmed connection.
+const POLL_INTERVAL_MS = 250;
 let lastDetected = { url: null, status: null };
-let pendingDestructiveConfirm = null;
-const STABILITY_DELAY_MS = 1500;
-
-// Decide whether the detected status would be a destructive change vs current
-// storage. Destructive = removes or downgrades an existing entry (delete from
-// accepted, demote to declined, remove from sentInvitations, etc.). For these
-// cases we require the detection to be stable over ~1.5s — LinkedIn's profile
-// top card sometimes briefly renders a Connect button on a 1st-degree contact
-// before settling on Message, and we don't want to nuke real data on that flash.
-async function isDestructiveChange(profileUrl, status) {
-  if (status === 'connected') return false;
-  const { accepted = {}, sentInvitations = {} } = await dbGet(['accepted', 'sentInvitations']);
-  const inAccepted = !!accepted[profileUrl];
-  const inPending = !!sentInvitations[profileUrl];
-  if (status === 'not_connected') return inAccepted || inPending;
-  if (status === 'pending') return inAccepted;
-  return false;
-}
 
 async function tick() {
   const info = extractProfileInfo();
@@ -130,30 +122,9 @@ async function tick() {
   const status = LITDetect.detectConnectionStatus(root);
   if (!info || !status) return;
   if (lastDetected.url === info.profileUrl && lastDetected.status === status) return;
-
-  if (await isDestructiveChange(info.profileUrl, status)) {
-    clearTimeout(pendingDestructiveConfirm);
-    pendingDestructiveConfirm = setTimeout(async () => {
-      const root2 = document.querySelector('main') || document.body;
-      const status2 = LITDetect.detectConnectionStatus(root2);
-      // Only commit if the destructive status is still the verdict after the
-      // delay — protects against transient mid-render false positives.
-      if (status2 === status) {
-        lastDetected = { url: info.profileUrl, status };
-        await persistVisit();
-      }
-    }, STABILITY_DELAY_MS);
-    return;
-  }
-
   lastDetected = { url: info.profileUrl, status };
   await persistVisit();
 }
 
-let scheduled = null;
-const observer = new MutationObserver(() => {
-  clearTimeout(scheduled);
-  scheduled = setTimeout(tick, 500);
-});
-observer.observe(document.body, { childList: true, subtree: true });
+setInterval(tick, POLL_INTERVAL_MS);
 tick();
