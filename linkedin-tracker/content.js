@@ -38,21 +38,37 @@ function parseCards() {
   const cards = document.querySelectorAll('[role="listitem"]');
   const result = new Map();
   for (const card of cards) {
-    const link = card.querySelector('a[href*="/in/"]');
-    if (!link) continue;
-    const profileUrl = LITUrl.normalizeProfileUrl(link.href);
-    if (result.has(profileUrl)) continue;
-
     const paragraphs = [...card.querySelectorAll('p')]
       .map((p) => p.textContent.trim())
       .filter(Boolean);
     const img = card.querySelector('img');
 
+    const link = card.querySelector('a[href*="/in/"]');
+    let profileUrl, name, headline;
+    if (link) {
+      profileUrl = LITUrl.normalizeProfileUrl(link.href);
+      name = paragraphs[0] || '';
+      headline = paragraphs[1] || '';
+    } else {
+      // Email-based invite — LinkedIn's "you must know them" wall, or invitee
+      // doesn't have an account yet. No /in/ link, the card text contains the
+      // raw email address instead of a name. Key by mailto:<email> so the
+      // entry persists alongside profile-based ones in the same store.
+      const email = LITUrl.extractEmail(card.textContent || '');
+      if (!email) continue;
+      profileUrl = `mailto:${email}`;
+      name = email;
+      headline = '';
+    }
+
+    if (result.has(profileUrl)) continue;
     result.set(profileUrl, {
       profileUrl,
-      name: paragraphs[0] || '',
-      headline: paragraphs[1] || '',
-      sentDateRelative: paragraphs[2] || '',
+      name,
+      headline,
+      // Date string is usually the LAST paragraph regardless of layout. For
+      // email cards there's only [email, sent_date] so [1] is the date.
+      sentDateRelative: paragraphs[paragraphs.length - 1] || '',
       avatar: img?.src || '',
     });
   }

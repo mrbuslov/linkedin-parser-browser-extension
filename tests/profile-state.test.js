@@ -179,25 +179,27 @@ describe('applyProfileVisit — status:not_connected', () => {
     expect(r.sentChanged).toBe(true);
   });
 
-  it('marks a verified-accepted entry with connectedOnText as declined (was real /connections/ contact, now not connected)', () => {
-    // Was on /connections/ at some point (has connectedOnText). User then
-    // either removed the connection or it expired. We DON'T delete — silent
-    // deletions erode trust. Instead we flip the badge to ✗ declined; the
-    // popup shows it in the collapsed "Didn't accept" block.
+  it('REGRESSION (Bernardo bug): does NOT downgrade canonical /connections/-verified entry on transient not_connected profile visit', () => {
+    // Bernardo bug from Mira: real 1st-degree connection wrongly shown as
+    // ✗ DECLINED in popup. Cause: profile.js detected not_connected during a
+    // slow profile-page load (Follow button flashed before Message settled),
+    // stability check confirmed it, applyProfileVisit downgraded to declined.
+    // Fix: entries carrying `connectedOnText` (from /connections/ scan, the
+    // canonical source) are never downgraded by profile.js — only a fresh
+    // /connections/ scan can revise them.
     const stored = {
       accepted: {
-        'https://www.linkedin.com/in/jane/': {
-          profileUrl: 'https://www.linkedin.com/in/jane/',
+        'https://www.linkedin.com/in/bernardo/': {
+          profileUrl: 'https://www.linkedin.com/in/bernardo/',
           verified: 'accepted',
           verifiedAt: NOW - 5 * DAY,
-          connectedOnText: 'Connected on May 12, 2024',
+          connectedOnText: 'Connected on May 28, 2026',
         },
       },
     };
-    const r = applyProfileVisit(stored, info(), 'not_connected', NOW);
-    expect(r.accepted['https://www.linkedin.com/in/jane/']).toBeDefined();
-    expect(r.accepted['https://www.linkedin.com/in/jane/'].verified).toBe('declined');
-    expect(r.acceptedChanged).toBe(true);
+    const r = applyProfileVisit(stored, info({ profileUrl: 'https://www.linkedin.com/in/bernardo/' }), 'not_connected', NOW);
+    expect(r.accepted['https://www.linkedin.com/in/bernardo/'].verified).toBe('accepted');
+    expect(r.acceptedChanged).toBe(false);
   });
 
   it('marks a verified-accepted entry without connectedOnText as declined (Vlad case)', () => {

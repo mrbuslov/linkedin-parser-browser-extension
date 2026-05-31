@@ -62,7 +62,12 @@ function el(tag, props = {}, children = []) {
 
 // Profile link that navigates the current active tab instead of opening a new one.
 // Cmd/Ctrl-click still opens in a new tab (browser-native, via the href fallback).
+// For email-keyed entries (mailto:foo@bar) we render a non-navigating span — no
+// /in/ profile exists to open, and we don't want to fire the user's email client.
 function profileLink(url, text) {
+  if (typeof url === 'string' && url.startsWith('mailto:')) {
+    return el('span', { className: 'name email' }, [text]);
+  }
   const a = el('a', { className: 'name', href: url }, [text]);
   a.addEventListener('click', (e) => {
     if (e.metaKey || e.ctrlKey || e.button === 1) return; // let browser handle new-tab
@@ -129,11 +134,15 @@ function renderAcceptedRow(item, { primaryAction, primaryLabel }) {
   const rowClasses = ['row', ageClassFromDays(sinceAccepted)];
   if (isDeclined) rowClasses.push('declined');
 
+  const nameNode = item.profileUrl && item.profileUrl.startsWith('mailto:')
+    ? el('span', { className: 'name email' }, [item.name])
+    : el('a', { className: 'name', href: item.profileUrl, target: '_blank' }, [item.name]);
+
   return el('li', { className: rowClasses.filter(Boolean).join(' ') }, [
     item.avatar ? el('img', { className: 'avatar', src: item.avatar, alt: '' }) : null,
     el('div', { className: 'row-body' }, [
       el('div', { className: 'name-row' }, [
-        el('a', { className: 'name', href: item.profileUrl, target: '_blank' }, [item.name]),
+        nameNode,
         statusBadge(item.verified),
       ]),
       item.headline ? el('div', { className: 'headline' }, [item.headline]) : null,

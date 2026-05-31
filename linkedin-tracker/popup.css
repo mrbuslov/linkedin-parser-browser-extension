@@ -214,6 +214,14 @@ main {
   text-decoration: none;
 }
 .row .name:hover { text-decoration: underline; }
+.row .name.email {
+  color: #555;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  font-weight: 500;
+  word-break: break-all;
+}
+.row .name.email:hover { text-decoration: none; }
 
 .status-badge {
   font-size: 10px;

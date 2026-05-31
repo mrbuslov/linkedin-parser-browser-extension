@@ -123,16 +123,26 @@ function applyProfileVisit(stored, info, status, now) {
     }
     const entry = accepted[profileUrl];
     if (entry && entry.verified !== 'declined') {
-      // Preserve the record, flip the badge. "Declined" here means "not
-      // currently connected per LinkedIn" — covers both "they didn't accept
-      // our invite" and "we used to be connected, no longer are". The popup
-      // shows these in the "Didn't accept" <details> block; user can decide
-      // manually whether to keep or purge. We deliberately don't auto-delete:
-      // surprise removals erode trust in the data more than a stale label does.
-      entry.verified = 'declined';
-      entry.verifiedAt = now;
-      refreshMetadata(entry, info);
-      acceptedChanged = true;
+      // CRITICAL: if entry carries `connectedOnText` it came from the /connections/
+      // scan — that page IS the canonical source of truth for "who is connected".
+      // A transient false-positive on the profile page (LinkedIn briefly rendering
+      // Follow/Connect before settling on Message for a slow load) must not be
+      // allowed to downgrade a canonically-confirmed entry. Real disconnections
+      // are detected by re-running the /connections/ scan, not by profile visits.
+      if (entry.connectedOnText) {
+        // No-op: preserve as-is. Stability check already gave us 1.5s, but for
+        // slow networks even that's sometimes insufficient and we'd rather
+        // err on the side of keeping a real connection's badge intact.
+      } else {
+        // No canonical proof — verified was upgraded by /sent/ disappearance or
+        // a prior profile.js detection (both heuristic). Mark declined; popup
+        // surfaces it under the collapsible "Didn't accept" block. We never
+        // auto-delete here — surprise removals erode trust more than a stale label.
+        entry.verified = 'declined';
+        entry.verifiedAt = now;
+        refreshMetadata(entry, info);
+        acceptedChanged = true;
+      }
     }
   }
 

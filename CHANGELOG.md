@@ -8,6 +8,23 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
+## [1.1.2] — 2026-05-25
+
+Bugfix release driven by external user feedback (thanks Mira).
+
+### Fixed
+- profile.js: a real 1st-degree connection no longer gets wrongly flipped to
+  ✗ DECLINED in the popup just because a profile-page visit briefly saw a
+  Follow/Connect button mid-render. Entries whose `verified='accepted'` was
+  written by the canonical /connections/ scan (i.e. carry a `connectedOnText`
+  field) are now off-limits to profile.js downgrades — only a fresh
+  /connections/ scan can revise them.
+- content.js: /sent/ invitations sent to an email address (no /in/ link
+  because the recipient has no LinkedIn profile yet, or LinkedIn's
+  "you-must-know-them" wall hid the link) are now captured. They appear in
+  the Pending tab keyed by `mailto:<email>`, with the email rendered as a
+  non-clickable monospace span (no profile to open, no email client to fire).
+
 ## [1.1.1] — 2026-05-25
 
 Reliability patch for profile-visit status detection. Two real-user bugs fixed
