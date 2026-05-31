@@ -99,6 +99,44 @@ function parseCard(link) {
   return { profileUrl, name, headline, avatar, connectedAt, dateText };
 }
 
+// Find the element that actually scrolls. LinkedIn's newer /connections/ UI
+// puts an internal scroll on <main> (scrollHeight 40k+, clientHeight ~900)
+// while the window itself doesn't scroll at all. Older layouts may use window
+// scroll. We pick the largest overflow:auto/scroll element with real overflow
+// content, falling back to null = "use window scroll".
+function findScrollContainer() {
+  // Prefer window scroll if document is actually taller than viewport.
+  const docExcess = document.documentElement.scrollHeight - window.innerHeight;
+  if (docExcess > 200) return null;
+
+  let best = null;
+  let bestExcess = 0;
+  for (const el of document.querySelectorAll('*')) {
+    const cs = getComputedStyle(el);
+    if (cs.overflowY !== 'auto' && cs.overflowY !== 'scroll') continue;
+    const excess = el.scrollHeight - el.clientHeight;
+    if (excess < 200) continue;
+    if (excess > bestExcess) { best = el; bestExcess = excess; }
+  }
+  return best;
+}
+
+function scrollDownHard(container) {
+  if (container) {
+    container.scrollTop = container.scrollHeight;
+  } else {
+    window.scrollTo(0, document.documentElement.scrollHeight);
+  }
+}
+
+function scrollBy(container, delta) {
+  if (container) {
+    container.scrollTop = Math.max(0, container.scrollTop + delta);
+  } else {
+    window.scrollBy(0, delta);
+  }
+}
+
 // Auto-scroll + parse with virtualization-safe accumulator.
 //
 // LinkedIn virtualizes the /connections/ list: as you scroll, top cards get
@@ -109,9 +147,8 @@ function parseCard(link) {
 // tick and accumulate into an outer-scope Map. Stability check now measures
 // growth of the accumulator, not the current DOM snapshot.
 //
-// Also force scrolling at the WINDOW level (not just scrollIntoView, which
-// no-ops if the target is already in view) to reliably trigger LinkedIn's
-// lazy-load handler.
+// Scroll target: a re-detected scroll container on every tick (LinkedIn can
+// swap the layout mid-scan). Window scroll is the fallback for older UIs.
 async function autoScrollAndCollect() {
   const collected = new Map(); // profileUrl -> parsedCard
   let stableRounds = 0;
@@ -148,25 +185,21 @@ async function autoScrollAndCollect() {
     const added = firstSeen;
     console.log(`[LI Tracker] connections tick ${iter}: visible ${visible.size}, total seen ${collected.size}, new ${added}`);
 
-    // Three-step scroll: (1) jump to last visible card, (2) force window scroll
-    // by a large delta to cross virtualization boundary even if last card is
-    // already at viewport bottom, (3) hard scrollTo bottom of document — this
-    // is what LinkedIn's lazy-load handler actually listens for on long lists.
-    const lastLink = Array.from(visible.values()).pop();
-    if (lastLink) lastLink.scrollIntoView({ block: 'end' });
-    window.scrollBy(0, 1500);
-    window.scrollTo(0, document.documentElement.scrollHeight);
+    // Re-detect scroll container every tick — LinkedIn can swap layouts on
+    // navigation, and the container may move after virtualization passes.
+    const container = findScrollContainer();
+    scrollDownHard(container);
 
     await cancellableSleep(rand(2000, 3500));
 
     if (added === 0) {
       stableRounds++;
-      // Recover bounce — scroll up then back down hard. Sometimes LinkedIn's
-      // lazy-load handler won't fire when the bottom sentinel is steady, so
-      // we deliberately leave then re-enter the bottom region.
-      window.scrollBy(0, -500);
+      // Recovery bounce — scroll up then back down hard. LinkedIn's lazy-load
+      // handler sometimes needs us to leave the bottom sentinel and re-enter
+      // it to fire again. Done on the same container we found above.
+      scrollBy(container, -500);
       await cancellableSleep(rand(500, 900));
-      window.scrollBy(0, 2000);
+      scrollDownHard(container);
       await cancellableSleep(rand(800, 1400));
     } else {
       stableRounds = 0;
