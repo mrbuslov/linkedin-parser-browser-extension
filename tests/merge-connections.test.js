@@ -52,13 +52,30 @@ describe('mergeConnections', () => {
     expect(r.accepted[url].acceptedAt).toBe(NOW - 50 * DAY);
   });
 
-  it('clears any stale autoMarked flag once LinkedIn confirms via connections page', () => {
-    const url = 'https://www.linkedin.com/in/a/';
+  it('REGRESSION (Dmitry "560 to handle" bug): auto-marks pre-existing connections never tracked via /sent/', () => {
+    // User scans /connections/ for the first time. Their 600 legacy connections
+    // all land in accepted — but those are pre-existing contacts, not people
+    // who just accepted a recent invite. Don't pollute the "to handle" count;
+    // mark them so they go straight to the Marked tab.
+    const url = 'https://www.linkedin.com/in/old-friend/';
+    const r = mergeConnections([item(url)], {}, NOW);
+    expect(r.accepted[url].marked).toBe(true);
+    expect(r.accepted[url].markedAt).toBe(NOW);
+    expect(r.accepted[url].autoMarked).toBe(true);
+  });
+
+  it('does NOT auto-mark a connection that was newly accepted from sentInvitations', () => {
+    // User sent invite → person accepted → /sent/ diff moved them to accepted
+    // with marked=false. /connections/ scan re-confirms them. They SHOULD stay
+    // unmarked — they're someone the user is actively handling.
+    const url = 'https://www.linkedin.com/in/just-accepted/';
     const stored = {
-      accepted: { [url]: { profileUrl: url, autoMarked: true, marked: true } },
+      sentInvitations: { [url]: { profileUrl: url, firstSeenAt: NOW - 7 * DAY } },
     };
     const r = mergeConnections([item(url)], stored, NOW);
+    expect(r.accepted[url].marked).toBe(false);
     expect(r.accepted[url].autoMarked).toBe(false);
+    expect(r.sentInvitations[url]).toBeUndefined();
   });
 
   it('preserves marked status set by the user', () => {

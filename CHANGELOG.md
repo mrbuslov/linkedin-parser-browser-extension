@@ -10,7 +10,8 @@ In development for the next release. See [plan.md](plan.md) for the prioritized 
 
 ## [1.1.2] — 2026-05-25
 
-Bugfix release driven by external user feedback (thanks Mira).
+Bugfix release driven by external user feedback (thanks Mira) plus internal
+testing rounds.
 
 ### Fixed
 - profile.js: a real 1st-degree connection no longer gets wrongly flipped to
@@ -24,6 +25,29 @@ Bugfix release driven by external user feedback (thanks Mira).
   "you-must-know-them" wall hid the link) are now captured. They appear in
   the Pending tab keyed by `mailto:<email>`, with the email rendered as a
   non-clickable monospace span (no profile to open, no email client to fire).
+- profile.js: replaced MutationObserver + debounce + stability-confirm logic
+  with a simple 250ms polling loop. The latest DOM snapshot self-corrects on
+  the next tick, so transient mid-render false positives disappear within a
+  quarter-second. Net code reduction ~40 lines.
+- connections.js: /connections/ scan no longer exits early when LinkedIn
+  virtualizes its long list (top cards get removed from DOM as new ones load
+  at bottom, keeping the visible count flat). We now parse cards on every
+  tick and accumulate into a Map keyed by profileUrl, so total-seen growth
+  is the real signal. Plus a hard `window.scrollTo(0, scrollHeight)` each
+  tick to trigger LinkedIn's lazy-load handler reliably. Stable-rounds
+  threshold bumped 4 → 6 (16-28s tolerance) for slow LinkedIn batches.
+- connections.js: avatar URLs are now picked up correctly. Previously the
+  parser would lock in `avatar=''` on the very first parse of a card (when
+  LinkedIn hadn't lazy-loaded the `<img>` yet) and never re-attempt. Now
+  cards are re-parsed every tick and non-empty fields are preferred.
+- merge-connections.js: pre-existing connections discovered during the first
+  /connections/ scan are now auto-marked (go straight to Marked tab) so they
+  don't pollute the "to handle" count in Accepted. Newly accepted invites
+  (those that were in sentInvitations before) stay unmarked — those are the
+  ones the user actually needs to handle.
+- content.js (Withdraw): clicking Withdraw on /sent/ now removes the entry
+  from Pending immediately. Previously we just stamped `withdrawnAt` and
+  the entry hung around in the popup until the next /sent/ scan.
 
 ## [1.1.1] — 2026-05-25
 

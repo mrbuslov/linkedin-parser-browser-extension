@@ -7,7 +7,7 @@ console.log('[LI Tracker] connections script INJECTED at', location.href);
 
 dbSet({ scanInProgress: null });
 
-const STABLE_ROUNDS_TO_STOP = 4;
+const STABLE_ROUNDS_TO_STOP = 6;
 const HARD_LIMIT_ITERATIONS = 800;
 
 let cancelRequested = false;
@@ -99,44 +99,88 @@ function parseCard(link) {
   return { profileUrl, name, headline, avatar, connectedAt, dateText };
 }
 
-async function autoScroll() {
+// Auto-scroll + parse with virtualization-safe accumulator.
+//
+// LinkedIn virtualizes the /connections/ list: as you scroll, top cards get
+// REMOVED from the DOM and new ones appended at the bottom. The total DOM
+// count stays roughly constant. Earlier versions called findCards() each tick
+// and compared counts — counter stayed flat → loop thought "done" → exited
+// with only the last ~50 cards captured. Fix: parse every visible card EACH
+// tick and accumulate into an outer-scope Map. Stability check now measures
+// growth of the accumulator, not the current DOM snapshot.
+//
+// Also force scrolling at the WINDOW level (not just scrollIntoView, which
+// no-ops if the target is already in view) to reliably trigger LinkedIn's
+// lazy-load handler.
+async function autoScrollAndCollect() {
+  const collected = new Map(); // profileUrl -> parsedCard
   let stableRounds = 0;
-  let lastCount = 0;
+  let lastSize = 0;
   let iter = 0;
 
   while (stableRounds < STABLE_ROUNDS_TO_STOP && iter < HARD_LIMIT_ITERATIONS) {
     iter++;
-    const cards = findCards();
-    const added = cards.size - lastCount;
-    console.log(`[LI Tracker] connections tick ${iter}: total ${cards.size}, new ${added}`);
 
-    const last = Array.from(cards.values()).pop();
-    if (last) last.scrollIntoView({ block: 'end' });
+    const visible = findCards();
+    let firstSeen = 0;
+    for (const [url, link] of visible.entries()) {
+      const item = parseCard(link);
+      if (!item) continue;
+      const existing = collected.get(url);
+      if (!existing) {
+        firstSeen++;
+        collected.set(url, item);
+      } else {
+        // Re-parse — LinkedIn lazy-loads avatar images, so a card we first
+        // saw seconds ago may now have its <img> src populated. Always
+        // overwrite, but prefer non-empty fields from either parse so a
+        // later parse that lost data (e.g. card mid-virtualization) doesn't
+        // erase what we already had.
+        collected.set(url, {
+          ...item,
+          avatar:      item.avatar      || existing.avatar      || '',
+          headline:    item.headline    || existing.headline    || '',
+          connectedAt: item.connectedAt || existing.connectedAt || null,
+          dateText:    item.dateText    || existing.dateText    || '',
+        });
+      }
+    }
+    const added = firstSeen;
+    console.log(`[LI Tracker] connections tick ${iter}: visible ${visible.size}, total seen ${collected.size}, new ${added}`);
+
+    // Three-step scroll: (1) jump to last visible card, (2) force window scroll
+    // by a large delta to cross virtualization boundary even if last card is
+    // already at viewport bottom, (3) hard scrollTo bottom of document — this
+    // is what LinkedIn's lazy-load handler actually listens for on long lists.
+    const lastLink = Array.from(visible.values()).pop();
+    if (lastLink) lastLink.scrollIntoView({ block: 'end' });
+    window.scrollBy(0, 1500);
+    window.scrollTo(0, document.documentElement.scrollHeight);
 
     await cancellableSleep(rand(2000, 3500));
 
     if (added === 0) {
       stableRounds++;
-      window.scrollBy(0, -300);
+      // Recover bounce — scroll up then back down hard. Sometimes LinkedIn's
+      // lazy-load handler won't fire when the bottom sentinel is steady, so
+      // we deliberately leave then re-enter the bottom region.
+      window.scrollBy(0, -500);
       await cancellableSleep(rand(500, 900));
-      if (last) last.scrollIntoView({ block: 'end' });
+      window.scrollBy(0, 2000);
       await cancellableSleep(rand(800, 1400));
     } else {
       stableRounds = 0;
     }
 
-    lastCount = cards.size;
+    lastSize = collected.size;
   }
 
-  return findCards();
+  console.log(`[LI Tracker] autoScroll done after ${iter} ticks, total captured: ${collected.size}`);
+  return collected;
 }
 
-async function persistConnections(links) {
-  const snapshot = [];
-  for (const link of links.values()) {
-    const item = parseCard(link);
-    if (item) snapshot.push(item);
-  }
+async function persistConnections(collected) {
+  const snapshot = Array.from(collected.values());
   const stored = await dbGet(['accepted', 'sentInvitations']);
   const result = LITMergeConnections.mergeConnections(snapshot, stored, Date.now());
   await dbSet({ accepted: result.accepted, sentInvitations: result.sentInvitations });
@@ -156,10 +200,10 @@ async function runScan() {
   await dbSet({ scanInProgress: 'connections' });
   try {
     console.log('[LI Tracker] starting connections scan...');
-    const links = await autoScroll();
-    console.log(`[LI Tracker] parsed ${links.size} connections`);
+    const collected = await autoScrollAndCollect();
+    console.log(`[LI Tracker] parsed ${collected.size} connections`);
 
-    if (links.size === 0) {
+    if (collected.size === 0) {
       await updateScanState({
         lastScannedAt: Date.now(),
         lastCount: 0,
@@ -168,11 +212,11 @@ async function runScan() {
       return;
     }
 
-    const touched = await persistConnections(links);
+    const touched = await persistConnections(collected);
     console.log(`[LI Tracker] merged ${touched} connections into accepted`);
     await updateScanState({
       lastScannedAt: Date.now(),
-      lastCount: links.size,
+      lastCount: collected.size,
       lastError: null,
     });
   } catch (err) {

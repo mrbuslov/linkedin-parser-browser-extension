@@ -13,12 +13,24 @@ function mergeConnections(snapshot, stored, now) {
   for (const item of snapshot) {
     if (!item || !item.profileUrl) continue;
 
+    const existing = accepted[item.profileUrl];
+    const wasInSent = !!sentInvitations[item.profileUrl];
+
     // LinkedIn confirms they're connected → remove from sentInvitations.
-    if (sentInvitations[item.profileUrl]) {
+    if (wasInSent) {
       delete sentInvitations[item.profileUrl];
     }
 
-    const existing = accepted[item.profileUrl];
+    // "Pre-existing discovery": we've never tracked this person before (not
+    // in accepted, not in sentInvitations) and we just discovered them via
+    // the canonical /connections/ scan. They're a legacy connection — not
+    // someone the user just sent an invite to and is waiting to handle.
+    // Auto-mark so they don't pollute the "N to handle" count in Accepted.
+    //
+    // Subsequent rescans preserve marked state via `existing?.marked ?? ...`,
+    // so a user who manually unmarked an auto-marked entry stays unmarked.
+    const isPreExistingDiscovery = !existing && !wasInSent;
+
     const linkedinAcceptedAt = item.connectedAt || existing?.acceptedAt || now;
     const firstSeenAt = existing?.firstSeenAt || linkedinAcceptedAt;
 
@@ -31,12 +43,12 @@ function mergeConnections(snapshot, stored, now) {
       acceptedAt: linkedinAcceptedAt,
       firstSeenAt,
       daysPending: Math.floor((linkedinAcceptedAt - firstSeenAt) / DAY_MS),
-      marked: existing?.marked ?? false,
-      markedAt: existing?.markedAt ?? null,
+      marked: existing?.marked ?? isPreExistingDiscovery,
+      markedAt: existing?.markedAt ?? (isPreExistingDiscovery ? now : null),
       verified: 'accepted',
       verifiedAt: now,
       connectedOnText: item.dateText || existing?.connectedOnText || '',
-      autoMarked: false,
+      autoMarked: existing?.autoMarked ?? isPreExistingDiscovery,
       addedFrom: existing?.addedFrom || 'connections-page',
     };
     touched++;

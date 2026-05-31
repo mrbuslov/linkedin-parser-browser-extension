@@ -117,9 +117,10 @@ function setupWithdrawListener() {
 
     const { sentInvitations = {} } = await dbGet('sentInvitations');
     if (!sentInvitations[profileUrl]) return;
-    sentInvitations[profileUrl].withdrawnAt = Date.now();
+    const name = sentInvitations[profileUrl].name;
+    delete sentInvitations[profileUrl];
     await dbSet({ sentInvitations });
-    console.log(`[LI Tracker] marked withdrawn: ${sentInvitations[profileUrl].name}`);
+    console.log(`[LI Tracker] withdrew & removed: ${name}`);
   }, true);
 }
 
