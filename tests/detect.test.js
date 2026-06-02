@@ -108,7 +108,9 @@ describe('detectConnectionStatus', () => {
     expect(detectConnectionStatus(root)).toBe('connected');
   });
 
-  it('ignores Pending matches in very long text blocks (defense against false positives)', () => {
+  it('ignores Pending mentions in long <div> paragraphs (only buttons/anchors are matched)', () => {
+    // Defense in depth: even without a length cap, the selector restricts to
+    // button/a/[role="button"] — bare <div>s with "pending" prose don't match.
     const root = makeRoot(`
       <h1>Some Person</h1>
       <button>Connect</button>
@@ -116,6 +118,19 @@ describe('detectConnectionStatus', () => {
       <div>Pending invitations are shown elsewhere. Lots of explanatory paragraph text here that mentions pending more than once to make sure we don't accidentally trigger on long passages.</div>
     `);
     expect(detectConnectionStatus(root)).toBe('not_connected');
+  });
+
+  it('does not false-positive on a long button label that happens to contain "Follow"', () => {
+    // After length-cap removal we rely purely on prefix matching. A button
+    // text that starts with "Follow" still triggers hasFollow — but a button
+    // text that just MENTIONS follow somewhere in the middle should not.
+    const root = makeRoot(`
+      <h1>Real Connection</h1>
+      <button>Click to learn how to follow this user later</button>
+      <a href="/messaging/compose/">Message</a>
+    `);
+    // The button text starts with "Click" → does NOT match Follow prefix.
+    expect(detectConnectionStatus(root)).toBe('connected');
   });
 
   it('ignores hidden Pending buttons (display:none)', () => {

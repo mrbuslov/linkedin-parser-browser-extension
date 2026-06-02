@@ -156,7 +156,13 @@ function renderAcceptedRow(item, { primaryAction, primaryLabel }) {
   ]);
 }
 
-function renderAccepted(items) {
+function renderDeclinedWarning(declinedCount, connectionsScanState) {
+  const banner = $('declined-warning');
+  if (!banner) return;
+  banner.hidden = !LITPopupLogic.shouldShowDeclinedWarning(declinedCount, connectionsScanState);
+}
+
+function renderAccepted(items, connectionsScanState) {
   const list = $('accepted-list');
   const declinedList = $('declined-list');
   const declinedBlock = $('declined-block');
@@ -198,6 +204,8 @@ function renderAccepted(items) {
       primaryLabel: 'Mark',
     }));
   }
+
+  renderDeclinedWarning(declined.length, connectionsScanState);
 }
 
 function renderMarked(items) {
@@ -227,7 +235,7 @@ async function loadData() {
     await dbGet(['sentInvitations', 'accepted', 'scanHistory', 'scanState']);
 
   renderPending(Object.values(sentInvitations));
-  renderAccepted(Object.values(accepted));
+  renderAccepted(Object.values(accepted), scanState.connections);
   renderMarked(Object.values(accepted));
   renderScanInfo($('pending-scan-info'), scanState.sent);
   renderScanInfo($('accepted-scan-info'), scanState.connections);
@@ -416,6 +424,7 @@ $('open-sent').addEventListener('click', async () => {
 });
 
 $('empty-open-sent').addEventListener('click', () => chrome.tabs.create({ url: SENT_URL }));
+$('declined-warning-scan').addEventListener('click', () => chrome.tabs.create({ url: CONNECTIONS_URL }));
 $('mark-all').addEventListener('click', markAllAccepted);
 $('open-support').addEventListener('click', () => chrome.tabs.create({ url: SUPPORT_URL }));
 $('search').addEventListener('input', (e) => {

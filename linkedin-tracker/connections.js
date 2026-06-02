@@ -30,14 +30,30 @@ async function cancellableSleep(ms) {
   if (cancelRequested) throw new ScanCancelled();
 }
 
-// Find profile name links in the connection grid. Each card has a profile link
-// (sometimes two: one on avatar, one on name) — dedupe by profileUrl.
+// Extract a person's name from a profile link. New LinkedIn UI nests name +
+// headline INSIDE the same <a href="/in/...">, so link.textContent is e.g.
+// "Bernardo NevesInternal Medicine MD | Clinical Analytics & Value-Based..."
+// — too long to be just a name. We prefer the first <h1>/<h2>/<h3>/<p>
+// element inside the link, which is the name in every variant of the UI.
+function extractNameFromLink(link) {
+  for (const sel of ['h1', 'h2', 'h3', 'p']) {
+    const el = link.querySelector(sel);
+    if (!el) continue;
+    const t = (el.textContent || '').trim();
+    if (t && t.length > 1) return t;
+  }
+  return (link.textContent || '').trim();
+}
+
+// Find profile-name links in the connection grid. Each card has a profile link
+// (sometimes two: one on avatar with no text, one on the name block) — dedupe
+// by profileUrl. We require SOME extractable name so we skip non-card /in/
+// links (e.g. mutual-connections sidebar lists).
 function findCards() {
   const byUrl = new Map();
   for (const link of document.querySelectorAll('a[href*="/in/"]')) {
-    const text = (link.textContent || '').trim();
-    if (!text) continue;
-    if (text.length > 100) continue;  // skip non-name links with rich content
+    const name = extractNameFromLink(link);
+    if (!name) continue;
     const url = LITUrl.normalizeProfileUrl(link.href);
     if (!byUrl.has(url)) byUrl.set(url, link);
   }
@@ -63,14 +79,14 @@ function parseCard(link) {
   const profileUrl = LITUrl.normalizeProfileUrl(link.href);
   const card = findCardContainer(link);
 
-  const name = (link.textContent || '').trim();
+  const name = extractNameFromLink(link);
   if (!name) return null;
 
   let headline = '';
   for (const p of card.querySelectorAll('p, span')) {
     if (p.children.length > 0) continue;
     const t = (p.textContent || '').trim();
-    if (!t || t.length < 4 || t.length > 200) continue;
+    if (!t || t.length < 4) continue;
     if (t === name) continue;
     if (/connected\s+on|в\s+контактах|verbunden\s+seit/i.test(t)) continue;
     if (/^message$|^more$/i.test(t)) continue;

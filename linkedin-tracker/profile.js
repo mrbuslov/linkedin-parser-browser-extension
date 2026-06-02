@@ -16,7 +16,7 @@ function extractLocation() {
     if (ps[1].textContent.trim() !== '·') continue;
     if (!ps[2].querySelector('a[href="#"]')) continue;
     const text = ps[0].textContent.trim();
-    if (text && text.length < 200) return text;
+    if (text) return text;
   }
   return '';
 }
@@ -37,7 +37,7 @@ function extractProfileInfo() {
   for (const node of root.querySelectorAll('div, span, p')) {
     if (node.children.length > 0) continue;
     const t = (node.textContent || '').trim();
-    if (!t || t.length < 3 || t.length > 200) continue;
+    if (!t || t.length < 3) continue;
     if (t === name) continue;
     if (heading.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING) {
       headline = t;

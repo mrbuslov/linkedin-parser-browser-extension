@@ -43,6 +43,14 @@
         <button id="mark-all" class="text-action" hidden>Mark all</button>
       </div>
       <div class="scan-info" id="accepted-scan-info"></div>
+      <div class="warning-banner" id="declined-warning" hidden>
+        <span class="warning-icon">⚠️</span>
+        <div class="warning-body">
+          <p class="warning-title">Some entries are marked declined</p>
+          <p class="warning-text">but may actually be your connections. Run a scan of your connections page to verify.</p>
+          <button class="warning-cta" id="declined-warning-scan">Open connections page</button>
+        </div>
+      </div>
       <ul class="list" id="accepted-list"></ul>
       <details class="declined-block" id="declined-block" hidden>
         <summary id="declined-summary">Didn't accept</summary>
@@ -96,5 +104,6 @@
   </main>
 </body>
 <script src="db-client.js"></script>
+<script src="core/popup-logic.js"></script>
 <script src="popup.js"></script>
 </html>

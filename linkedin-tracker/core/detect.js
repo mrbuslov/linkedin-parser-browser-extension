@@ -58,7 +58,6 @@ function detectConnectionStatus(root) {
   for (const btn of actions) {
     if (!isVisible(btn)) continue;
     const text = (btn.textContent || '').trim();
-    if (text.length > 80) continue;
     const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
 
     if (matchesPrefix(text, FOLLOW_PREFIXES)) hasFollow = true;

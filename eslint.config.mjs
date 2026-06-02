@@ -25,6 +25,7 @@ export default [
         LITProfileState: 'readonly',
         LITDiffSent: 'readonly',
         LITMergeConnections: 'readonly',
+        LITPopupLogic: 'readonly',
         // db-client.js exposes these
         dbGet: 'readonly',
         dbSet: 'readonly',
