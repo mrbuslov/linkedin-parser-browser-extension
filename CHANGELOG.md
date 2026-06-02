@@ -8,10 +8,18 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
-## [1.1.2] — 2026-05-25
+## [1.2.0] — 2026-06-02
 
-Bugfix release driven by external user feedback (thanks Mira) plus internal
-testing rounds.
+Big stability release driven by extensive real-world testing with Mira and
+other beta users. Many bugs that had been silently dropping data are fixed,
+and there's a new onboarding nudge in the popup so users know to run the
+/connections/ scan when needed.
+
+### Added
+- Yellow warning banner in the Accepted tab that appears when declined entries
+  exist AND the /connections/ scan was never run. One-click "Open connections
+  page" CTA. Disappears permanently after the first /connections/ scan.
+- `core/popup-logic.js` with pure-function helpers for popup decisions.
 
 ### Fixed
 - profile.js: a real 1st-degree connection no longer gets wrongly flipped to
@@ -48,6 +56,28 @@ testing rounds.
 - content.js (Withdraw): clicking Withdraw on /sent/ now removes the entry
   from Pending immediately. Previously we just stamped `withdrawnAt` and
   the entry hung around in the popup until the next /sent/ scan.
+- /connections/ card parser: cards whose `<a href="/in/...">` link wraps both
+  the name AND a long headline (new LinkedIn UI) no longer get silently
+  dropped. Name is now extracted from the first inner `<h1>/<h2>/<h3>/<p>`,
+  not from the whole `link.textContent`. This was the root cause of Mira's
+  "Luis/Ana/Bernardo stuck as ✗ DECLINED" — they never made it into the
+  /connections/ scan snapshot, so the canonical "verified=accepted" override
+  never applied to them.
+- /connections/ scan now scrolls the actual scroll container (LinkedIn's
+  `<main>` element) instead of the window. The newer LinkedIn UI uses an
+  internal scroll layer with `scrollHeight` of ~40000 while the window
+  itself doesn't scroll at all — earlier versions got stuck at ~280 cards
+  out of 2000+. We now detect the right container per tick and force-scroll
+  it to the bottom.
+- All hardcoded upper text-length filters removed across content.js,
+  connections.js, profile.js, and core/detect.js. Lower bounds (skip
+  empty/single-char strings) retained as garbage filters. Long real-world
+  content (headlines, locations, button labels) is now preserved verbatim.
+
+### Tests
+- 94 unit tests (was 82). New regression cases: long-headline /connections/
+  card capture, "no upper length cap" semantics, detect.js defense against
+  long button-text false positives, popup warning visibility rules.
 
 ## [1.1.1] — 2026-05-25
 
