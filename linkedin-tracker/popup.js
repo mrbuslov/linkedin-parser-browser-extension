@@ -168,6 +168,7 @@ function renderPending(items) {
           el('span', {}, [`Pending ${days}d`]),
           item.sentDateRelative ? el('span', {}, [item.sentDateRelative]) : null,
         ]),
+        el('div', { className: 'row-actions' }, [deleteButton(item)]),
       ]),
     ]));
   }
@@ -188,6 +189,7 @@ function renderAcceptedRow(item, { primaryAction, primaryLabel }) {
     actionBtn.addEventListener('click', () => primaryAction(item.profileUrl));
     actions.push(actionBtn);
   }
+  actions.push(deleteButton(item));
 
   const rowClasses = ['row', ageClassFromDays(sinceAccepted)];
   if (isDeclined) rowClasses.push('declined');
@@ -313,6 +315,34 @@ async function setMarked(profileUrl, value) {
   accepted[profileUrl].markedAt = value ? Date.now() : null;
   if (!value) accepted[profileUrl].welcomeMessageSent = false;
   await dbSet({ accepted });
+}
+
+// Permanently remove an entry by its profileUrl across every store it lives
+// in (sentInvitations, accepted, contacts). Used by per-row Delete and the
+// cleanup flow for stale duplicates. Confirm dialog gates the action so a
+// stray click can't nuke a contact.
+async function deleteEntry(profileUrl, displayName) {
+  const ok = window.confirm(
+    `Delete "${displayName || profileUrl}" from the tracker?\n\n`
+    + 'Removes this entry from Pending / Accepted / Marked / Contacts. '
+    + 'Cannot be undone. If LinkedIn still has the actual connection, a '
+    + 'future /connections/ scan will re-add them.'
+  );
+  if (!ok) return;
+  const { sentInvitations = {}, accepted = {}, contacts = {} } =
+    await dbGet(['sentInvitations', 'accepted', 'contacts']);
+  const patch = {};
+  if (sentInvitations[profileUrl]) { delete sentInvitations[profileUrl]; patch.sentInvitations = sentInvitations; }
+  if (accepted[profileUrl])        { delete accepted[profileUrl];        patch.accepted        = accepted; }
+  if (contacts[profileUrl])        { delete contacts[profileUrl];        patch.contacts        = contacts; }
+  if (Object.keys(patch).length > 0) await dbSet(patch);
+  showToast('Deleted');
+}
+
+function deleteButton(item) {
+  const btn = el('button', { className: 'danger', type: 'button' }, ['Delete']);
+  btn.addEventListener('click', () => deleteEntry(item.profileUrl, item.name));
+  return btn;
 }
 
 async function markAllAccepted() {
