@@ -353,16 +353,18 @@ describe('applyProfileVisit — invariants', () => {
   });
 });
 
-describe('applyProfileVisit — cross-URL dedup (Zhenia regression)', () => {
-  it('migrates old declined entry to new URL when names match (vanity-change case)', () => {
-    // Pre-1.2.2 record under the OLD slug, marked declined by the buggy
-    // detector. User re-visits at the NEW slug, fix returns connected.
-    // Without dedup we'd get two rows: old declined + new accepted.
+describe('applyProfileVisit — cross-URL dedup (memberId ONLY, no name fallback)', () => {
+  it('merges old record into new URL when memberId matches', () => {
+    // User visited a profile under OLD slug, contact got declined by the
+    // buggy pre-1.2.2 detector. LinkedIn changes the slug. User re-visits
+    // at NEW slug, fix returns connected. memberId from RSC matches the
+    // stored memberId on the old record → merge into new URL key.
     const stored = {
       accepted: {
         'https://www.linkedin.com/in/zhenia-old-slug/': {
           profileUrl: 'https://www.linkedin.com/in/zhenia-old-slug/',
           name: 'Zhenia Mohyla',
+          memberId: 'M-111',
           verified: 'declined',
           acceptedAt: NOW - 30 * DAY,
           firstSeenAt: NOW - 30 * DAY,
@@ -371,25 +373,26 @@ describe('applyProfileVisit — cross-URL dedup (Zhenia regression)', () => {
       },
     };
     const r = applyProfileVisit(stored, info({
-      profileUrl: 'https://www.linkedin.com/in/zhenia-mohyla/',
+      profileUrl: 'https://www.linkedin.com/in/zhenyamogila/',
       name: 'Zhenia Mohyla',
+      memberId: 'M-111',
     }), 'connected', NOW);
 
     expect(r.accepted['https://www.linkedin.com/in/zhenia-old-slug/']).toBeUndefined();
-    const cur = r.accepted['https://www.linkedin.com/in/zhenia-mohyla/'];
+    const cur = r.accepted['https://www.linkedin.com/in/zhenyamogila/'];
     expect(cur).toBeDefined();
     expect(cur.verified).toBe('accepted');
-    // Migrated fields preserved
     expect(cur.firstSeenAt).toBe(NOW - 30 * DAY);
     expect(cur.acceptedAt).toBe(NOW - 30 * DAY);
   });
 
-  it('migrates contact info from old declined entry to new URL', () => {
+  it('migrates contact info from old record into new URL when memberId matches', () => {
     const stored = {
       accepted: {
         'https://www.linkedin.com/in/old/': {
           profileUrl: 'https://www.linkedin.com/in/old/',
           name: 'Zhenia Mohyla',
+          memberId: 'M-111',
           verified: 'declined',
           acceptedAt: NOW - 30 * DAY,
           firstSeenAt: NOW - 30 * DAY,
@@ -403,6 +406,7 @@ describe('applyProfileVisit — cross-URL dedup (Zhenia regression)', () => {
     const r = applyProfileVisit(stored, info({
       profileUrl: 'https://www.linkedin.com/in/new/',
       name: 'Zhenia Mohyla',
+      memberId: 'M-111',
     }), 'connected', NOW, null);
 
     const cur = r.accepted['https://www.linkedin.com/in/new/'];
@@ -410,14 +414,13 @@ describe('applyProfileVisit — cross-URL dedup (Zhenia regression)', () => {
     expect(cur.phone).toBe('+999');
   });
 
-  it('memberId match wins over name match (bulletproof identity)', () => {
-    // Two entries with same memberId but different name — still merged.
+  it('still merges when names DIFFER but memberId matches (married surname, transliteration)', () => {
     const stored = {
       accepted: {
-        'https://www.linkedin.com/in/old-name/': {
-          profileUrl: 'https://www.linkedin.com/in/old-name/',
-          name: 'Maiden Surname',
-          memberId: 'M-111',
+        'https://www.linkedin.com/in/maiden-name/': {
+          profileUrl: 'https://www.linkedin.com/in/maiden-name/',
+          name: 'Anna Smith',
+          memberId: 'M-555',
           verified: 'accepted',
           acceptedAt: NOW - 60 * DAY,
           firstSeenAt: NOW - 60 * DAY,
@@ -426,20 +429,23 @@ describe('applyProfileVisit — cross-URL dedup (Zhenia regression)', () => {
       },
     };
     const r = applyProfileVisit(stored, info({
-      profileUrl: 'https://www.linkedin.com/in/new-name/',
-      name: 'Married Surname',
-      memberId: 'M-111',
+      profileUrl: 'https://www.linkedin.com/in/married-name/',
+      name: 'Anna Johnson',
+      memberId: 'M-555',
     }), 'connected', NOW);
-    expect(r.accepted['https://www.linkedin.com/in/old-name/']).toBeUndefined();
-    expect(r.accepted['https://www.linkedin.com/in/new-name/']).toBeDefined();
+    expect(r.accepted['https://www.linkedin.com/in/maiden-name/']).toBeUndefined();
+    expect(r.accepted['https://www.linkedin.com/in/married-name/']).toBeDefined();
   });
 
-  it('does NOT dedup when names are too short (avoids "Lee" collisions)', () => {
+  it('does NOT dedup when names match but memberIds differ (two different people)', () => {
+    // The whole reason name-based dedup is banned: two real people named
+    // "John Smith" with different memberIds must remain separate records.
     const stored = {
       accepted: {
-        'https://www.linkedin.com/in/lee-a/': {
-          profileUrl: 'https://www.linkedin.com/in/lee-a/',
-          name: 'Lee',
+        'https://www.linkedin.com/in/john-a/': {
+          profileUrl: 'https://www.linkedin.com/in/john-a/',
+          name: 'John Smith',
+          memberId: 'M-AAA',
           verified: 'accepted',
           acceptedAt: NOW - 30 * DAY,
           firstSeenAt: NOW - 30 * DAY,
@@ -448,11 +454,38 @@ describe('applyProfileVisit — cross-URL dedup (Zhenia regression)', () => {
       },
     };
     const r = applyProfileVisit(stored, info({
-      profileUrl: 'https://www.linkedin.com/in/lee-b/',
-      name: 'Lee',
+      profileUrl: 'https://www.linkedin.com/in/john-b/',
+      name: 'John Smith',
+      memberId: 'M-BBB',
     }), 'connected', NOW);
-    expect(r.accepted['https://www.linkedin.com/in/lee-a/']).toBeDefined();
-    expect(r.accepted['https://www.linkedin.com/in/lee-b/']).toBeDefined();
+    expect(r.accepted['https://www.linkedin.com/in/john-a/']).toBeDefined();
+    expect(r.accepted['https://www.linkedin.com/in/john-b/']).toBeDefined();
+  });
+
+  it('does NOT dedup when one side has no memberId (silent name-based merge banned)', () => {
+    // Legacy record from pre-1.2.2 has no memberId. New visit has one.
+    // Without a verifiable identity match we MUST NOT merge — name match
+    // alone is forbidden because it can corrupt data with two people
+    // sharing a name.
+    const stored = {
+      accepted: {
+        'https://www.linkedin.com/in/legacy/': {
+          profileUrl: 'https://www.linkedin.com/in/legacy/',
+          name: 'Zhenia Mohyla',
+          verified: 'declined',
+          acceptedAt: NOW - 30 * DAY,
+          firstSeenAt: NOW - 30 * DAY,
+          daysPending: 0,
+        },
+      },
+    };
+    const r = applyProfileVisit(stored, info({
+      profileUrl: 'https://www.linkedin.com/in/zhenyamogila/',
+      name: 'Zhenia Mohyla',
+      memberId: 'M-NEW',
+    }), 'connected', NOW);
+    expect(r.accepted['https://www.linkedin.com/in/legacy/']).toBeDefined();
+    expect(r.accepted['https://www.linkedin.com/in/zhenyamogila/']).toBeDefined();
   });
 
   it('preserves marked status from the older record after merge', () => {
@@ -461,6 +494,7 @@ describe('applyProfileVisit — cross-URL dedup (Zhenia regression)', () => {
         'https://www.linkedin.com/in/old/': {
           profileUrl: 'https://www.linkedin.com/in/old/',
           name: 'Zhenia Mohyla',
+          memberId: 'M-111',
           verified: 'accepted',
           marked: true,
           markedAt: NOW - 10 * DAY,
@@ -473,6 +507,7 @@ describe('applyProfileVisit — cross-URL dedup (Zhenia regression)', () => {
     const r = applyProfileVisit(stored, info({
       profileUrl: 'https://www.linkedin.com/in/new/',
       name: 'Zhenia Mohyla',
+      memberId: 'M-111',
     }), 'connected', NOW);
     const cur = r.accepted['https://www.linkedin.com/in/new/'];
     expect(cur.marked).toBe(true);

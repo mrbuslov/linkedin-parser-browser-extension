@@ -25,29 +25,17 @@ const CONTACT_FIELDS = [
 ];
 
 // Find an existing record in `store` under a DIFFERENT URL that refers to
-// the same person as `targetUrl`. Two cases we treat as equivalent:
-//   1) memberId match — bulletproof: LinkedIn's internal numeric ID. Records
-//      visited after 1.2.2 carry this from the RSC payload.
-//   2) name match (case-insensitive, trimmed) — fallback for legacy records
-//      with no memberId. LinkedIn allows profile vanity changes
-//      (/in/old-slug → /in/new-slug, same person), so visiting the same
-//      person after a slug change otherwise creates a duplicate. Risk:
-//      two real people with the same name get merged. We accept this risk
-//      for fixing the much more common slug-change duplicate case;
-//      requires a name of at least 4 non-whitespace characters to avoid
-//      trivial collisions ("Lee", initials).
-function findDuplicateRecord(store, targetUrl, targetName, targetMemberId) {
+// the same person as `targetUrl`. We rely ONLY on memberId — LinkedIn's
+// internal numeric profile ID, which is canonical and unforgeable. Name
+// matching is deliberately NOT used: two different people can share a name,
+// and silently merging them corrupts data with no recovery. If memberId is
+// missing on either side, we simply don't dedup — the user can clean up
+// duplicates manually if they bother them, but we never auto-merge by guess.
+function findDuplicateRecord(store, targetUrl, targetMemberId) {
+  if (!targetMemberId) return null;
   for (const [url, rec] of Object.entries(store)) {
     if (url === targetUrl) continue;
-    if (targetMemberId && rec.memberId && rec.memberId === targetMemberId) return url;
-  }
-  if (!targetName) return null;
-  const t = targetName.toLowerCase().trim();
-  if (t.replace(/\s/g, '').length < 4) return null;
-  for (const [url, rec] of Object.entries(store)) {
-    if (url === targetUrl) continue;
-    const n = (rec.name || '').toLowerCase().trim();
-    if (n === t) return url;
+    if (rec.memberId && rec.memberId === targetMemberId) return url;
   }
   return null;
 }
@@ -124,7 +112,7 @@ function applyProfileVisit(stored, info, status, now, contactInfo) {
   let acceptedDedup = false;
   let sentDedup = false;
   for (const store of [contacts, accepted, sentInvitations]) {
-    const dupUrl = findDuplicateRecord(store, profileUrl, info.name, info.memberId);
+    const dupUrl = findDuplicateRecord(store, profileUrl, info.memberId);
     if (dupUrl) {
       mergeIntoTarget(store, dupUrl, profileUrl);
       if (store === accepted) acceptedDedup = true;
