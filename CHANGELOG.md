@@ -8,6 +8,108 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
+## [1.2.3] — 2026-06-11
+
+Hardening release on top of 1.2.2. Real-world testing surfaced layout
+overflow, duplicate records, headline/name corruption, and a parser
+that broke when LinkedIn updated its Contact-info markup. Every fix is
+grounded in actual user-reported data — no speculative changes.
+
+### Added
+- `core/contacts-modal.js` parser now anchors primarily on **SVG icon ids**
+  (`envelope-medium`, `phone-handset-small`, `link-medium`, `calendar-medium`,
+  `people-medium`, `house-medium`, `linkedin-bug-medium`). LinkedIn ships
+  these from a shared icon library used across the entire UI — renaming one
+  would break hundreds of pages, so they're effectively frozen. Label-text
+  matching kept as fallback for the case where icons disappear. Regression
+  fixture (Igor Alentyev's actual modal HTML, 15 KB) pinned in
+  `tests/fixtures/igor-contacts-modal.html` and exercised by the test
+  suite — multi-website extraction included.
+- DOM **aria-label degree detector** as the new top-priority signal in
+  the connection detector. LinkedIn renders the connection degree as
+  `aria-label="<Name> [Premium Profile] <1st|2nd|3rd>"` for screen
+  readers across every profile shape, including Premium profiles that
+  ship NO RSC payload at all. Priority chain: DOM Pending → aria-label
+  degree → RSC degree → DOM fallback.
+- **Cross-URL dedup by `memberId`** (zero name-based fallback). When
+  LinkedIn changes a profile's vanity slug, the new record's `memberId`
+  from RSC matches an existing entry's `memberId`, and the records get
+  merged into the current-URL key (contact info, marked status, earlier
+  firstSeenAt/acceptedAt, `verified='accepted'` all carry over). Name
+  matching was deliberately rejected because two real people can share
+  a name and silently merging them corrupts data with no recovery.
+  Records now persist `memberId` / `vanityName` on every visit.
+- Per-row **Delete** button across all popup tabs (Pending, Accepted,
+  Marked, Declined block). One click + confirm dialog → entry purged
+  from `sentInvitations` / `accepted` / `contacts` in one transaction.
+- Settings → Privacy → **Forget all contact details** button. Wipes
+  email/phone/website/address/birthday/connectedSinceText from every
+  record. Names, headlines, profile URLs, accepted/marked status are
+  preserved.
+- **`extractRSCTextCached`** in `core/rsc-parser.js` — URL-keyed cache
+  for the parsed RSC payload. Previously re-parsed 1.5 MB of script
+  bytes on every 250 ms poll tick. Cache invalidates on URL change so
+  SPA navigation between profiles still picks up the new payload.
+- Popup **on-page toast** for contact-info capture confirmation:
+  white card with green check, field chips ("📧 email · 📞 phone · 🌐
+  website · 📍 address · 🎂 birthday"), rendered via Popover API in the
+  browser top layer so LinkedIn's `<dialog>`-based modal can't hide it.
+- `LITPopupLogic.cleanHeadline` and `LITPopupLogic.fixSwappedNameHeadline`
+  in `core/popup-logic.js` — defensive cleanup helpers run on every
+  popup render plus a one-shot storage migration on popup load.
+
+### Fixed
+- **Contact-info parser broke on the new LinkedIn markup** (Igor Alentyev's
+  profile, observed 2026-06-11): per-section `componentkey` attribute
+  was dropped from contact rows. Parser now uses SVG icon ids first and
+  label-text as fallback; both shapes parse correctly.
+- **5 duplicate records of the same person** caused by three independent
+  bugs: (1) `normalizeProfileUrl` didn't collapse `/in/<vanity>/overlay/…`
+  sub-paths, so opening Contact info stored under a different key;
+  (2) content script kept running after SPA navigation and wrote a
+  `https://www.linkedin.com/search/results/people/` keyed entry;
+  (3) cross-URL dedup didn't exist. All three closed: normalizer
+  collapses any `/in/<vanity>/<sub-path>...` to canonical, profile.js
+  tick gates writes via `isProfilePath(location.pathname)`, and dedup
+  merges by `memberId`.
+- **`name` and `headline` swapped in legacy records** ("Daniil
+  StankevichFullstack developer | …" stored as `name`, "Daniil
+  Stankevich" stored as `headline`). `fixSwappedNameHeadline` detects
+  the signature (`name` starts with `headline` AND is longer), swaps
+  them, and strips any leading separator. Runs both at render time
+  (instant visual fix on all tabs) and as a one-shot storage migration
+  on popup load (so CSV exports get the clean shape too).
+- **Name glued to headline** in newly-extracted records (LinkedIn ships
+  an accessibility text node that combines both). `stripNamePrefix` in
+  `extractProfileInfo` strips the name at extract; `cleanHeadline` at
+  render time cleans legacy data without requiring a re-visit.
+- **"· 1st" badge text** was being captured as headline. Skip filter
+  in `extractProfileInfo` matches the degree-badge pattern (EN/RU/UA).
+- **Zhenia Mohyla "stuck declined" canonical fix**: detector gained the
+  aria-label degree signal, RSC `findNetworkDistance` rewritten to be
+  robust against LinkedIn reordering fields in the payload, and
+  `applyContactInfo` now flows into `accepted[url]` regardless of the
+  visit status branch (was only `connected`).
+- **Popup layout horizontal/vertical overflow**: `flex-wrap: wrap` on
+  `.row .name-row`, `min-width: 0` chain through `.row-body`/`.name-row`/
+  `.name`, ellipsis on long names, hard 380×600 cap on html/body.
+- **popup.js SyntaxError** ("Identifier 'cleanHeadline' has already been
+  declared") — `popup-logic.js` declared it as `function`, `popup.js`
+  re-declared via `const` in the same global scope. Removed the `const`,
+  use the global directly.
+- Toast restyled to **white LinkedIn-style** card with max z-index and
+  Popover API so it sits in the browser top layer (`<dialog>`-based
+  LinkedIn modals can't hide it).
+- CSV export now includes `email`, `phone`, `phoneLabel`, `website`,
+  `address`, `birthday` columns (joined from the contacts store).
+- Popup search matches against email/phone/website/address.
+
+### Internal
+- `temp/` directory untracked from git (it was already in `.gitignore`
+  but legacy fixture HTMLs were committed under it).
+- `tests/fixtures/` is the new home for real-world HTML samples used in
+  regression tests.
+
 ## [1.2.2] — 2026-06-11
 
 Contact-info harvest. When the user opens the "Contact info" overlay on any
