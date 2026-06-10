@@ -43,6 +43,17 @@ const ageClassFromDays = (d) => d >= AGE_RED_DAYS ? 'age-red' : d >= AGE_YELLOW_
 
 let searchQuery = '';
 
+// Defensive view-side correction for legacy records where `name` and
+// `headline` got swapped (an old extractor stored an accessibility text
+// node like "Daniil StankevichFullstack developer | …" as the name, and
+// the real name as headline). fixSwappedNameHeadline detects and undoes
+// this — and we run it on every row before rendering so all tabs
+// (Pending / Accepted / Marked / Declined block) get the correction.
+function viewItem(item) {
+  const fixed = LITPopupLogic.fixSwappedNameHeadline(item);
+  return { ...item, name: fixed.name, headline: fixed.headline };
+}
+
 function matchesSearch(item) {
   if (!searchQuery) return true;
   const q = searchQuery.toLowerCase();
@@ -141,7 +152,8 @@ function statusBadge(verified) {
   return el('span', { className: 'status-badge unverified' }, ['?']);
 }
 
-function renderPending(items) {
+function renderPending(rawItems) {
+  const items = rawItems.map(viewItem);
   const list = $('pending-list');
   list.innerHTML = '';
   const filtered = items.filter(matchesSearch);
@@ -223,7 +235,8 @@ function renderDeclinedWarning(declinedCount, connectionsScanState) {
   banner.hidden = !LITPopupLogic.shouldShowDeclinedWarning(declinedCount, connectionsScanState);
 }
 
-function renderAccepted(items, connectionsScanState) {
+function renderAccepted(rawItems, connectionsScanState) {
+  const items = rawItems.map(viewItem);
   const list = $('accepted-list');
   const declinedList = $('declined-list');
   const declinedBlock = $('declined-block');
@@ -269,7 +282,8 @@ function renderAccepted(items, connectionsScanState) {
   renderDeclinedWarning(declined.length, connectionsScanState);
 }
 
-function renderMarked(items) {
+function renderMarked(rawItems) {
+  const items = rawItems.map(viewItem);
   const list = $('marked-list');
   list.innerHTML = '';
 
@@ -291,7 +305,40 @@ function renderMarked(items) {
   }
 }
 
+// One-shot migration: walk every record across the three stores and undo
+// any name/headline swap. Runs once per popup open. Idempotent: if all
+// records are already clean, no write happens. We persist the corrected
+// data so downstream consumers (CSV export, /sent/ diff, /connections/
+// merge) all see the clean shape too.
+async function migrateSwappedNames() {
+  const { sentInvitations = {}, accepted = {}, contacts = {} } =
+    await dbGet(['sentInvitations', 'accepted', 'contacts']);
+  const patch = {};
+  for (const [storeName, store] of [
+    ['sentInvitations', sentInvitations],
+    ['accepted',        accepted],
+    ['contacts',        contacts],
+  ]) {
+    let changed = false;
+    for (const rec of Object.values(store)) {
+      const fixed = LITPopupLogic.fixSwappedNameHeadline(rec);
+      if (fixed.name !== rec.name || fixed.headline !== rec.headline) {
+        rec.name = fixed.name;
+        rec.headline = fixed.headline;
+        changed = true;
+      }
+    }
+    if (changed) patch[storeName] = store;
+  }
+  if (Object.keys(patch).length > 0) {
+    await dbSet(patch);
+    console.log(`[LI Tracker] migration cleaned name/headline swap in: ${Object.keys(patch).join(', ')}`);
+  }
+}
+
 async function loadData() {
+  await migrateSwappedNames();
+
   const { sentInvitations = {}, accepted = {}, scanHistory = [], scanState = {} } =
     await dbGet(['sentInvitations', 'accepted', 'scanHistory', 'scanState']);
 

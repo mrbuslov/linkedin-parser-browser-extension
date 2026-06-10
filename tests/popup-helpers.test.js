@@ -3,7 +3,7 @@
 // now we cover the pure decision logic which is where the bugs would hide.
 
 import { describe, it, expect } from 'vitest';
-import { shouldShowDeclinedWarning, cleanHeadline } from '../linkedin-tracker/core/popup-logic.js';
+import { shouldShowDeclinedWarning, cleanHeadline, fixSwappedNameHeadline } from '../linkedin-tracker/core/popup-logic.js';
 
 describe('shouldShowDeclinedWarning', () => {
   it('shows when there are declined entries and /connections/ was never scanned', () => {
@@ -70,5 +70,71 @@ describe('cleanHeadline — defensive name-glued-to-headline cleanup', () => {
     // match the name. We accept this tradeoff — the headline collision is
     // rarer than the SR-node-glue case the cleanup targets.
     expect(cleanHeadline('Jane Doe Industries CEO', 'Jane Doe')).toBe('Industries CEO');
+  });
+});
+
+describe('fixSwappedNameHeadline — undoes name/headline swap in legacy records', () => {
+  it("corrects the real Daniil Stankevich record from the user's storage dump", () => {
+    const r = fixSwappedNameHeadline({
+      name: 'Daniil StankevichFullstack developer | React/Angular/NestJS',
+      headline: 'Daniil Stankevich',
+    });
+    expect(r.name).toBe('Daniil Stankevich');
+    expect(r.headline).toBe('Fullstack developer | React/Angular/NestJS');
+  });
+
+  it('corrects Daniil Lysenko (real record from dump)', () => {
+    const r = fixSwappedNameHeadline({
+      name: 'Daniil LysenkoLead Brand Designer / Art Director',
+      headline: 'Daniil Lysenko',
+    });
+    expect(r.name).toBe('Daniil Lysenko');
+    expect(r.headline).toBe('Lead Brand Designer / Art Director');
+  });
+
+  it('idempotent on already-clean records', () => {
+    const r = fixSwappedNameHeadline({
+      name: 'Jane Doe',
+      headline: 'Engineer at Acme',
+    });
+    expect(r.name).toBe('Jane Doe');
+    expect(r.headline).toBe('Engineer at Acme');
+  });
+
+  it('does NOT swap when name and headline are equal length (ambiguous)', () => {
+    // If they were swapped, name would be LONGER than headline (it contains
+    // both). Equal length means we can't tell which is which → leave alone.
+    const r = fixSwappedNameHeadline({
+      name: 'Jane Smith',
+      headline: 'Jane Smith',
+    });
+    expect(r.name).toBe('Jane Smith');
+    expect(r.headline).toBe('Jane Smith');
+  });
+
+  it('passes through when headline is empty (nothing to swap with)', () => {
+    const r = fixSwappedNameHeadline({ name: 'Jane Doe', headline: '' });
+    expect(r.name).toBe('Jane Doe');
+    expect(r.headline).toBe('');
+  });
+
+  it('passes through when name is empty (defensive)', () => {
+    const r = fixSwappedNameHeadline({ name: '', headline: 'something' });
+    expect(r.name).toBe('');
+    expect(r.headline).toBe('something');
+  });
+
+  it('passes through on null/undefined record (defensive)', () => {
+    expect(fixSwappedNameHeadline(null)).toEqual({ name: '', headline: '' });
+    expect(fixSwappedNameHeadline(undefined)).toEqual({ name: '', headline: '' });
+  });
+
+  it('handles case-insensitive prefix match', () => {
+    const r = fixSwappedNameHeadline({
+      name: 'JANE DOEengineer at Acme',
+      headline: 'Jane Doe',
+    });
+    expect(r.name).toBe('Jane Doe');
+    expect(r.headline).toBe('engineer at Acme');
   });
 });
