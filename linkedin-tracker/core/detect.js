@@ -37,6 +37,39 @@ function containsAny(text, needles) {
   return needles.some((n) => t.includes(n));
 }
 
+// Degree-of-connection from a DOM-rendered accessibility marker. LinkedIn
+// always tags the profile top-card name/avatar with an aria-label of the form
+// "<Name> <opt-Premium-Profile> <1st|2nd|3rd>" so screen readers announce the
+// connection degree. This is more reliable than the RSC payload — LinkedIn
+// doesn't ship RSC for every profile shape (Premium accounts in particular
+// were observed missing the `__next_f.push(...)` chunks entirely) — and the
+// aria-label exists across all profile variants because accessibility is
+// non-negotiable. We anchor on the trailing token only, not on the user's
+// name, so localization quirks don't matter.
+const ARIA_DEGREE_RE = /\b(1st|2nd|3rd)\b\s*$/i;
+const LOCALIZED_DEGREE_PATTERNS = [
+  { re: /\bсв.*?1.*?степ/i,  d: 1 },  // RU "связь 1-й степени"
+  { re: /\bзв.*?1.*?ступ/i,  d: 1 },  // UA "зв'язок 1-го ступеня"
+  { re: /\b1\.\s*[Gg]rad/,   d: 1 },  // DE "1. Grad"
+];
+
+function findDegreeFromAria(root) {
+  for (const node of root.querySelectorAll('[aria-label]')) {
+    const aria = node.getAttribute('aria-label') || '';
+    const m = aria.match(ARIA_DEGREE_RE);
+    if (m) {
+      const tok = m[1].toLowerCase();
+      if (tok === '1st') return 1;
+      if (tok === '2nd') return 2;
+      if (tok === '3rd') return 3;
+    }
+    for (const { re, d } of LOCALIZED_DEGREE_PATTERNS) {
+      if (re.test(aria)) return d;
+    }
+  }
+  return null;
+}
+
 // Visibility check that works in both Chrome (real layout) and jsdom (no layout).
 // We DON'T use offsetParent because jsdom always reports null. We check `hidden`
 // and computed display/visibility — covers the common ways LinkedIn hides UI.
@@ -53,22 +86,28 @@ function isVisible(el) {
 function detectConnectionStatus(root) {
   if (!root || !root.querySelector('h1, h2')) return null;
 
-  // The detector combines two sources because each has a blind spot:
+  // The detector now combines THREE sources, each with a blind spot:
   //
-  //   RSC payload — frozen at page-load time. Authoritative for canonical
-  //     network degree (1st / 2nd / 3rd) which doesn't change without a
-  //     reload. Blind to user actions performed since the page rendered.
+  //   DOM aria-label degree — LinkedIn renders the connection degree (1st /
+  //     2nd / 3rd) into the profile top-card's aria-label for screen readers.
+  //     Format: "<Name> [Premium Profile] <1st|2nd|3rd>". This is the most
+  //     reliable signal — accessibility is non-negotiable so LinkedIn won't
+  //     remove it — and it works across every profile shape we've seen.
+  //     Discovered this after a Premium-account profile shipped no RSC
+  //     payload at all and the previous detector mis-read her as 2nd-degree.
+  //
+  //   RSC payload — frozen at page-load time. Authoritative when present.
+  //     Some profile variants (notably Premium) ship without it, so it can't
+  //     be the only ground truth.
   //
   //   DOM polling — real-time. Catches the user clicking Connect → Pending
-  //     button appears, Withdraw → Pending button vanishes, etc. Susceptible
-  //     to transient mid-render states and language/structure quirks (the
-  //     entire class of bugs Mira reported).
+  //     button appears, Withdraw → Pending button vanishes, etc.
   //
-  // Priority rule: a DOM Pending button trumps everything (the user just sent
-  // an invite — most common real-time event). Otherwise RSC's networkDistance
-  // is the ground truth: distance=1 ⇒ connected, ≥2 ⇒ not_connected. Only when
-  // RSC is unavailable (SPA navigation never reloaded the page) do we fall
-  // back to the pure DOM heuristics.
+  // Priority rule: DOM Pending button trumps everything (user just sent an
+  // invite). Then the aria-label degree (most reliable when present). Then
+  // RSC. Then a pure-DOM fallback for cases where none of the above fired.
+  const ariaDegree = findDegreeFromAria(root);
+
   let rscDistance = null;
   if (typeof LITRSC !== 'undefined' && root.ownerDocument) {
     // Cached read — RSC payload is frozen for the page's lifetime, no point
@@ -99,16 +138,24 @@ function detectConnectionStatus(root) {
   const hasInviteLink = inviteLink != null && isVisible(inviteLink);
 
   // 1) Real-time DOM Pending wins: user just sent an invite and the button
-  //    flipped to Pending. RSC payload is stale at this point — DOM is right.
+  //    flipped to Pending. Both RSC and aria-label degree are stale here.
   if (hasPending) return 'pending';
 
-  // 2) RSC ground truth for connection degree. Doesn't change without a page
-  //    reload, so it's the canonical "are they 1st degree" answer.
+  // 2) DOM aria-label degree — the most reliable canonical signal. Works
+  //    even when LinkedIn ships no RSC payload (Premium profiles). The
+  //    1st/2nd/3rd token is in there for screen-reader accessibility.
+  if (ariaDegree === 1) return 'connected';
+  if (ariaDegree != null && ariaDegree >= 2) return 'not_connected';
+
+  // 3) RSC ground truth (when aria-label didn't surface a degree). Same
+  //    semantics as before.
   if (rscDistance === 1) return 'connected';
   if (rscDistance != null && rscDistance >= 2) return 'not_connected';
 
-  // 3) RSC unavailable (SPA navigation kept the previous page's payload, or
-  //    LinkedIn changed its bundling). Fall back to the DOM-only heuristics.
+  // 4) Neither aria nor RSC told us anything definitive. Fall back to pure
+  //    DOM heuristics. Risky for 1st-degree contacts with Follow enabled
+  //    (Creator mode renders a Follow button next to Message), but that's
+  //    why aria/RSC come first.
   if (hasFollow || hasConnect || hasInviteLink) return 'not_connected';
 
   const messageLink = root.querySelector('a[href*="/messaging/compose/"]');
@@ -117,6 +164,6 @@ function detectConnectionStatus(root) {
   return null;
 }
 
-const LITDetect = { detectConnectionStatus, isVisible };
+const LITDetect = { detectConnectionStatus, isVisible, findDegreeFromAria };
 if (typeof globalThis !== 'undefined') globalThis.LITDetect = LITDetect;
 if (typeof module !== 'undefined' && module.exports) module.exports = LITDetect;

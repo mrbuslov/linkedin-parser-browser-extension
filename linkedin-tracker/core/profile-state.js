@@ -101,7 +101,7 @@ function applyProfileVisit(stored, info, status, now, contactInfo) {
         addedFrom: 'profile',
       };
     }
-    if (applyContactInfo(sentInvitations[profileUrl], contactInfo, now)) sentChanged = true;
+    applyContactInfo(sentInvitations[profileUrl], contactInfo, now);
     sentChanged = true;
   } else if (status === 'connected') {
     // Promote from sentInvitations if present, else upsert into accepted.
@@ -158,6 +158,15 @@ function applyProfileVisit(stored, info, status, now, contactInfo) {
     if (sentInvitations[profileUrl]) {
       delete sentInvitations[profileUrl];
       sentChanged = true;
+    }
+    // Even when status is "not connected", an accepted record may still exist
+    // (the entry might be wrongly declined awaiting a re-verify; or the user
+    // is on a profile that previously accepted and got removed/declined).
+    // Either way, the contact-info modal data the user explicitly opened is
+    // valuable — apply it so the popup shows the copy buttons regardless of
+    // verified status.
+    if (accepted[profileUrl] && applyContactInfo(accepted[profileUrl], contactInfo, now)) {
+      acceptedChanged = true;
     }
     const entry = accepted[profileUrl];
     if (entry && entry.verified !== 'declined') {

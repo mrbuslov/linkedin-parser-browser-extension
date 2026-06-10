@@ -203,6 +203,71 @@ describe('detectConnectionStatus', () => {
     expect(detectConnectionStatus(root)).toBe('connected');
   });
 
+  // aria-label-degree tests. This is the new top-priority degree signal.
+  // It's the canonical fix for "Zhenia Mohyla wrongly declined" — her profile
+  // ships no RSC payload (Premium account) but has `aria-label="Zhenia Mohyla
+  // Premium Profile 1st"` on the top-card. The detector must pick that up
+  // and return 'connected' regardless of the Follow button being rendered.
+
+  it('Zhenia regression: aria-label "Name Premium Profile 1st" wins over Follow button + Message', () => {
+    // EXACT real-world DOM shape: Premium profile, Follow visible (Creator
+    // mode), Message visible, NO RSC. Without aria-degree this falls to
+    // hasFollow → not_connected → declined badge stays.
+    const root = makeRoot(`
+      <a aria-label="Zhenia Mohyla Premium Profile 1st" href="/in/zhenia/">
+        <h1>Zhenia Mohyla</h1>
+      </a>
+      <button>Follow</button>
+      <a href="/messaging/compose/?recipient=zhenia">Message</a>
+    `);
+    expect(detectConnectionStatus(root)).toBe('connected');
+  });
+
+  it('returns connected for "Name 1st" aria-label (no Premium tag)', () => {
+    const root = makeRoot(`
+      <a aria-label="John Smith 1st"><h1>John Smith</h1></a>
+      <a href="/messaging/compose/">Message</a>
+    `);
+    expect(detectConnectionStatus(root)).toBe('connected');
+  });
+
+  it('returns not_connected for "2nd" aria-label degree', () => {
+    const root = makeRoot(`
+      <a aria-label="Some Name 2nd"><h1>Some Name</h1></a>
+      <button>Connect</button>
+    `);
+    expect(detectConnectionStatus(root)).toBe('not_connected');
+  });
+
+  it('returns not_connected for "3rd" aria-label degree', () => {
+    const root = makeRoot(`
+      <a aria-label="Distant Person 3rd"><h1>Distant Person</h1></a>
+      <button>Follow</button>
+    `);
+    expect(detectConnectionStatus(root)).toBe('not_connected');
+  });
+
+  it('does NOT false-match "1st" embedded in arbitrary mid-text aria-label', () => {
+    // The regex requires the degree token at the END of the aria-label
+    // (with trailing whitespace allowed). "Wins 1st place trophy" must NOT
+    // be read as a degree signal.
+    const root = makeRoot(`
+      <a aria-label="Wins 1st place trophy"><h1>Trophy Holder</h1></a>
+      <button>Connect</button>
+      <a href="/messaging/compose/">Message</a>
+    `);
+    expect(detectConnectionStatus(root)).toBe('not_connected');
+  });
+
+  it('Pending DOM button still wins over aria-degree (user just sent invite)', () => {
+    const root = makeRoot(`
+      <a aria-label="Foo Bar 2nd"><h1>Foo Bar</h1></a>
+      <a aria-label="Pending, click to withdraw">Pending</a>
+      <a href="/messaging/compose/">Message</a>
+    `);
+    expect(detectConnectionStatus(root)).toBe('pending');
+  });
+
   it('prioritizes Pending over Connect when both are present', () => {
     // Edge case where LinkedIn might render both during transition. Pending
     // should win since it's the more specific signal about user action.

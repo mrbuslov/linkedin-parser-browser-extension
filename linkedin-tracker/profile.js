@@ -117,46 +117,80 @@ async function persistVisit() {
   console.log(`[LI Tracker] visited ${info.name} (${status})`);
 }
 
-// Tiny in-page confirmation that runs only when the user has actually opened
-// the Contact info overlay and we just saved fresh fields. Dedup by stringified
-// payload so we don't spam on every poll tick while the overlay is open.
+// LinkedIn-style in-page confirmation that runs only when the user has actually
+// opened the Contact info overlay and we just saved fresh fields. Dedup by
+// stringified payload so we don't spam on every poll tick while the overlay
+// is open. We use the MAX z-index (2147483647) because the contact-info modal
+// itself sits on a backdrop with its own high z-index — anything lower hides
+// the toast behind the dim layer.
 let lastToastKey = '';
 function showCaptureToast(contactInfo) {
   const key = JSON.stringify(contactInfo);
   if (key === lastToastKey) return;
   lastToastKey = key;
 
-  const captured = ['email', 'phone', 'website', 'address', 'birthday']
-    .filter((k) => contactInfo[k])
-    .map((k) => ({ email: '📧', phone: '📞', website: '🌐', address: '📍', birthday: '🎂' }[k]))
-    .join(' ');
-  if (!captured) return;
+  const FIELD_DEFS = [
+    ['email',    '📧', 'email'],
+    ['phone',    '📞', 'phone'],
+    ['website',  '🌐', 'website'],
+    ['address',  '📍', 'address'],
+    ['birthday', '🎂', 'birthday'],
+  ];
+  const captured = FIELD_DEFS.filter(([k]) => contactInfo[k]);
+  if (captured.length === 0) return;
 
   let node = document.getElementById('lit-capture-toast');
   if (!node) {
     node = document.createElement('div');
     node.id = 'lit-capture-toast';
     Object.assign(node.style, {
-      position: 'fixed', bottom: '20px', right: '20px',
-      background: '#1e7e34', color: '#fff',
-      padding: '10px 14px', borderRadius: '8px',
-      fontSize: '13px', fontFamily: '-apple-system, sans-serif',
-      boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
-      zIndex: '999999',
-      opacity: '0', transition: 'opacity 0.2s, transform 0.2s',
-      transform: 'translateY(8px)',
+      position: 'fixed', bottom: '24px', right: '24px',
+      display: 'flex', alignItems: 'center', gap: '12px',
+      background: '#057642', color: '#fff',
+      padding: '16px 22px', borderRadius: '12px',
+      fontSize: '14px', fontWeight: '500',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+      lineHeight: '1.4',
+      boxShadow: '0 8px 24px rgba(0, 0, 0, 0.28), 0 2px 6px rgba(0, 0, 0, 0.16)',
+      zIndex: '2147483647',
+      maxWidth: '360px',
+      opacity: '0', transition: 'opacity 0.22s ease-out, transform 0.22s ease-out',
+      transform: 'translateY(10px)',
       pointerEvents: 'none',
     });
     document.body.append(node);
   }
-  node.textContent = `✓ Contact info saved — ${captured}`;
+
+  // Build content: ✓ check + title + small chips for each captured field.
+  node.innerHTML = '';
+  const checkEl = document.createElement('span');
+  checkEl.textContent = '✓';
+  Object.assign(checkEl.style, {
+    fontSize: '20px', fontWeight: '700', lineHeight: '1',
+    flexShrink: '0',
+  });
+  const bodyEl = document.createElement('div');
+  Object.assign(bodyEl.style, { display: 'flex', flexDirection: 'column', gap: '4px' });
+  const titleEl = document.createElement('div');
+  titleEl.textContent = `Contact info saved (${captured.length} field${captured.length > 1 ? 's' : ''})`;
+  Object.assign(titleEl.style, { fontWeight: '600' });
+  const chipsEl = document.createElement('div');
+  Object.assign(chipsEl.style, { display: 'flex', gap: '8px', flexWrap: 'wrap', fontSize: '13px', opacity: '0.95' });
+  for (const [, emoji, label] of captured) {
+    const chip = document.createElement('span');
+    chip.textContent = `${emoji} ${label}`;
+    chipsEl.append(chip);
+  }
+  bodyEl.append(titleEl, chipsEl);
+  node.append(checkEl, bodyEl);
+
   node.style.opacity = '1';
   node.style.transform = 'translateY(0)';
   clearTimeout(node._hideT);
   node._hideT = setTimeout(() => {
     node.style.opacity = '0';
-    node.style.transform = 'translateY(8px)';
-  }, 2200);
+    node.style.transform = 'translateY(10px)';
+  }, 2800);
 }
 
 // Simple poll loop: every POLL_INTERVAL_MS we re-detect status and persist if

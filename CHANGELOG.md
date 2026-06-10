@@ -55,6 +55,23 @@ copy button per captured field — one click puts the value on the clipboard.
   tabs now.
 
 ### Fixed
+- **Zhenia Mohyla "stays declined after profile visit" root-cause fix**:
+  detector gained a new top-priority signal — DOM `aria-label` degree. LinkedIn
+  always renders `<element aria-label="<Name> [Premium Profile] <1st|2nd|3rd>">`
+  on the top-card for screen-reader accessibility. Some profile variants
+  (Premium accounts in particular) ship NO RSC payload at all — the previous
+  detector then fell to DOM heuristics, where a Follow button (Creator mode)
+  was mis-read as "not connected". With aria-degree the detector now
+  authoritatively says "1st degree" from a signal LinkedIn cannot remove.
+  Priority chain is now: DOM Pending → aria-label degree → RSC degree → DOM
+  fallback. Six regression tests including the exact Zhenia DOM shape.
+- `applyContactInfo` now flows into `accepted[url]` regardless of the visit
+  status branch — previously only the `connected` branch wrote contact-info
+  fields onto the accepted record. As a result, a profile that was stuck
+  declined got its contact-modal data written only into the `contacts`
+  journal, and the popup row showed no copy buttons (because the popup
+  reads from `accepted`, not `contacts`). Now buttons appear whenever the
+  user opens the Contact info modal, no matter the verified status.
 - `findNetworkDistance` rewritten to be robust against LinkedIn reordering
   fields in the RSC payload. The previous version matched a hardcoded
   field sequence (`vieweeMemberUrn → viewerPrivacySetting → networkDistance`)
