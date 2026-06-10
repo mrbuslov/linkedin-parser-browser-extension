@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { applyProfileVisit } from '../linkedin-tracker/core/profile-state.js';
+import { applyProfileVisit, applyContactInfo } from '../linkedin-tracker/core/profile-state.js';
 
 const NOW = 1716624000000; // 2024-05-25T08:00:00Z, fixed for determinism
 const DAY = 86400000;
@@ -350,5 +350,96 @@ describe('applyProfileVisit — invariants', () => {
     const r = applyProfileVisit(stored, info(), 'connected', NOW);
     expect(r.sentInvitations['https://www.linkedin.com/in/jane/']).toBeUndefined();
     expect(r.accepted['https://www.linkedin.com/in/jane/']).toBeDefined();
+  });
+});
+
+describe('applyContactInfo', () => {
+  it('returns false when contactInfo is null', () => {
+    const target = { name: 'X' };
+    expect(applyContactInfo(target, null, NOW)).toBe(false);
+    expect(target.contactsCapturedAt).toBeUndefined();
+  });
+
+  it('returns false when nothing changed', () => {
+    const target = { email: 'a@b.co' };
+    expect(applyContactInfo(target, { email: 'a@b.co' }, NOW)).toBe(false);
+    expect(target.contactsCapturedAt).toBeUndefined();
+  });
+
+  it('overwrites changed fields and stamps timestamp', () => {
+    const target = { email: 'old@x.co', phone: '+1' };
+    expect(applyContactInfo(target, { email: 'new@x.co', phone: '+1' }, NOW)).toBe(true);
+    expect(target.email).toBe('new@x.co');
+    expect(target.phone).toBe('+1');
+    expect(target.contactsCapturedAt).toBe(NOW);
+  });
+
+  it('does not delete fields that are absent from the new payload', () => {
+    // Modal was opened with only Phone — we should NOT wipe the previously
+    // captured email just because this snapshot didn't have it.
+    const target = { email: 'keep@x.co', phone: '+1', contactsCapturedAt: NOW - 1000 };
+    applyContactInfo(target, { phone: '+2' }, NOW);
+    expect(target.email).toBe('keep@x.co');
+    expect(target.phone).toBe('+2');
+    expect(target.contactsCapturedAt).toBe(NOW);
+  });
+});
+
+describe('applyProfileVisit — contact info modal integration', () => {
+  it('writes contact fields onto contacts entry on connected visit', () => {
+    const r = applyProfileVisit({}, info(), 'connected', NOW, {
+      email: 'jane@example.com',
+      phone: '+1 415 555 0100',
+      website: 'https://jane.example',
+    });
+    const c = r.contacts['https://www.linkedin.com/in/jane/'];
+    expect(c.email).toBe('jane@example.com');
+    expect(c.phone).toBe('+1 415 555 0100');
+    expect(c.website).toBe('https://jane.example');
+    expect(c.contactsCapturedAt).toBe(NOW);
+  });
+
+  it('also writes contact fields onto accepted entry (so popup sees them)', () => {
+    const r = applyProfileVisit({}, info(), 'connected', NOW, {
+      email: 'jane@example.com',
+    });
+    expect(r.acceptedChanged).toBe(true);
+    expect(r.accepted['https://www.linkedin.com/in/jane/'].email).toBe('jane@example.com');
+  });
+
+  it('preserves previously captured fields across visits when modal not open', () => {
+    const stored = {
+      contacts: {
+        'https://www.linkedin.com/in/jane/': {
+          profileUrl: 'https://www.linkedin.com/in/jane/',
+          email: 'old@jane.co',
+          phone: '+999',
+          contactsCapturedAt: NOW - 10 * DAY,
+          firstSeenAt: NOW - 10 * DAY,
+        },
+      },
+    };
+    const r = applyProfileVisit(stored, info(), 'connected', NOW, null);
+    const c = r.contacts['https://www.linkedin.com/in/jane/'];
+    expect(c.email).toBe('old@jane.co');
+    expect(c.phone).toBe('+999');
+    expect(c.contactsCapturedAt).toBe(NOW - 10 * DAY);
+  });
+
+  it('overwrites email when the modal shows a different one on a later visit', () => {
+    const stored = {
+      contacts: {
+        'https://www.linkedin.com/in/jane/': {
+          profileUrl: 'https://www.linkedin.com/in/jane/',
+          email: 'old@jane.co',
+          contactsCapturedAt: NOW - 10 * DAY,
+          firstSeenAt: NOW - 10 * DAY,
+        },
+      },
+    };
+    const r = applyProfileVisit(stored, info(), 'connected', NOW, { email: 'new@jane.co' });
+    const c = r.contacts['https://www.linkedin.com/in/jane/'];
+    expect(c.email).toBe('new@jane.co');
+    expect(c.contactsCapturedAt).toBe(NOW);
   });
 });

@@ -47,7 +47,64 @@ function matchesSearch(item) {
   if (!searchQuery) return true;
   const q = searchQuery.toLowerCase();
   return (item.name || '').toLowerCase().includes(q)
-    || (item.headline || '').toLowerCase().includes(q);
+    || (item.headline || '').toLowerCase().includes(q)
+    || (item.email || '').toLowerCase().includes(q)
+    || (item.phone || '').toLowerCase().includes(q)
+    || (item.website || '').toLowerCase().includes(q)
+    || (item.address || '').toLowerCase().includes(q);
+}
+
+// One-shot toast at the bottom of the popup. Used for "Copied!" feedback after
+// the user clicks a contact-copy icon. Kept inline (no library) — we only need
+// a single transient line of text.
+let toastTimer = null;
+function showToast(text) {
+  let node = document.getElementById('toast');
+  if (!node) {
+    node = document.createElement('div');
+    node.id = 'toast';
+    node.className = 'toast';
+    document.body.append(node);
+  }
+  node.textContent = text;
+  node.classList.add('show');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => node.classList.remove('show'), 1200);
+}
+
+async function copyToClipboard(text, label) {
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast(`${label} copied`);
+  } catch {
+    showToast('Copy failed');
+  }
+}
+
+function contactButton(emoji, value, label) {
+  if (!value) return null;
+  const btn = el('button', {
+    className: 'contact-copy',
+    type: 'button',
+    title: `Copy ${label}: ${value}`,
+  }, [emoji]);
+  btn.setAttribute('aria-label', `Copy ${label}`);
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    copyToClipboard(value, label);
+  });
+  return btn;
+}
+
+function contactButtons(item) {
+  const buttons = [
+    contactButton('📧', item.email, 'email'),
+    contactButton('📞', item.phone, 'phone'),
+    contactButton('🌐', item.website, 'website'),
+  ].filter(Boolean);
+  if (buttons.length === 0) return null;
+  return el('span', { className: 'contact-copies' }, buttons);
 }
 
 function el(tag, props = {}, children = []) {
@@ -104,6 +161,7 @@ function renderPending(items) {
       el('div', { className: 'row-body' }, [
         el('div', { className: 'name-row' }, [
           profileLink(item.profileUrl, item.name),
+          contactButtons(item),
         ]),
         item.headline ? el('div', { className: 'headline' }, [item.headline]) : null,
         el('div', { className: 'meta' }, [
@@ -144,6 +202,7 @@ function renderAcceptedRow(item, { primaryAction, primaryLabel }) {
       el('div', { className: 'name-row' }, [
         nameNode,
         statusBadge(item.verified),
+        contactButtons(item),
       ]),
       item.headline ? el('div', { className: 'headline' }, [item.headline]) : null,
       item.location ? el('div', { className: 'location' }, [item.location]) : null,
@@ -287,15 +346,31 @@ function downloadBlob(blob, filename) {
 }
 
 async function exportCsv() {
-  const { sentInvitations = {}, accepted = {} } = await dbGet(['sentInvitations', 'accepted']);
-  const rows = [['status', 'verified', 'name', 'profileUrl', 'headline', 'firstSeenAt', 'acceptedAt', 'daysPending', 'welcomeSent']];
+  const { sentInvitations = {}, accepted = {}, contacts = {} } =
+    await dbGet(['sentInvitations', 'accepted', 'contacts']);
+  const rows = [[
+    'status', 'verified', 'name', 'profileUrl', 'headline',
+    'firstSeenAt', 'acceptedAt', 'daysPending', 'welcomeSent',
+    'email', 'phone', 'phoneLabel', 'website', 'address', 'birthday',
+  ]];
+  // contacts holds the captured contact-info modal fields. We join them in
+  // by profileUrl so even accepted rows where the user opened the overlay
+  // get their email/phone exported alongside.
+  const contactOf = (url) => contacts[url] || {};
   for (const x of Object.values(sentInvitations)) {
-    rows.push(['pending', '', x.name, x.profileUrl, x.headline, new Date(x.firstSeenAt).toISOString(), '', '', '']);
+    const c = contactOf(x.profileUrl);
+    rows.push(['pending', '', x.name, x.profileUrl, x.headline,
+      new Date(x.firstSeenAt).toISOString(), '', '', '',
+      x.email || c.email || '', x.phone || c.phone || '', x.phoneLabel || c.phoneLabel || '',
+      x.website || c.website || '', x.address || c.address || '', x.birthday || c.birthday || '']);
   }
   for (const x of Object.values(accepted)) {
+    const c = contactOf(x.profileUrl);
     rows.push(['accepted', x.verified || '', x.name, x.profileUrl, x.headline,
       new Date(x.firstSeenAt).toISOString(), new Date(x.acceptedAt).toISOString(),
-      x.daysPending, x.welcomeMessageSent]);
+      x.daysPending, x.welcomeMessageSent,
+      x.email || c.email || '', x.phone || c.phone || '', x.phoneLabel || c.phoneLabel || '',
+      x.website || c.website || '', x.address || c.address || '', x.birthday || c.birthday || '']);
   }
   const csv = rows.map((r) => r.map(csvEscape).join(',')).join('\n');
   downloadBlob(new Blob([csv], { type: 'text/csv' }), `linkedin-tracker-${new Date().toISOString().slice(0, 10)}.csv`);
@@ -427,6 +502,44 @@ $('empty-open-sent').addEventListener('click', () => chrome.tabs.create({ url: S
 $('declined-warning-scan').addEventListener('click', () => chrome.tabs.create({ url: CONNECTIONS_URL }));
 $('mark-all').addEventListener('click', markAllAccepted);
 $('open-support').addEventListener('click', () => chrome.tabs.create({ url: SUPPORT_URL }));
+
+const CONTACT_DETAIL_FIELDS = [
+  'email', 'phone', 'phoneLabel',
+  'website', 'websiteLabel', 'extraWebsites',
+  'address', 'birthday', 'connectedSinceText',
+  'contactsCapturedAt',
+];
+
+function stripContactFields(record) {
+  let touched = false;
+  for (const f of CONTACT_DETAIL_FIELDS) {
+    if (record[f] !== undefined) { delete record[f]; touched = true; }
+  }
+  return touched;
+}
+
+async function forgetAllContactDetails() {
+  const status = $('forget-status');
+  status.classList.remove('error');
+  const ok = window.confirm(
+    'Wipe captured email/phone/website/address/birthday from every saved contact?\n\n'
+    + 'Names, headlines, profile URLs and accepted/marked status are NOT affected. This cannot be undone.'
+  );
+  if (!ok) return;
+  const { contacts = {}, accepted = {} } = await dbGet(['contacts', 'accepted']);
+  let touched = 0;
+  for (const r of Object.values(contacts)) if (stripContactFields(r)) touched++;
+  for (const r of Object.values(accepted)) if (stripContactFields(r)) touched++;
+  if (touched === 0) {
+    status.textContent = 'No contact details were stored.';
+    return;
+  }
+  await dbSet({ contacts, accepted });
+  status.textContent = `Cleared contact details from ${touched} record(s).`;
+  loadData();
+}
+
+$('forget-contacts').addEventListener('click', forgetAllContactDetails);
 $('search').addEventListener('input', (e) => {
   searchQuery = e.target.value.trim();
   loadData();

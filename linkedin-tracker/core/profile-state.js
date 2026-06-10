@@ -18,12 +18,44 @@ function refreshMetadata(target, info) {
   return changed;
 }
 
-function applyProfileVisit(stored, info, status, now) {
+const CONTACT_FIELDS = [
+  'email', 'phone', 'phoneLabel',
+  'website', 'websiteLabel', 'extraWebsites',
+  'address', 'birthday', 'connectedSinceText',
+];
+
+// Overwrite-on-visit semantics: every time the user opens the Contact info
+// overlay we replace the stored fields with the freshly parsed ones. Simpler
+// than a history log, and the LinkedIn UI is itself the source of truth — if
+// the user edits their phone, we want the latest. We stamp `contactsCapturedAt`
+// so the popup can tell "saved" from "never captured". Returns true iff
+// anything changed in the target record.
+function applyContactInfo(target, contactInfo, now) {
+  if (!contactInfo) return false;
+  let changed = false;
+  for (const f of CONTACT_FIELDS) {
+    const incoming = contactInfo[f];
+    if (incoming === undefined) continue;
+    if (target[f] !== incoming) { target[f] = incoming; changed = true; }
+  }
+  if (changed) target.contactsCapturedAt = now;
+  return changed;
+}
+
+function applyProfileVisit(stored, info, status, now, contactInfo) {
   const contacts = { ...(stored.contacts || {}) };
   const accepted = { ...(stored.accepted || {}) };
   const sentInvitations = { ...(stored.sentInvitations || {}) };
   const profileUrl = info.profileUrl;
   const prev = contacts[profileUrl] || {};
+
+  // Preserve contact-info fields across visits — even when the modal isn't
+  // open this tick. We only overwrite them via applyContactInfo below.
+  const carriedContactFields = {};
+  for (const f of CONTACT_FIELDS) {
+    if (prev[f] !== undefined) carriedContactFields[f] = prev[f];
+  }
+  if (prev.contactsCapturedAt) carriedContactFields.contactsCapturedAt = prev.contactsCapturedAt;
 
   contacts[profileUrl] = {
     profileUrl,
@@ -35,7 +67,9 @@ function applyProfileVisit(stored, info, status, now) {
     connected: status === 'connected',
     visitedAt: now,
     firstSeenAt: prev.firstSeenAt || now,
+    ...carriedContactFields,
   };
+  applyContactInfo(contacts[profileUrl], contactInfo, now);
 
   let acceptedChanged = false;
   let sentChanged = false;
@@ -67,9 +101,12 @@ function applyProfileVisit(stored, info, status, now) {
         addedFrom: 'profile',
       };
     }
+    if (applyContactInfo(sentInvitations[profileUrl], contactInfo, now)) sentChanged = true;
     sentChanged = true;
   } else if (status === 'connected') {
     // Promote from sentInvitations if present, else upsert into accepted.
+    // Either way, apply any fresh contact-info modal data so the popup
+    // sees email/phone/website without needing a separate write path.
     if (sentInvitations[profileUrl]) {
       const sentEntry = sentInvitations[profileUrl];
       const existingAccepted = accepted[profileUrl];
@@ -115,6 +152,7 @@ function applyProfileVisit(stored, info, status, now) {
       };
       acceptedChanged = true;
     }
+    if (applyContactInfo(accepted[profileUrl], contactInfo, now)) acceptedChanged = true;
   } else {
     // status === 'not_connected' — should be in neither sentInvitations nor accepted.
     if (sentInvitations[profileUrl]) {
@@ -149,6 +187,6 @@ function applyProfileVisit(stored, info, status, now) {
   return { contacts, accepted, sentInvitations, acceptedChanged, sentChanged };
 }
 
-const LITProfileState = { applyProfileVisit, DAY_MS };
+const LITProfileState = { applyProfileVisit, applyContactInfo, CONTACT_FIELDS, DAY_MS };
 if (typeof globalThis !== 'undefined') globalThis.LITProfileState = LITProfileState;
 if (typeof module !== 'undefined' && module.exports) module.exports = LITProfileState;

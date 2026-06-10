@@ -27,9 +27,21 @@ function extractEmail(text) {
   return m ? m[0].toLowerCase() : null;
 }
 
+// LinkedIn wraps every external URL in a safety redirect of the form
+// `https://www.linkedin.com/safety/go/?url=<urlencoded>&urlhash=…&isSdui=true`.
+// Strip the wrapper so we store/copy the actual destination URL.
+// Returns the input unchanged when it's not a safety-go URL.
+function decodeLinkedInRedirect(href) {
+  if (!href) return href;
+  const u = new URL(href, 'https://www.linkedin.com');
+  if (!u.pathname.startsWith('/safety/go')) return href;
+  const target = u.searchParams.get('url');
+  return target || href;
+}
+
 // Dual-mode export: Node/Vitest gets a CJS module, classic-script content scripts
 // see `LITUrl` on globalThis (set unconditionally so order of script loading in
 // manifest doesn't matter).
-const LITUrl = { normalizeProfileUrl, isEmailKey, extractEmail, EMAIL_RE };
+const LITUrl = { normalizeProfileUrl, isEmailKey, extractEmail, decodeLinkedInRedirect, EMAIL_RE };
 if (typeof globalThis !== 'undefined') globalThis.LITUrl = LITUrl;
 if (typeof module !== 'undefined' && module.exports) module.exports = LITUrl;

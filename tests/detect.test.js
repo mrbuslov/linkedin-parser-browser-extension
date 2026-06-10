@@ -120,6 +120,67 @@ describe('detectConnectionStatus', () => {
     expect(detectConnectionStatus(root)).toBe('not_connected');
   });
 
+  // RSC + DOM combined-mode tests. These cover the real-world reasoning
+  // described in core/detect.js — RSC is the ground truth for "are they
+  // 1st degree", DOM polling catches real-time actions.
+
+  function withRSCDistance(distance, innerHTML) {
+    const payload = `"vieweeMemberUrn":"urn:li:member:1","viewerPrivacySetting":"F","networkDistance":${distance}`;
+    const escaped = payload.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    document.body.innerHTML = `
+      <script>self.__next_f.push([1, "${escaped}"])</script>
+      <main>${innerHTML}</main>
+    `;
+    return document.querySelector('main');
+  }
+
+  it('returns "connected" when RSC says distance=1 regardless of which buttons are visible', () => {
+    // Mira's "Follow→Unfollow" canonical regression. Even if DOM shows a
+    // Following button (which OLD code might misinterpret), RSC ground truth
+    // wins: distance=1 means they're a real connection.
+    const root = withRSCDistance(1, `
+      <h2>Real Connection</h2>
+      <a href="/messaging/compose/">Message</a>
+      <button>More</button>
+    `);
+    expect(detectConnectionStatus(root)).toBe('connected');
+  });
+
+  it('returns "not_connected" when RSC says distance=2 even if DOM looks "connected-ish"', () => {
+    // Follow on a 2nd-degree contact: DOM has Following + Message, no Connect.
+    // Without RSC, our detector previously thought this was 'connected'.
+    // With RSC, distance=2 trumps the ambiguous DOM signal.
+    const root = withRSCDistance(2, `
+      <h2>Just Following</h2>
+      <button>Following</button>
+      <a href="/messaging/compose/">Message</a>
+    `);
+    expect(detectConnectionStatus(root)).toBe('not_connected');
+  });
+
+  it('DOM Pending button trumps RSC (user just clicked Connect; RSC is now stale)', () => {
+    // RSC snapshot was rendered when distance=2 and CONNECT was offered. User
+    // then clicked Connect. DOM swapped Connect → Pending. Our detector
+    // must return 'pending' — DOM is fresher than RSC for this event.
+    const root = withRSCDistance(2, `
+      <h2>Just Invited</h2>
+      <a aria-label="Pending, click to withdraw invitation">Pending</a>
+      <a href="/messaging/compose/">Message</a>
+    `);
+    expect(detectConnectionStatus(root)).toBe('pending');
+  });
+
+  it('falls back to DOM-only logic when no RSC payload is present (SPA navigation)', () => {
+    document.body.innerHTML = `
+      <main>
+        <h2>SPA-Navigated Profile</h2>
+        <a href="/messaging/compose/">Message</a>
+      </main>
+    `;
+    const root = document.querySelector('main');
+    expect(detectConnectionStatus(root)).toBe('connected');
+  });
+
   it('does not false-positive on a long button label that happens to contain "Follow"', () => {
     // After length-cap removal we rely purely on prefix matching. A button
     // text that starts with "Follow" still triggers hasFollow — but a button

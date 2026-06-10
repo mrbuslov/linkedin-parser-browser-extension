@@ -8,6 +8,99 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
+## [1.2.2] — 2026-06-11
+
+Contact-info harvest. When the user opens the "Contact info" overlay on any
+profile, the extension now reads the fields LinkedIn shows there (email,
+phone, website, address, birthday, connected-since) and stores them on the
+contact record. Nothing is ever sent off-device. The popup grows a small
+copy button per captured field — one click puts the value on the clipboard.
+
+### Added
+- `core/contacts-modal.js` — parser keyed off the stable
+  `data-sdui-screen="com.linkedin.sdui.flagshipnav.profile.ProfileContactDetailsOverlay"`
+  attribute. Each section's two `<p>` tags (label + value) are mapped to a
+  canonical field name. Localized labels handled for English / Russian /
+  Ukrainian.
+- `decodeLinkedInRedirect` in `core/url.js` — strips LinkedIn's
+  `safety/go/?url=…` wrapper so the website we store is the actual
+  destination URL, not the obfuscated redirect.
+- `applyContactInfo` state helper — overwrite-on-visit semantics with a
+  `contactsCapturedAt` timestamp. Fields absent from the latest modal
+  snapshot are preserved (no destructive wipe if the user opens the modal
+  on a profile where only Phone is visible).
+- Popup: small copy buttons (📧 📞 🌐) appear next to a contact's name in
+  the Accepted/Marked tabs when the corresponding field is stored. Click =
+  one-shot toast "email copied" / "phone copied" / "website copied".
+- Popup search now matches against email/phone/website/address too — typing
+  "t.me" finds the contact whose website is t.me/…
+- 25 new unit tests across `contacts-modal.test.js`, `url.test.js`, and the
+  contact-info section of `profile-state.test.js`. 152 tests total.
+- CSV export now includes email, phone, phoneLabel, website, address, birthday
+  columns (joined from the contacts store by profileUrl).
+- Settings → Privacy → "Forget all contact details" button that wipes the
+  captured fields from every record (names, headlines, profile URLs and
+  accepted/marked status are preserved). Requires explicit confirmation.
+- `extractRSCTextCached` — URL-keyed cache for the parsed RSC payload. We
+  used to re-parse 1.5 MB of script bytes every 250 ms poll tick; we now
+  parse once per page load. Cache invalidates on URL change so SPA navigation
+  between profiles still picks up the new payload. 3 new tests pin the
+  cache-hit, URL-change-invalidate, and resetRSCCache behaviors.
+- On-page toast on the profile when Contact info modal data is captured —
+  "✓ Contact info saved — 📧 📞 🌐" (2.2 sec, bottom-right, dedup'd). User
+  no longer has to open the popup to know whether the harvest worked.
+- Contact-info fields now also flow into `sentInvitations[url]` when the
+  profile is pending, so the Pending tab in the popup renders the same
+  copy buttons (📧 📞 🌐) as Accepted/Marked. Symmetric across all three
+  tabs now.
+
+### Fixed
+- `findNetworkDistance` rewritten to be robust against LinkedIn reordering
+  fields in the RSC payload. The previous version matched a hardcoded
+  field sequence (`vieweeMemberUrn → viewerPrivacySetting → networkDistance`)
+  — if LinkedIn ever inserts an extra field or reorders, the strict regex
+  silently fails and the loose fallback picks up some mutual-connection's
+  distance instead, mislabelling a real 1st-degree contact as 2nd-degree.
+  This is the root cause behind "Zhenia Mohyla stays wrongly declined even
+  after profile re-visit". New logic: anchor on `vieweeMemberUrn`, then
+  search a 4 KB window forward for the FIRST `networkDistance`. No coupling
+  to neighboring field order. Three new regression tests cover reordering,
+  mutuals-sidebar contamination, and trailing unrelated distances.
+
+### Notes
+- Profile pages where the user never opens "Contact info" yield no extra
+  fields — we don't auto-open anything, no extra requests.
+- LinkedIn's RSC payload does not contain the contact-info fields. They're
+  only loaded into the DOM when the overlay opens, so DOM scraping is the
+  right (and only) path here.
+
+## [1.2.1] — 2026-06-10
+
+Canonical-source switch for the profile detector. Profile-page status now
+comes from LinkedIn's own SSR payload (Next.js RSC), not from inspecting
+which buttons happen to be visible at the moment we read the DOM. The
+entire class of "DOM mis-read" bugs goes away with one change.
+
+### Added
+- `core/rsc-parser.js` — reads LinkedIn's streaming Next.js payload from
+  `<script>` tags (`self.__next_f.push([1, "…"])`). Extracts the canonical
+  `networkDistance` (1/2/3 ⇒ connection degree), `firstName`, `lastName`,
+  `vanityName`, `memberId`, plus the set of primary actions (CONNECT,
+  FOLLOW, WITHDRAW_INVITATION). Content-script safe — no MAIN-world
+  injection, no extra permissions.
+- 18 unit tests covering RSC extraction, escape decoding, status mapping,
+  and the regression case behind Mira's "Follow→Unfollow flips to Accepted".
+
+### Fixed
+- profile.js status detection: primary source is now `networkDistance` from
+  the SSR payload. Clicking Follow on a non-connection no longer causes a
+  false "accepted" state, because the canonical degree doesn't change with
+  follow-status. DOM heuristics remain as a fallback for SPA navigations
+  where the payload isn't reloaded.
+- profile.js name extraction: prefers `firstName + lastName` from the SSR
+  payload before falling back to the page heading. Eliminates the
+  long-headline-stuck-to-name family of bugs at the source.
+
 ## [1.2.0] — 2026-06-02
 
 Big stability release driven by extensive real-world testing with Mira and

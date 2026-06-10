@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeProfileUrl, isEmailKey, extractEmail } from '../linkedin-tracker/core/url.js';
+import { normalizeProfileUrl, isEmailKey, extractEmail, decodeLinkedInRedirect } from '../linkedin-tracker/core/url.js';
 
 describe('normalizeProfileUrl', () => {
   it('keeps a canonical /in/name/ URL untouched', () => {
@@ -58,5 +58,24 @@ describe('extractEmail', () => {
   });
   it('returns null when no email is present', () => {
     expect(extractEmail('Just regular text here')).toBeNull();
+  });
+});
+
+describe('decodeLinkedInRedirect', () => {
+  it('strips the safety/go wrapper and returns the embedded url', () => {
+    const href = 'https://www.linkedin.com/safety/go/?url=https%3A%2F%2Ft%2Eme%2F%2Ba89_MGzNllpmZmUy&urlhash=2Sd1&isSdui=true';
+    expect(decodeLinkedInRedirect(href)).toBe('https://t.me/+a89_MGzNllpmZmUy');
+  });
+  it('returns plain external URLs unchanged', () => {
+    expect(decodeLinkedInRedirect('https://example.com/foo'))
+      .toBe('https://example.com/foo');
+  });
+  it('returns the input unchanged when safety-go is present but url= is missing', () => {
+    expect(decodeLinkedInRedirect('https://www.linkedin.com/safety/go/?urlhash=abc'))
+      .toBe('https://www.linkedin.com/safety/go/?urlhash=abc');
+  });
+  it('passes through empty/falsy input', () => {
+    expect(decodeLinkedInRedirect('')).toBe('');
+    expect(decodeLinkedInRedirect(null)).toBe(null);
   });
 });

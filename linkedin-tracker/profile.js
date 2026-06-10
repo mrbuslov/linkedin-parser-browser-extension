@@ -30,7 +30,16 @@ function parseCountry(location) {
 function extractProfileInfo() {
   const root = document.querySelector('main') || document.body;
   const heading = root.querySelector('h1') || root.querySelector('h2');
-  const name = (heading?.textContent || '').trim();
+
+  // Prefer canonical name from the RSC payload — survives any DOM weirdness
+  // (long-headline-stuck-to-name, missing h2 mid-render, locale variants).
+  // Falls back to heading text when payload is absent (SPA navigations).
+  let name = '';
+  const rscBasics = LITRSC.findProfileBasics(LITRSC.extractRSCTextCached(document));
+  if (rscBasics) {
+    name = `${rscBasics.firstName} ${rscBasics.lastName}`.trim();
+  }
+  if (!name) name = (heading?.textContent || '').trim();
   if (!name) return null;
 
   let headline = '';
@@ -89,8 +98,13 @@ async function persistVisit() {
   const settings = await dbGet('settings');
   const autoCapture = settings.settings?.autoCaptureProfiles !== false;
 
+  // Contact info overlay: parsed if the user has it open. Null otherwise —
+  // applyProfileVisit treats null as "no fresh data, keep previously stored
+  // fields as-is".
+  const contactInfo = LITContactsModal.parseContactsModal(document);
+
   const stored = await dbGet(['contacts', 'accepted', 'sentInvitations']);
-  const result = LITProfileState.applyProfileVisit(stored, info, status, Date.now());
+  const result = LITProfileState.applyProfileVisit(stored, info, status, Date.now(), contactInfo);
 
   const patch = {};
   if (autoCapture) patch.contacts = result.contacts;
@@ -98,7 +112,51 @@ async function persistVisit() {
   if (result.sentChanged) patch.sentInvitations = result.sentInvitations;
   if (Object.keys(patch).length > 0) await dbSet(patch);
 
+  if (contactInfo) showCaptureToast(contactInfo);
+
   console.log(`[LI Tracker] visited ${info.name} (${status})`);
+}
+
+// Tiny in-page confirmation that runs only when the user has actually opened
+// the Contact info overlay and we just saved fresh fields. Dedup by stringified
+// payload so we don't spam on every poll tick while the overlay is open.
+let lastToastKey = '';
+function showCaptureToast(contactInfo) {
+  const key = JSON.stringify(contactInfo);
+  if (key === lastToastKey) return;
+  lastToastKey = key;
+
+  const captured = ['email', 'phone', 'website', 'address', 'birthday']
+    .filter((k) => contactInfo[k])
+    .map((k) => ({ email: '📧', phone: '📞', website: '🌐', address: '📍', birthday: '🎂' }[k]))
+    .join(' ');
+  if (!captured) return;
+
+  let node = document.getElementById('lit-capture-toast');
+  if (!node) {
+    node = document.createElement('div');
+    node.id = 'lit-capture-toast';
+    Object.assign(node.style, {
+      position: 'fixed', bottom: '20px', right: '20px',
+      background: '#1e7e34', color: '#fff',
+      padding: '10px 14px', borderRadius: '8px',
+      fontSize: '13px', fontFamily: '-apple-system, sans-serif',
+      boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
+      zIndex: '999999',
+      opacity: '0', transition: 'opacity 0.2s, transform 0.2s',
+      transform: 'translateY(8px)',
+      pointerEvents: 'none',
+    });
+    document.body.append(node);
+  }
+  node.textContent = `✓ Contact info saved — ${captured}`;
+  node.style.opacity = '1';
+  node.style.transform = 'translateY(0)';
+  clearTimeout(node._hideT);
+  node._hideT = setTimeout(() => {
+    node.style.opacity = '0';
+    node.style.transform = 'translateY(8px)';
+  }, 2200);
 }
 
 // Simple poll loop: every POLL_INTERVAL_MS we re-detect status and persist if
@@ -114,15 +172,27 @@ async function persistVisit() {
 // scan) are immune to downgrades from a profile visit. So even a transient
 // mid-tick false positive can't damage a confirmed connection.
 const POLL_INTERVAL_MS = 250;
-let lastDetected = { url: null, status: null };
+let lastDetected = { url: null, status: null, contactsKey: '' };
+
+// Cheap stable hash of the contact-info fields so we re-persist exactly when
+// the user opens or edits the overlay, and not on every quiet tick. Empty
+// string ⇒ overlay not open / no parseable data.
+function contactsFingerprint(info) {
+  if (!info) return '';
+  return [info.email, info.phone, info.website, info.address, info.birthday, info.connectedSinceText]
+    .map((v) => v || '').join('|');
+}
 
 async function tick() {
   const info = extractProfileInfo();
   const root = document.querySelector('main') || document.body;
   const status = LITDetect.detectConnectionStatus(root);
   if (!info || !status) return;
-  if (lastDetected.url === info.profileUrl && lastDetected.status === status) return;
-  lastDetected = { url: info.profileUrl, status };
+  const contactsKey = contactsFingerprint(LITContactsModal.parseContactsModal(document));
+  if (lastDetected.url === info.profileUrl
+      && lastDetected.status === status
+      && lastDetected.contactsKey === contactsKey) return;
+  lastDetected = { url: info.profileUrl, status, contactsKey };
   await persistVisit();
 }
 

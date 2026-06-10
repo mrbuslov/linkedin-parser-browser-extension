@@ -53,6 +53,33 @@ function isVisible(el) {
 function detectConnectionStatus(root) {
   if (!root || !root.querySelector('h1, h2')) return null;
 
+  // The detector combines two sources because each has a blind spot:
+  //
+  //   RSC payload — frozen at page-load time. Authoritative for canonical
+  //     network degree (1st / 2nd / 3rd) which doesn't change without a
+  //     reload. Blind to user actions performed since the page rendered.
+  //
+  //   DOM polling — real-time. Catches the user clicking Connect → Pending
+  //     button appears, Withdraw → Pending button vanishes, etc. Susceptible
+  //     to transient mid-render states and language/structure quirks (the
+  //     entire class of bugs Mira reported).
+  //
+  // Priority rule: a DOM Pending button trumps everything (the user just sent
+  // an invite — most common real-time event). Otherwise RSC's networkDistance
+  // is the ground truth: distance=1 ⇒ connected, ≥2 ⇒ not_connected. Only when
+  // RSC is unavailable (SPA navigation never reloaded the page) do we fall
+  // back to the pure DOM heuristics.
+  let rscDistance = null;
+  if (typeof LITRSC !== 'undefined' && root.ownerDocument) {
+    // Cached read — RSC payload is frozen for the page's lifetime, no point
+    // re-parsing 1.5 MB every 250 ms tick. Cache invalidates on URL change
+    // so SPA navigation between profiles still picks up the new payload.
+    const payload = LITRSC.extractRSCTextCached
+      ? LITRSC.extractRSCTextCached(root.ownerDocument)
+      : LITRSC.extractRSCText(root.ownerDocument);
+    rscDistance = LITRSC.findNetworkDistance(payload);
+  }
+
   const actions = root.querySelectorAll('button, a, [role="button"]');
   let hasFollow = false, hasConnect = false, hasPending = false;
   for (const btn of actions) {
@@ -71,7 +98,17 @@ function detectConnectionStatus(root) {
   const inviteLink = root.querySelector('a[href*="/preload/custom-invite/"]');
   const hasInviteLink = inviteLink != null && isVisible(inviteLink);
 
+  // 1) Real-time DOM Pending wins: user just sent an invite and the button
+  //    flipped to Pending. RSC payload is stale at this point — DOM is right.
   if (hasPending) return 'pending';
+
+  // 2) RSC ground truth for connection degree. Doesn't change without a page
+  //    reload, so it's the canonical "are they 1st degree" answer.
+  if (rscDistance === 1) return 'connected';
+  if (rscDistance != null && rscDistance >= 2) return 'not_connected';
+
+  // 3) RSC unavailable (SPA navigation kept the previous page's payload, or
+  //    LinkedIn changed its bundling). Fall back to the DOM-only heuristics.
   if (hasFollow || hasConnect || hasInviteLink) return 'not_connected';
 
   const messageLink = root.querySelector('a[href*="/messaging/compose/"]');

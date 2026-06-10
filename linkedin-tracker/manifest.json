@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LinkedIn Parser: Invites & Contacts",
-  "version": "1.2.0",
+  "version": "1.2.2",
   "description": "LinkedIn parser & tracker. Sent invitations, accepted/declined connections, contacts auto-saved. 100% local.",
   "permissions": ["notifications"],
   "host_permissions": ["https://www.linkedin.com/*"],
@@ -38,7 +38,9 @@
       "js": [
         "db-client.js",
         "core/url.js",
+        "core/rsc-parser.js",
         "core/detect.js",
+        "core/contacts-modal.js",
         "core/profile-state.js",
         "profile.js"
       ],
