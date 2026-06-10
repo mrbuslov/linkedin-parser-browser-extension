@@ -4,6 +4,19 @@
 
 console.log('[LI Tracker] profile script loaded:', location.pathname);
 
+// Strip the trailing-whitespace-trimmed `name` from the start of `text` if
+// present. Case-insensitive, allows an optional separator after the name.
+// Returns `text` unchanged if the prefix doesn't match. Same helper also
+// lives in popup.js for defensive render-time cleanup of legacy records.
+function stripNamePrefix(text, name) {
+  if (!text || !name) return text || '';
+  const trimmed = text.trim();
+  if (trimmed.toLowerCase().startsWith(name.toLowerCase())) {
+    return trimmed.slice(name.length).replace(/^[\s·•|—-]+/, '').trim();
+  }
+  return trimmed;
+}
+
 // Location lives in a row with exactly three <p> children:
 //   <p>City, Country</p>  <p>·</p>  <p><a href="#">Contact info</a></p>
 // The "·" + href="#" anchor combo is unique to the profile top card and
@@ -59,7 +72,14 @@ function extractProfileInfo() {
     if (t === name) continue;
     if (DEGREE_BADGE_RE.test(t)) continue;
     if (heading.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING) {
-      headline = t;
+      // LinkedIn occasionally ships a single accessibility/SR text node that
+      // contains the name immediately followed by the headline:
+      //   "Daniil StankevichFullstack developer | React/Angular/NestJS"
+      // That node is the FIRST text-only match after the heading, so the
+      // naive scan grabs it as headline-with-name-glued. Strip the name
+      // prefix if present and keep the remainder as the headline.
+      headline = stripNamePrefix(t, name);
+      if (!headline) continue;  // nothing left after stripping → keep looking
       break;
     }
   }

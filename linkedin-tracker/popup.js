@@ -43,6 +43,8 @@ const ageClassFromDays = (d) => d >= AGE_RED_DAYS ? 'age-red' : d >= AGE_YELLOW_
 
 let searchQuery = '';
 
+const cleanHeadline = LITPopupLogic.cleanHeadline;
+
 function matchesSearch(item) {
   if (!searchQuery) return true;
   const q = searchQuery.toLowerCase();
@@ -163,7 +165,7 @@ function renderPending(items) {
           profileLink(item.profileUrl, item.name),
           contactButtons(item),
         ]),
-        item.headline ? el('div', { className: 'headline' }, [item.headline]) : null,
+        (() => { const h = cleanHeadline(item.headline, item.name); return h ? el('div', { className: 'headline' }, [h]) : null; })(),
         el('div', { className: 'meta' }, [
           el('span', {}, [`Pending ${days}d`]),
           item.sentDateRelative ? el('span', {}, [item.sentDateRelative]) : null,
@@ -206,7 +208,7 @@ function renderAcceptedRow(item, { primaryAction, primaryLabel }) {
         statusBadge(item.verified),
         contactButtons(item),
       ]),
-      item.headline ? el('div', { className: 'headline' }, [item.headline]) : null,
+      (() => { const h = cleanHeadline(item.headline, item.name); return h ? el('div', { className: 'headline' }, [h]) : null; })(),
       item.location ? el('div', { className: 'location' }, [item.location]) : null,
       el('div', { className: 'meta' }, [
         el('span', {}, [`Accepted ${sinceAccepted}d ago`]),

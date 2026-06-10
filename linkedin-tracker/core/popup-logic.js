@@ -8,6 +8,20 @@ function shouldShowDeclinedWarning(declinedCount, connectionsScanState) {
   return true;
 }
 
-const LITPopupLogic = { shouldShowDeclinedWarning };
+// Defensive cleanup for `headline` field: legacy records have the name
+// glued to the headline ("Daniil StankevichFullstack developer | …")
+// because LinkedIn ships an accessibility text node that combines both.
+// Extractor now strips at source, but old data is already dirty — this
+// runs at render time too. Idempotent: clean data passes through.
+function cleanHeadline(headline, name) {
+  if (!headline || !name) return headline || '';
+  const t = headline.trim();
+  if (t.toLowerCase().startsWith(name.toLowerCase())) {
+    return t.slice(name.length).replace(/^[\s·•|—-]+/, '').trim();
+  }
+  return t;
+}
+
+const LITPopupLogic = { shouldShowDeclinedWarning, cleanHeadline };
 if (typeof globalThis !== 'undefined') globalThis.LITPopupLogic = LITPopupLogic;
 if (typeof module !== 'undefined' && module.exports) module.exports = LITPopupLogic;
