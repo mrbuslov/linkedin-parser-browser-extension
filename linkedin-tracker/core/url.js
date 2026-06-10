@@ -12,7 +12,29 @@ function normalizeProfileUrl(href) {
     return `mailto:${href.slice(7).trim().toLowerCase()}`;
   }
   const u = new URL(href, 'https://www.linkedin.com');
+  // For /in/<vanity>/... URLs collapse anything after the vanity slug. LinkedIn
+  // appends sub-paths for overlays/widgets while keeping the same person —
+  // e.g. opening "Contact info" changes the URL to
+  //   /in/zhenyamogila/overlay/contact-info/
+  // — and we want both to resolve to the canonical /in/zhenyamogila/.
+  // The vanity slug itself is the first segment after /in/.
+  const inMatch = u.pathname.match(/^\/in\/([^/]+)/);
+  if (inMatch) {
+    return `${u.origin}/in/${inMatch[1]}/`;
+  }
   return `${u.origin}${u.pathname.replace(/\/+$/, '')}/`;
+}
+
+// True iff `pathname` looks like it belongs to a profile (/in/<vanity>...).
+// Used by content scripts to gate writes: SPA navigation can carry a script
+// past its match pattern (the script keeps running after the user navigates
+// to /search/results/people/), and we must NOT persist anything in that
+// state — observed real-world bug: a contact got saved under key
+// `/search/results/people/`. Overlay sub-paths like
+// /in/<vanity>/overlay/contact-info/ are allowed because the user is still
+// on the same profile when they open the contact-info modal.
+function isProfilePath(pathname) {
+  return /^\/in\/[^/]+/.test(pathname || '');
 }
 
 const EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i;
@@ -42,6 +64,6 @@ function decodeLinkedInRedirect(href) {
 // Dual-mode export: Node/Vitest gets a CJS module, classic-script content scripts
 // see `LITUrl` on globalThis (set unconditionally so order of script loading in
 // manifest doesn't matter).
-const LITUrl = { normalizeProfileUrl, isEmailKey, extractEmail, decodeLinkedInRedirect, EMAIL_RE };
+const LITUrl = { normalizeProfileUrl, isEmailKey, extractEmail, decodeLinkedInRedirect, isProfilePath, EMAIL_RE };
 if (typeof globalThis !== 'undefined') globalThis.LITUrl = LITUrl;
 if (typeof module !== 'undefined' && module.exports) module.exports = LITUrl;

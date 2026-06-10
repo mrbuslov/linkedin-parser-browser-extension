@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeProfileUrl, isEmailKey, extractEmail, decodeLinkedInRedirect } from '../linkedin-tracker/core/url.js';
+import { normalizeProfileUrl, isEmailKey, extractEmail, decodeLinkedInRedirect, isProfilePath } from '../linkedin-tracker/core/url.js';
 
 describe('normalizeProfileUrl', () => {
   it('keeps a canonical /in/name/ URL untouched', () => {
@@ -36,6 +36,45 @@ describe('normalizeProfileUrl', () => {
       .toBe('mailto:foo@example.com');
     expect(normalizeProfileUrl('mailto:scavaca@dmrs.min-saude.pt'))
       .toBe('mailto:scavaca@dmrs.min-saude.pt');
+  });
+
+  it('collapses /in/<vanity>/overlay/contact-info/ to the canonical /in/<vanity>/', () => {
+    // Real bug: opening the Contact info modal changed location.href to add
+    // /overlay/contact-info/, the tick recorded under that key, and the
+    // user got two `accepted` records for the same person.
+    expect(normalizeProfileUrl('https://www.linkedin.com/in/zhenyamogila/overlay/contact-info/'))
+      .toBe('https://www.linkedin.com/in/zhenyamogila/');
+  });
+
+  it('collapses any /in/<vanity>/<subpath>... to the canonical /in/<vanity>/', () => {
+    expect(normalizeProfileUrl('https://www.linkedin.com/in/jane/detail/contact-info/'))
+      .toBe('https://www.linkedin.com/in/jane/');
+    expect(normalizeProfileUrl('https://www.linkedin.com/in/jane/recent-activity/all/'))
+      .toBe('https://www.linkedin.com/in/jane/');
+  });
+});
+
+describe('isProfilePath — SPA-navigation gate', () => {
+  it('accepts canonical /in/<vanity>/', () => {
+    expect(isProfilePath('/in/jane/')).toBe(true);
+    expect(isProfilePath('/in/jane')).toBe(true);
+  });
+  it('accepts /in/<vanity>/overlay/... (contact-info, etc)', () => {
+    expect(isProfilePath('/in/jane/overlay/contact-info/')).toBe(true);
+  });
+  it('rejects /search/ and other non-profile paths', () => {
+    // Regression for the real bug: SPA navigation away from /in/* kept the
+    // content script running, and a profile entry got written under a
+    // /search/results/people/ key.
+    expect(isProfilePath('/search/results/people/')).toBe(false);
+    expect(isProfilePath('/feed/')).toBe(false);
+    expect(isProfilePath('/jobs/')).toBe(false);
+    expect(isProfilePath('/mynetwork/')).toBe(false);
+  });
+  it('rejects empty / undefined', () => {
+    expect(isProfilePath('')).toBe(false);
+    expect(isProfilePath(null)).toBe(false);
+    expect(isProfilePath(undefined)).toBe(false);
   });
 });
 

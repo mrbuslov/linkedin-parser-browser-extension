@@ -46,12 +46,18 @@ function extractProfileInfo() {
   if (!name) name = (heading?.textContent || '').trim();
   if (!name) return null;
 
+  // Skip LinkedIn's connection-degree badge ("· 1st", "· 2nd", "· 3rd",
+  // localized variants like "· 1-й", "· 1-й степени") — it's rendered as a
+  // standalone text node right after the heading, so a naive scan grabs it
+  // as headline. Pattern: a separator (·) followed by a degree token.
+  const DEGREE_BADGE_RE = /^[·•・]\s*(1st|2nd|3rd|1-?[йгi]|2-?[йгi]|3-?[йгi])\b/i;
   let headline = '';
   for (const node of root.querySelectorAll('div, span, p')) {
     if (node.children.length > 0) continue;
     const t = (node.textContent || '').trim();
     if (!t || t.length < 3) continue;
     if (t === name) continue;
+    if (DEGREE_BADGE_RE.test(t)) continue;
     if (heading.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING) {
       headline = t;
       break;
@@ -145,12 +151,22 @@ function showCaptureToast(contactInfo) {
   const captured = FIELD_DEFS.filter(([k]) => contactInfo[k]);
   if (captured.length === 0) return;
 
+  // Use the Popover API in `manual` mode to put the toast in the BROWSER'S
+  // top layer. LinkedIn's Contact-info overlay opens via the native
+  // `<dialog>.showModal()` API which is itself in the top layer; nothing
+  // rendered with plain `position: fixed` — regardless of z-index — can
+  // appear above a top-layer element. Popover-API elements are in the same
+  // top layer, so we coexist with the modal. Chrome 114+ supports this by
+  // default; the extension targets current Chrome only.
   let node = document.getElementById('lit-capture-toast');
   if (!node) {
     node = document.createElement('div');
     node.id = 'lit-capture-toast';
+    node.setAttribute('popover', 'manual');
     Object.assign(node.style, {
       position: 'fixed', bottom: '24px', right: '24px',
+      top: 'auto', left: 'auto',
+      margin: '0',
       display: 'flex', alignItems: 'flex-start', gap: '14px',
       background: '#ffffff', color: '#111',
       padding: '18px 22px', borderRadius: '12px',
@@ -159,7 +175,6 @@ function showCaptureToast(contactInfo) {
       lineHeight: '1.4',
       border: '1px solid rgba(0, 0, 0, 0.08)',
       boxShadow: '0 10px 32px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.10)',
-      zIndex: '2147483647',
       maxWidth: '380px',
       opacity: '0', transition: 'opacity 0.22s ease-out, transform 0.22s ease-out',
       transform: 'translateY(10px)',
@@ -201,12 +216,24 @@ function showCaptureToast(contactInfo) {
   bodyEl.append(titleEl, chipsEl);
   node.append(checkEl, bodyEl);
 
+  // Push into top layer if not already showing. The showPopover() call is
+  // idempotent in the sense that calling it on an already-showing popover
+  // throws; we guard with the data flag.
+  if (!node._showing) {
+    try { node.showPopover(); node._showing = true; } catch { /* older Chrome */ }
+  }
   node.style.opacity = '1';
   node.style.transform = 'translateY(0)';
   clearTimeout(node._hideT);
   node._hideT = setTimeout(() => {
     node.style.opacity = '0';
     node.style.transform = 'translateY(10px)';
+    setTimeout(() => {
+      if (node._showing) {
+        try { node.hidePopover(); } catch { /* noop */ }
+        node._showing = false;
+      }
+    }, 250);
   }, 2800);
 }
 
@@ -235,6 +262,15 @@ function contactsFingerprint(info) {
 }
 
 async function tick() {
+  // SPA-navigation gate: the content script keeps running after the user
+  // navigates away from /in/* (e.g. into /search/results/people/). The
+  // script's poll tick would otherwise read the current URL — now the
+  // search URL — and write a bogus contact entry keyed by that URL. We
+  // observed exactly this in real data: a record under
+  // `https://www.linkedin.com/in/.../` was duplicated as
+  // `https://www.linkedin.com/search/results/people/`.
+  if (!LITUrl.isProfilePath(window.location.pathname)) return;
+
   const info = extractProfileInfo();
   const root = document.querySelector('main') || document.body;
   const status = LITDetect.detectConnectionStatus(root);
