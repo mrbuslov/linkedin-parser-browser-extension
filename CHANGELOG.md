@@ -65,6 +65,21 @@ copy button per captured field — one click puts the value on the clipboard.
   authoritatively says "1st degree" from a signal LinkedIn cannot remove.
   Priority chain is now: DOM Pending → aria-label degree → RSC degree → DOM
   fallback. Six regression tests including the exact Zhenia DOM shape.
+- **Cross-URL dedup** when LinkedIn changes a profile's vanity slug (or any
+  other reason the same person ends up under two different profile URLs):
+  `applyProfileVisit` now scans `contacts`/`accepted`/`sentInvitations` for
+  records with a matching `memberId` (bulletproof, from RSC) or matching
+  name (fallback for legacy records, requires ≥4 chars to avoid trivial
+  collisions). Found duplicate → contact-info fields, marked status,
+  earlier firstSeenAt/acceptedAt and any `verified='accepted'` carry over
+  into the current-URL record; old key gets deleted. Records gain
+  `memberId` and `vanityName` from RSC on every visit, so future dedup is
+  rock-solid even if the user's name changes (married surname, transliteration).
+- On-page toast restyled to **white LinkedIn-style** card: green ✓ in a
+  circle, dark title text, light chip pills for each captured field
+  (📧 email · 📞 phone · 🌐 website · 📍 address · 🎂 birthday). Larger
+  padding (18px 22px), softer dual-layer shadow, max-z-index so the toast
+  is never hidden by LinkedIn's own modal backdrops.
 - `applyContactInfo` now flows into `accepted[url]` regardless of the visit
   status branch — previously only the `connected` branch wrote contact-info
   fields onto the accepted record. As a result, a profile that was stuck

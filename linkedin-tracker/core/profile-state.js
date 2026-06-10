@@ -24,6 +24,72 @@ const CONTACT_FIELDS = [
   'address', 'birthday', 'connectedSinceText',
 ];
 
+// Find an existing record in `store` under a DIFFERENT URL that refers to
+// the same person as `targetUrl`. Two cases we treat as equivalent:
+//   1) memberId match — bulletproof: LinkedIn's internal numeric ID. Records
+//      visited after 1.2.2 carry this from the RSC payload.
+//   2) name match (case-insensitive, trimmed) — fallback for legacy records
+//      with no memberId. LinkedIn allows profile vanity changes
+//      (/in/old-slug → /in/new-slug, same person), so visiting the same
+//      person after a slug change otherwise creates a duplicate. Risk:
+//      two real people with the same name get merged. We accept this risk
+//      for fixing the much more common slug-change duplicate case;
+//      requires a name of at least 4 non-whitespace characters to avoid
+//      trivial collisions ("Lee", initials).
+function findDuplicateRecord(store, targetUrl, targetName, targetMemberId) {
+  for (const [url, rec] of Object.entries(store)) {
+    if (url === targetUrl) continue;
+    if (targetMemberId && rec.memberId && rec.memberId === targetMemberId) return url;
+  }
+  if (!targetName) return null;
+  const t = targetName.toLowerCase().trim();
+  if (t.replace(/\s/g, '').length < 4) return null;
+  for (const [url, rec] of Object.entries(store)) {
+    if (url === targetUrl) continue;
+    const n = (rec.name || '').toLowerCase().trim();
+    if (n === t) return url;
+  }
+  return null;
+}
+
+// Migrate the OLD record's fields into the CURRENT record at `targetUrl`,
+// then delete the old key. Used by the cross-URL dedup pass. Current record
+// takes precedence for fresh fields (name, status), but we restore:
+//   - non-empty contact info and metadata from old when current doesn't have it
+//   - earlier firstSeenAt / acceptedAt (real history > current snapshot)
+//   - marked status (don't lose the user's manual action)
+//   - 'accepted' verified status (don't auto-downgrade)
+function mergeIntoTarget(store, oldUrl, targetUrl) {
+  const old = store[oldUrl] || {};
+  const cur = store[targetUrl] || {};
+  const merged = { ...old, ...cur };
+  merged.profileUrl = targetUrl;
+  for (const f of ['headline', 'avatar', 'location', 'country', ...CONTACT_FIELDS]) {
+    if (!cur[f] && old[f]) merged[f] = old[f];
+  }
+  if (old.contactsCapturedAt && (!cur.contactsCapturedAt || old.contactsCapturedAt > cur.contactsCapturedAt)) {
+    merged.contactsCapturedAt = old.contactsCapturedAt;
+  }
+  if (old.firstSeenAt && (!cur.firstSeenAt || old.firstSeenAt < cur.firstSeenAt)) {
+    merged.firstSeenAt = old.firstSeenAt;
+  }
+  if (old.acceptedAt && (!cur.acceptedAt || old.acceptedAt < cur.acceptedAt)) {
+    merged.acceptedAt = old.acceptedAt;
+  }
+  if (old.marked) {
+    merged.marked = true;
+    if (!cur.markedAt && old.markedAt) merged.markedAt = old.markedAt;
+  }
+  if (old.verified === 'accepted' && cur.verified !== 'accepted') {
+    merged.verified = 'accepted';
+    if (!cur.verifiedAt && old.verifiedAt) merged.verifiedAt = old.verifiedAt;
+  }
+  if (old.connectedOnText && !cur.connectedOnText) merged.connectedOnText = old.connectedOnText;
+  if (old.connectedOnDate && !cur.connectedOnDate) merged.connectedOnDate = old.connectedOnDate;
+  store[targetUrl] = merged;
+  delete store[oldUrl];
+}
+
 // Overwrite-on-visit semantics: every time the user opens the Contact info
 // overlay we replace the stored fields with the freshly parsed ones. Simpler
 // than a history log, and the LinkedIn UI is itself the source of truth — if
@@ -47,6 +113,25 @@ function applyProfileVisit(stored, info, status, now, contactInfo) {
   const accepted = { ...(stored.accepted || {}) };
   const sentInvitations = { ...(stored.sentInvitations || {}) };
   const profileUrl = info.profileUrl;
+
+  // CROSS-URL DEDUP — runs BEFORE the per-store branching below so that the
+  // status/contact-info updates land on the merged record, not on a stale
+  // duplicate. Common case fixed: a contact got verified=declined on the
+  // OLD URL (pre-1.2.2 RSC bug), now visited at the NEW URL post-fix and
+  // re-detected as connected. Without dedup we'd leave the old declined
+  // entry orphaned and create a fresh accepted entry under the new URL —
+  // user sees two rows for the same person.
+  let acceptedDedup = false;
+  let sentDedup = false;
+  for (const store of [contacts, accepted, sentInvitations]) {
+    const dupUrl = findDuplicateRecord(store, profileUrl, info.name, info.memberId);
+    if (dupUrl) {
+      mergeIntoTarget(store, dupUrl, profileUrl);
+      if (store === accepted) acceptedDedup = true;
+      if (store === sentInvitations) sentDedup = true;
+    }
+  }
+
   const prev = contacts[profileUrl] || {};
 
   // Preserve contact-info fields across visits — even when the modal isn't
@@ -68,11 +153,15 @@ function applyProfileVisit(stored, info, status, now, contactInfo) {
     visitedAt: now,
     firstSeenAt: prev.firstSeenAt || now,
     ...carriedContactFields,
+    // memberId/vanityName from RSC when available — these enable bulletproof
+    // dedup on subsequent visits, even if names don't match or change.
+    ...(info.memberId  && { memberId: info.memberId }),
+    ...(info.vanityName && { vanityName: info.vanityName }),
   };
   applyContactInfo(contacts[profileUrl], contactInfo, now);
 
-  let acceptedChanged = false;
-  let sentChanged = false;
+  let acceptedChanged = acceptedDedup;
+  let sentChanged = sentDedup;
 
   if (status === 'pending') {
     // Pending lives in sentInvitations only. If a stale accepted entry exists
@@ -101,6 +190,8 @@ function applyProfileVisit(stored, info, status, now, contactInfo) {
         addedFrom: 'profile',
       };
     }
+    if (info.memberId   && !sentInvitations[profileUrl].memberId)   sentInvitations[profileUrl].memberId   = info.memberId;
+    if (info.vanityName && !sentInvitations[profileUrl].vanityName) sentInvitations[profileUrl].vanityName = info.vanityName;
     applyContactInfo(sentInvitations[profileUrl], contactInfo, now);
     sentChanged = true;
   } else if (status === 'connected') {
@@ -152,6 +243,8 @@ function applyProfileVisit(stored, info, status, now, contactInfo) {
       };
       acceptedChanged = true;
     }
+    if (info.memberId   && !accepted[profileUrl].memberId)   { accepted[profileUrl].memberId   = info.memberId;   acceptedChanged = true; }
+    if (info.vanityName && !accepted[profileUrl].vanityName) { accepted[profileUrl].vanityName = info.vanityName; acceptedChanged = true; }
     if (applyContactInfo(accepted[profileUrl], contactInfo, now)) acceptedChanged = true;
   } else {
     // status === 'not_connected' — should be in neither sentInvitations nor accepted.

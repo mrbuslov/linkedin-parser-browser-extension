@@ -353,6 +353,143 @@ describe('applyProfileVisit — invariants', () => {
   });
 });
 
+describe('applyProfileVisit — cross-URL dedup (Zhenia regression)', () => {
+  it('migrates old declined entry to new URL when names match (vanity-change case)', () => {
+    // Pre-1.2.2 record under the OLD slug, marked declined by the buggy
+    // detector. User re-visits at the NEW slug, fix returns connected.
+    // Without dedup we'd get two rows: old declined + new accepted.
+    const stored = {
+      accepted: {
+        'https://www.linkedin.com/in/zhenia-old-slug/': {
+          profileUrl: 'https://www.linkedin.com/in/zhenia-old-slug/',
+          name: 'Zhenia Mohyla',
+          verified: 'declined',
+          acceptedAt: NOW - 30 * DAY,
+          firstSeenAt: NOW - 30 * DAY,
+          daysPending: 0,
+        },
+      },
+    };
+    const r = applyProfileVisit(stored, info({
+      profileUrl: 'https://www.linkedin.com/in/zhenia-mohyla/',
+      name: 'Zhenia Mohyla',
+    }), 'connected', NOW);
+
+    expect(r.accepted['https://www.linkedin.com/in/zhenia-old-slug/']).toBeUndefined();
+    const cur = r.accepted['https://www.linkedin.com/in/zhenia-mohyla/'];
+    expect(cur).toBeDefined();
+    expect(cur.verified).toBe('accepted');
+    // Migrated fields preserved
+    expect(cur.firstSeenAt).toBe(NOW - 30 * DAY);
+    expect(cur.acceptedAt).toBe(NOW - 30 * DAY);
+  });
+
+  it('migrates contact info from old declined entry to new URL', () => {
+    const stored = {
+      accepted: {
+        'https://www.linkedin.com/in/old/': {
+          profileUrl: 'https://www.linkedin.com/in/old/',
+          name: 'Zhenia Mohyla',
+          verified: 'declined',
+          acceptedAt: NOW - 30 * DAY,
+          firstSeenAt: NOW - 30 * DAY,
+          daysPending: 0,
+          email: 'z@old.captured',
+          phone: '+999',
+          contactsCapturedAt: NOW - 5 * DAY,
+        },
+      },
+    };
+    const r = applyProfileVisit(stored, info({
+      profileUrl: 'https://www.linkedin.com/in/new/',
+      name: 'Zhenia Mohyla',
+    }), 'connected', NOW, null);
+
+    const cur = r.accepted['https://www.linkedin.com/in/new/'];
+    expect(cur.email).toBe('z@old.captured');
+    expect(cur.phone).toBe('+999');
+  });
+
+  it('memberId match wins over name match (bulletproof identity)', () => {
+    // Two entries with same memberId but different name — still merged.
+    const stored = {
+      accepted: {
+        'https://www.linkedin.com/in/old-name/': {
+          profileUrl: 'https://www.linkedin.com/in/old-name/',
+          name: 'Maiden Surname',
+          memberId: 'M-111',
+          verified: 'accepted',
+          acceptedAt: NOW - 60 * DAY,
+          firstSeenAt: NOW - 60 * DAY,
+          daysPending: 0,
+        },
+      },
+    };
+    const r = applyProfileVisit(stored, info({
+      profileUrl: 'https://www.linkedin.com/in/new-name/',
+      name: 'Married Surname',
+      memberId: 'M-111',
+    }), 'connected', NOW);
+    expect(r.accepted['https://www.linkedin.com/in/old-name/']).toBeUndefined();
+    expect(r.accepted['https://www.linkedin.com/in/new-name/']).toBeDefined();
+  });
+
+  it('does NOT dedup when names are too short (avoids "Lee" collisions)', () => {
+    const stored = {
+      accepted: {
+        'https://www.linkedin.com/in/lee-a/': {
+          profileUrl: 'https://www.linkedin.com/in/lee-a/',
+          name: 'Lee',
+          verified: 'accepted',
+          acceptedAt: NOW - 30 * DAY,
+          firstSeenAt: NOW - 30 * DAY,
+          daysPending: 0,
+        },
+      },
+    };
+    const r = applyProfileVisit(stored, info({
+      profileUrl: 'https://www.linkedin.com/in/lee-b/',
+      name: 'Lee',
+    }), 'connected', NOW);
+    expect(r.accepted['https://www.linkedin.com/in/lee-a/']).toBeDefined();
+    expect(r.accepted['https://www.linkedin.com/in/lee-b/']).toBeDefined();
+  });
+
+  it('preserves marked status from the older record after merge', () => {
+    const stored = {
+      accepted: {
+        'https://www.linkedin.com/in/old/': {
+          profileUrl: 'https://www.linkedin.com/in/old/',
+          name: 'Zhenia Mohyla',
+          verified: 'accepted',
+          marked: true,
+          markedAt: NOW - 10 * DAY,
+          acceptedAt: NOW - 30 * DAY,
+          firstSeenAt: NOW - 30 * DAY,
+          daysPending: 0,
+        },
+      },
+    };
+    const r = applyProfileVisit(stored, info({
+      profileUrl: 'https://www.linkedin.com/in/new/',
+      name: 'Zhenia Mohyla',
+    }), 'connected', NOW);
+    const cur = r.accepted['https://www.linkedin.com/in/new/'];
+    expect(cur.marked).toBe(true);
+    expect(cur.markedAt).toBe(NOW - 10 * DAY);
+  });
+
+  it('persists memberId and vanityName from info onto the contacts record', () => {
+    const r = applyProfileVisit({}, info({
+      memberId: 'M-42',
+      vanityName: 'jane',
+    }), 'connected', NOW);
+    const c = r.contacts['https://www.linkedin.com/in/jane/'];
+    expect(c.memberId).toBe('M-42');
+    expect(c.vanityName).toBe('jane');
+  });
+});
+
 describe('applyContactInfo', () => {
   it('returns false when contactInfo is null', () => {
     const target = { name: 'X' };

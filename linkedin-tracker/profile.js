@@ -35,9 +35,13 @@ function extractProfileInfo() {
   // (long-headline-stuck-to-name, missing h2 mid-render, locale variants).
   // Falls back to heading text when payload is absent (SPA navigations).
   let name = '';
+  let memberId = '';
+  let vanityName = '';
   const rscBasics = LITRSC.findProfileBasics(LITRSC.extractRSCTextCached(document));
   if (rscBasics) {
     name = `${rscBasics.firstName} ${rscBasics.lastName}`.trim();
+    memberId  = rscBasics.memberId  || '';
+    vanityName = rscBasics.vanityName || '';
   }
   if (!name) name = (heading?.textContent || '').trim();
   if (!name) return null;
@@ -82,6 +86,8 @@ function extractProfileInfo() {
     avatar,
     location,
     country,
+    memberId,
+    vanityName,
   };
 }
 
@@ -145,15 +151,16 @@ function showCaptureToast(contactInfo) {
     node.id = 'lit-capture-toast';
     Object.assign(node.style, {
       position: 'fixed', bottom: '24px', right: '24px',
-      display: 'flex', alignItems: 'center', gap: '12px',
-      background: '#057642', color: '#fff',
-      padding: '16px 22px', borderRadius: '12px',
+      display: 'flex', alignItems: 'flex-start', gap: '14px',
+      background: '#ffffff', color: '#111',
+      padding: '18px 22px', borderRadius: '12px',
       fontSize: '14px', fontWeight: '500',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
       lineHeight: '1.4',
-      boxShadow: '0 8px 24px rgba(0, 0, 0, 0.28), 0 2px 6px rgba(0, 0, 0, 0.16)',
+      border: '1px solid rgba(0, 0, 0, 0.08)',
+      boxShadow: '0 10px 32px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.10)',
       zIndex: '2147483647',
-      maxWidth: '360px',
+      maxWidth: '380px',
       opacity: '0', transition: 'opacity 0.22s ease-out, transform 0.22s ease-out',
       transform: 'translateY(10px)',
       pointerEvents: 'none',
@@ -161,24 +168,34 @@ function showCaptureToast(contactInfo) {
     document.body.append(node);
   }
 
-  // Build content: ✓ check + title + small chips for each captured field.
+  // White LinkedIn-style: green ✓ in a circle, title in dark text, chips
+  // below. Mirrors LinkedIn's own action confirmations (e.g. "Connection
+  // request sent").
   node.innerHTML = '';
   const checkEl = document.createElement('span');
   checkEl.textContent = '✓';
   Object.assign(checkEl.style, {
-    fontSize: '20px', fontWeight: '700', lineHeight: '1',
-    flexShrink: '0',
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    width: '28px', height: '28px', borderRadius: '50%',
+    background: '#057642', color: '#fff',
+    fontSize: '16px', fontWeight: '700', lineHeight: '1',
+    flexShrink: '0', marginTop: '1px',
   });
   const bodyEl = document.createElement('div');
-  Object.assign(bodyEl.style, { display: 'flex', flexDirection: 'column', gap: '4px' });
+  Object.assign(bodyEl.style, { display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '0' });
   const titleEl = document.createElement('div');
   titleEl.textContent = `Contact info saved (${captured.length} field${captured.length > 1 ? 's' : ''})`;
-  Object.assign(titleEl.style, { fontWeight: '600' });
+  Object.assign(titleEl.style, { fontWeight: '600', color: '#111', fontSize: '14px' });
   const chipsEl = document.createElement('div');
-  Object.assign(chipsEl.style, { display: 'flex', gap: '8px', flexWrap: 'wrap', fontSize: '13px', opacity: '0.95' });
+  Object.assign(chipsEl.style, { display: 'flex', gap: '6px', flexWrap: 'wrap' });
   for (const [, emoji, label] of captured) {
     const chip = document.createElement('span');
     chip.textContent = `${emoji} ${label}`;
+    Object.assign(chip.style, {
+      background: '#f3f2ef', color: '#444',
+      padding: '3px 9px', borderRadius: '12px',
+      fontSize: '12px', fontWeight: '500',
+    });
     chipsEl.append(chip);
   }
   bodyEl.append(titleEl, chipsEl);
