@@ -43,8 +43,6 @@ const ageClassFromDays = (d) => d >= AGE_RED_DAYS ? 'age-red' : d >= AGE_YELLOW_
 
 let searchQuery = '';
 
-const cleanHeadline = LITPopupLogic.cleanHeadline;
-
 function matchesSearch(item) {
   if (!searchQuery) return true;
   const q = searchQuery.toLowerCase();
