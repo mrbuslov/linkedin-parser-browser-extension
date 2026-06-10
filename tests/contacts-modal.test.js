@@ -170,6 +170,37 @@ describe('parseContactsModal', () => {
   });
 });
 
+describe('parseContactsModal — real LinkedIn HTML fixtures', () => {
+  it('parses Igor Alentyev fixture (current 2026-06-11 LinkedIn markup)', () => {
+    // Regression for "ничего не собрало, даже тултипа не было" — Igor's
+    // profile uses the latest LinkedIn markup where the per-section
+    // `componentkey` attribute was removed from the contact-info DOM.
+    // The new parser anchors on SVG icon ids first (envelope-medium,
+    // phone-handset-small, link-medium, calendar-medium, people-medium)
+    // which are stable across LinkedIn UI rewrites. Label-text fallback
+    // also covered.
+    const fs = require('fs');
+    const path = require('path');
+    const html = fs.readFileSync(
+      path.resolve(__dirname, 'fixtures/igor-contacts-modal.html'),
+      'utf8'
+    );
+    document.body.innerHTML = html;
+    const result = parseContactsModal(document);
+    expect(result).toBeTruthy();
+    expect(result.email).toBe('igoralentyev@gmail.com');
+    expect(result.phone).toBe('+37443066745');
+    expect(result.phoneLabel).toBe('Mobile');
+    expect(result.website).toBe('https://linktr.ee/igoralentyev');
+    expect(result.websiteLabel).toBe('Personal');
+    expect(result.extraWebsites).toEqual([
+      { url: 'https://hirify.me', label: 'Company' },
+    ]);
+    expect(result.birthday).toBe('April 30');
+    expect(result.connectedSinceText).toBe('Sep 16, 2025');
+  });
+});
+
 describe('splitTrailingLabel', () => {
   it('splits value and parenthesized label', () => {
     expect(splitTrailingLabel('+375292999370 (Home)')).toEqual({ value: '+375292999370', label: 'Home' });

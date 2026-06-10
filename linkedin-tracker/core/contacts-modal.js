@@ -46,6 +46,23 @@ const LABEL_MAP = {
   'у контактах з':    'connectedSince',
 };
 
+// LinkedIn's internal SVG icon ids. Each contact-info section starts with one
+// of these icons, and these ids are pulled from a shared icon library used
+// across the whole LinkedIn UI — renaming one would break hundreds of pages,
+// so they're effectively frozen. Way more stable than class names (which
+// rotate every build) or even label text (which localizes). We use these as
+// the PRIMARY signal; label text is the fallback only if no icon is found.
+const ICON_MAP = {
+  'envelope-medium':      'email',
+  'phone-handset-small':  'phone',
+  'link-medium':          'website',
+  'globe-medium':         'website',
+  'calendar-medium':      'birthday',
+  'people-medium':        'connectedSince',
+  'house-medium':         'address',
+  'map-marker-medium':    'address',
+};
+
 const MODAL_SELECTOR =
   '[data-sdui-screen="com.linkedin.sdui.flagshipnav.profile.ProfileContactDetailsOverlay"]';
 
@@ -64,6 +81,61 @@ function normalizeLabel(raw) {
   return (raw || '').toLowerCase().replace(/\s+/g, ' ').replace(/[:：]\s*$/, '').trim();
 }
 
+// Find the contact-info section containing the value paragraphs. Strategy:
+//
+//   1) PRIMARY — walk every <svg> with a known id (envelope-medium for email,
+//      phone-handset-small for phone, etc) and find the enclosing section.
+//      The icon id is the most stable signal LinkedIn ships; class names
+//      rotate every build, label text localizes, but the icon library is
+//      shared across the whole UI and effectively frozen.
+//
+//   2) FALLBACK — if no recognized icon is in the modal (LinkedIn might
+//      ship a contact card without icons one day), iterate <p> tags and
+//      match against the localized label text via LABEL_MAP.
+//
+// For each (field, valueP-list) pair we hand off to the value extractor.
+function discoverSections(root) {
+  const sections = []; // [{ field, valueParagraphs: <p>[] }]
+
+  // PRIMARY: walk SVGs.
+  for (const svg of root.querySelectorAll('svg[id]')) {
+    const field = ICON_MAP[svg.id];
+    if (!field) continue;
+    // The icon and the label/value paragraphs are siblings inside a row
+    // wrapper. The row wrapper is the icon's parentElement. Inside there's
+    // a sub-container with <p>Label</p><p>Value</p>(<p>Value 2</p>…). The
+    // first <p> is the label and the rest are values.
+    const row = svg.parentElement;
+    if (!row) continue;
+    const allPs = row.querySelectorAll('p');
+    if (allPs.length < 2) continue;
+    sections.push({ field, valueParagraphs: Array.from(allPs).slice(1) });
+  }
+
+  if (sections.length > 0) return sections;
+
+  // FALLBACK: walk <p>s and label-match.
+  const ps = root.querySelectorAll('p');
+  for (let i = 0; i < ps.length; i++) {
+    const labelRaw = normalizeLabel(ps[i].textContent);
+    const field = LABEL_MAP[labelRaw];
+    if (!field) continue;
+    const valueP = ps[i].nextElementSibling;
+    if (!valueP || valueP.tagName !== 'P') continue;
+    // Collect any consecutive <p> siblings as multi-value (websites).
+    const values = [valueP];
+    let n = valueP.nextElementSibling;
+    while (n && n.tagName === 'P') {
+      const nLabel = normalizeLabel(n.textContent);
+      if (LABEL_MAP[nLabel]) break;  // hit the next label
+      values.push(n);
+      n = n.nextElementSibling;
+    }
+    sections.push({ field, valueParagraphs: values });
+  }
+  return sections;
+}
+
 function parseContactsModal(doc) {
   const docArg = doc || (typeof document !== 'undefined' ? document : null);
   if (!docArg) return null;
@@ -73,15 +145,9 @@ function parseContactsModal(doc) {
   const out = {};
   const seenWebsites = [];
 
-  for (const section of root.querySelectorAll('[componentkey]')) {
-    const ps = section.querySelectorAll('p');
-    if (ps.length < 2) continue;
-
-    const labelRaw = normalizeLabel(ps[0].textContent);
-    const field = LABEL_MAP[labelRaw];
-    if (!field) continue;
-
-    const valueP = ps[1];
+  for (const { field, valueParagraphs } of discoverSections(root)) {
+    const valueP = valueParagraphs[0];
+    if (!valueP) continue;
 
     if (field === 'email') {
       const a = valueP.querySelector('a[href^="mailto:" i]');
@@ -93,13 +159,17 @@ function parseContactsModal(doc) {
     }
 
     if (field === 'website') {
-      const a = valueP.querySelector('a[href]');
-      if (!a) continue;
-      const url = (typeof LITUrl !== 'undefined' && LITUrl.decodeLinkedInRedirect)
-        ? LITUrl.decodeLinkedInRedirect(a.getAttribute('href') || '')
-        : (a.getAttribute('href') || '');
-      const { label } = splitTrailingLabel(valueP.textContent);
-      seenWebsites.push({ url, label });
+      // A profile can have multiple websites — each as its own value <p>
+      // inside the same section. Iterate all value paragraphs.
+      for (const wp of valueParagraphs) {
+        const a = wp.querySelector('a[href]');
+        if (!a) continue;
+        const url = (typeof LITUrl !== 'undefined' && LITUrl.decodeLinkedInRedirect)
+          ? LITUrl.decodeLinkedInRedirect(a.getAttribute('href') || '')
+          : (a.getAttribute('href') || '');
+        const { label } = splitTrailingLabel(wp.textContent);
+        seenWebsites.push({ url, label });
+      }
       continue;
     }
 

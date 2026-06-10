@@ -224,3 +224,4 @@ coverage/
 .vitest-cache/
 dist-zip/
 *.tgz
+temp/
