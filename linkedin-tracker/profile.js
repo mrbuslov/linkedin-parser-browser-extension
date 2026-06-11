@@ -40,11 +40,13 @@ function extractMutuals(scope) {
 
 // parseMutualsCount lives in core/popup-logic.js so tests in jsdom can pin
 // the regression cases without dragging in profile.js (which calls
-// chrome.* APIs at module load). Content scripts see it on globalThis via
-// the popup-logic.js script tag in manifest.json's /in/* content_scripts.
-const parseMutualsCount = (typeof LITPopupLogic !== 'undefined' && LITPopupLogic.parseMutualsCount)
-  ? LITPopupLogic.parseMutualsCount
-  : () => null;
+// chrome.* APIs at module load). Content scripts call it directly via the
+// `LITPopupLogic.parseMutualsCount(...)` namespace — NO local `const` or
+// `function` re-declaration here. ALL content-script files load into one
+// shared global scope, and a top-level `const X` here clashes with
+// `function X` in popup-logic.js → SyntaxError → entire profile.js fails
+// to parse → nothing runs. Same trap previously blew up cleanHeadline.
+// Calls below use `LITPopupLogic.parseMutualsCount(...)` form.
 
 // Location lives in a row with exactly three <p> children:
 //   <p>City, Country</p>  <p>·</p>  <p><a href="#">Contact info</a></p>
@@ -123,7 +125,7 @@ function extractProfileInfo() {
   const location = extractLocation(scope);
   const country = parseCountry(location);
   const mutuals = extractMutuals(scope) || {};
-  const mutualsCount = parseMutualsCount(mutuals.mutualsText);
+  const mutualsCount = LITPopupLogic.parseMutualsCount(mutuals.mutualsText);
 
   return {
     profileUrl: LITUrl.normalizeProfileUrl(window.location.href),

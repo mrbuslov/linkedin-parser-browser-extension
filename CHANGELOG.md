@@ -56,6 +56,21 @@ In development for the next release. See [plan.md](plan.md) for the prioritized 
   profile.
 
 ### Fixed
+- **CRITICAL: `profile.js` SyntaxError "Identifier 'parseMutualsCount' has
+  already been declared"** — same class of bug that previously hit
+  `cleanHeadline`. `core/popup-logic.js` declared `function parseMutualsCount`
+  and `profile.js` re-declared `const parseMutualsCount = LITPopupLogic...`
+  in the same shared global scope. Result: `profile.js` failed to parse,
+  nothing in the content script ran, no profile-visit writes happened
+  (this explains Clare Suttie not being re-added to Pending after delete).
+  Call site now uses the `LITPopupLogic.parseMutualsCount(...)` namespace
+  form directly — no local re-declaration.
+- **New `tests/content-script-bundle.test.js` regression guard**: loads
+  every content-script bundle declared in manifest.json into a fresh
+  Node `vm` sandbox in the same order Chrome would, and fails the test
+  on any `SyntaxError` (parse failure OR top-level identifier collision).
+  This is the third bug of this class we've shipped; the test is the
+  hard backstop that prevents the fourth.
 - **Kimberly Martinez "stuck in Pending" + entire class of sidebar-leak
   bugs**: the detector used to scan EVERY `<button>` / `<a>` / `[role=button]`
   in `<main>`, so action buttons belonging to other people in sidebars
