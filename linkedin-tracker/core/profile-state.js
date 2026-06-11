@@ -9,6 +9,25 @@
 
 const DAY_MS = 86400000;
 
+// Single source of truth for "metadata fields that flow from info into any
+// record we create or update". Keeps sentInvitations / accepted / contacts
+// in sync — every store gets the same shape, no field gets silently dropped
+// because we forgot to copy it into one specific branch.
+function metadataFromInfo(info) {
+  const out = {
+    headline:     info.headline     || '',
+    avatar:       info.avatar       || '',
+    location:     info.location     || '',
+    country:      info.country      || '',
+    mutualsUrl:   info.mutualsUrl   || '',
+    mutualsText:  info.mutualsText  || '',
+    mutualsCount: info.mutualsCount != null ? info.mutualsCount : null,
+  };
+  if (info.memberId)   out.memberId   = info.memberId;
+  if (info.vanityName) out.vanityName = info.vanityName;
+  return out;
+}
+
 // Refresh field policy:
 //   - name → never overwrite here (identity is sticky; mid-render bad names
 //     would corrupt it; cross-URL dedup handles legitimate name changes)
@@ -182,25 +201,24 @@ function applyProfileVisit(stored, info, status, now, contactInfo) {
     const existing = sentInvitations[profileUrl];
     if (existing) {
       existing.lastSeenAt = now;
-      existing.name = info.name || existing.name;
-      existing.headline = info.headline || existing.headline;
-      existing.avatar = info.avatar || existing.avatar;
+      // Name: overwrite when fresh non-empty. The extractor is deterministic
+      // and won't yield a bogus name; preserving an old (possibly stale or
+      // mid-render-corrupted) name on top of fresh truth doesn't help.
+      if (info.name) existing.name = info.name;
+      refreshMetadata(existing, info);
     } else {
       sentInvitations[profileUrl] = {
         profileUrl,
         name: info.name,
-        headline: info.headline || '',
-        avatar: info.avatar || '',
         sentDateRelative: '',
         firstSeenAt: now,
         lastSeenAt: now,
         notes: '',
         tags: [],
         addedFrom: 'profile',
+        ...metadataFromInfo(info),
       };
     }
-    if (info.memberId   && !sentInvitations[profileUrl].memberId)   sentInvitations[profileUrl].memberId   = info.memberId;
-    if (info.vanityName && !sentInvitations[profileUrl].vanityName) sentInvitations[profileUrl].vanityName = info.vanityName;
     applyContactInfo(sentInvitations[profileUrl], contactInfo, now);
     sentChanged = true;
   } else if (status === 'connected') {
@@ -213,6 +231,7 @@ function applyProfileVisit(stored, info, status, now, contactInfo) {
       accepted[profileUrl] = {
         ...sentEntry,
         ...(existingAccepted || {}),
+        ...metadataFromInfo(info),  // fresh metadata wins over carried-over old fields
         profileUrl,
         name: info.name || sentEntry.name,
         acceptedAt: existingAccepted?.acceptedAt || now,
@@ -238,10 +257,6 @@ function applyProfileVisit(stored, info, status, now, contactInfo) {
       accepted[profileUrl] = {
         profileUrl,
         name: info.name,
-        headline: info.headline || '',
-        avatar: info.avatar || '',
-        location: info.location || '',
-        country: info.country || '',
         acceptedAt: now,
         daysPending: 0,
         marked: true,
@@ -249,11 +264,10 @@ function applyProfileVisit(stored, info, status, now, contactInfo) {
         verified: 'accepted',
         verifiedAt: now,
         autoMarked: true,
+        ...metadataFromInfo(info),
       };
       acceptedChanged = true;
     }
-    if (info.memberId   && !accepted[profileUrl].memberId)   { accepted[profileUrl].memberId   = info.memberId;   acceptedChanged = true; }
-    if (info.vanityName && !accepted[profileUrl].vanityName) { accepted[profileUrl].vanityName = info.vanityName; acceptedChanged = true; }
     if (applyContactInfo(accepted[profileUrl], contactInfo, now)) acceptedChanged = true;
   } else {
     // status === 'not_connected' — should be in neither sentInvitations nor accepted.

@@ -12,6 +12,9 @@ function info(overrides = {}) {
     avatar: 'https://media.licdn.com/profile-displayphoto/jane.jpg',
     location: 'Berlin, Germany',
     country: 'Germany',
+    mutualsUrl: 'https://www.linkedin.com/search/results/people/?connectionOf=urn:li:member:1&network=["F"]',
+    mutualsText: 'Anton, Mikhail and 5 other mutual connections',
+    mutualsCount: 7,
     ...overrides,
   };
 }
@@ -79,6 +82,36 @@ describe('applyProfileVisit — status:pending', () => {
     expect(r.sentInvitations['https://www.linkedin.com/in/jane/'].name).toBe('Jane Doe');
   });
 
+  it('persists mutuals (url + text + count) onto new sentInvitations entry', () => {
+    const r = applyProfileVisit({}, info(), 'pending', NOW);
+    const rec = r.sentInvitations['https://www.linkedin.com/in/jane/'];
+    expect(rec.mutualsUrl).toBe('https://www.linkedin.com/search/results/people/?connectionOf=urn:li:member:1&network=["F"]');
+    expect(rec.mutualsText).toBe('Anton, Mikhail and 5 other mutual connections');
+    expect(rec.mutualsCount).toBe(7);
+  });
+
+  it('refreshes mutuals on an existing sentInvitations record (count drifts as network grows)', () => {
+    const stored = {
+      sentInvitations: {
+        'https://www.linkedin.com/in/jane/': {
+          profileUrl: 'https://www.linkedin.com/in/jane/',
+          name: 'Jane Doe',
+          firstSeenAt: NOW - 5 * DAY,
+          lastSeenAt: NOW - 5 * DAY,
+          mutualsCount: 3,
+          mutualsText: 'Anton and 2 other mutual connections',
+        },
+      },
+    };
+    const r = applyProfileVisit(stored, info({
+      mutualsCount: 7,
+      mutualsText: 'Anton, Mikhail and 5 other mutual connections',
+    }), 'pending', NOW);
+    const rec = r.sentInvitations['https://www.linkedin.com/in/jane/'];
+    expect(rec.mutualsCount).toBe(7);
+    expect(rec.mutualsText).toBe('Anton, Mikhail and 5 other mutual connections');
+  });
+
   it('drops a stale accepted entry when status flips to pending (re-invite case)', () => {
     const stored = {
       accepted: {
@@ -98,6 +131,31 @@ describe('applyProfileVisit — status:pending', () => {
 });
 
 describe('applyProfileVisit — status:connected', () => {
+  it('persists mutuals onto a brand-new accepted (auto-marked) record', () => {
+    const r = applyProfileVisit({}, info(), 'connected', NOW);
+    const rec = r.accepted['https://www.linkedin.com/in/jane/'];
+    expect(rec.mutualsUrl).toBe('https://www.linkedin.com/search/results/people/?connectionOf=urn:li:member:1&network=["F"]');
+    expect(rec.mutualsText).toBe('Anton, Mikhail and 5 other mutual connections');
+    expect(rec.mutualsCount).toBe(7);
+  });
+
+  it('persists mutuals on promote-from-pending (sentInvitations → accepted)', () => {
+    const stored = {
+      sentInvitations: {
+        'https://www.linkedin.com/in/jane/': {
+          profileUrl: 'https://www.linkedin.com/in/jane/',
+          name: 'Jane Doe',
+          firstSeenAt: NOW - 10 * DAY,
+        },
+      },
+    };
+    const r = applyProfileVisit(stored, info(), 'connected', NOW);
+    const rec = r.accepted['https://www.linkedin.com/in/jane/'];
+    expect(rec.mutualsUrl).toBe('https://www.linkedin.com/search/results/people/?connectionOf=urn:li:member:1&network=["F"]');
+    expect(rec.mutualsCount).toBe(7);
+    expect(r.sentInvitations['https://www.linkedin.com/in/jane/']).toBeUndefined();
+  });
+
   it('auto-marks a brand-new connection as pre-existing contact', () => {
     const r = applyProfileVisit({}, info(), 'connected', NOW);
     const a = r.accepted['https://www.linkedin.com/in/jane/'];

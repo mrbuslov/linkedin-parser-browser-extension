@@ -9,6 +9,19 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
 ### Added
+- **Mutuals captured for `pending` and `accepted` records too**, not just
+  in the `contacts` journal. Previously only `contacts[url]` and accepted
+  entries updated via `refreshMetadata` got the mutuals fields. Now:
+  (1) new `sentInvitations` entries (status=pending) write
+  `mutualsUrl`/`mutualsText`/`mutualsCount` immediately;
+  (2) existing `sentInvitations` entries refresh mutuals on every visit
+  (count drifts as your network grows);
+  (3) new `accepted` entries (brand-new pre-existing contact OR promoted
+  from `sentInvitations`) write mutuals immediately.
+  Refactor introduces `metadataFromInfo(info)` — single source of truth
+  for which fields flow from extractor into every store, so no future
+  branch can silently drop a metadata field. Four new regression tests in
+  `profile-state.test.js`.
 - **`refreshMetadata` now overwrites headline/location/country with fresh
   data on every visit**, not just on first-set. Old policy
   (`info.X && !target.X`) was "first non-empty wins" — designed to prevent
