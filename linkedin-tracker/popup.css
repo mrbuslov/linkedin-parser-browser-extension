@@ -356,9 +356,9 @@ main {
   display: inline-flex;
   align-items: center;
   padding: 2px 8px;
-  background: #eaf3ff;
-  color: #0a66c2;
-  border: 1px solid #b3d4f5;
+  background: #0a66c2;
+  color: #fff;
+  border: 1px solid #0a66c2;
   border-radius: 10px;
   font-size: 11px;
   font-weight: 600;
@@ -367,8 +367,18 @@ main {
   line-height: 1.4;
 }
 .mutuals-chip:hover {
-  background: #d8e8ff;
+  background: #084a92;
+  border-color: #084a92;
   text-decoration: none;
+}
+.mutuals-chip.collected {
+  background: #fff;
+  color: #0a66c2;
+  border-color: #b3d4f5;
+}
+.mutuals-chip.collected:hover {
+  background: #eaf3ff;
+  border-color: #0a66c2;
 }
 
 .toast {

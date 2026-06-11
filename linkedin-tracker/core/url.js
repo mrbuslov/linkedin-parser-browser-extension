@@ -61,9 +61,29 @@ function decodeLinkedInRedirect(href) {
   return target || href;
 }
 
+// Extract a LinkedIn member URN (encoded "ACoA..." form) from a URL's
+// `connectionOf=` query parameter. Used to identify whose mutuals page the
+// user is currently viewing on `/search/results/people/?...connectionOf=...`.
+// Returns null when the param is missing or doesn't contain a recognizable
+// URN. No fallback parsing — the URN format starts with "ACoA" and uses
+// `[A-Za-z0-9_-]`; anything else is rejected.
+function extractURNFromConnectionOf(href) {
+  if (!href) return null;
+  const u = new URL(href, 'https://www.linkedin.com');
+  const param = u.searchParams.get('connectionOf');
+  if (!param) return null;
+  const m = param.match(/(ACoA[A-Za-z0-9_-]+)/);
+  return m ? m[1] : null;
+}
+
+// True iff `pathname` is a LinkedIn people-search results page.
+function isPeopleSearchPath(pathname) {
+  return /^\/search\/results\/people\/?$/.test(pathname || '');
+}
+
 // Dual-mode export: Node/Vitest gets a CJS module, classic-script content scripts
 // see `LITUrl` on globalThis (set unconditionally so order of script loading in
 // manifest doesn't matter).
-const LITUrl = { normalizeProfileUrl, isEmailKey, extractEmail, decodeLinkedInRedirect, isProfilePath, EMAIL_RE };
+const LITUrl = { normalizeProfileUrl, isEmailKey, extractEmail, decodeLinkedInRedirect, isProfilePath, extractURNFromConnectionOf, isPeopleSearchPath, EMAIL_RE };
 if (typeof globalThis !== 'undefined') globalThis.LITUrl = LITUrl;
 if (typeof module !== 'undefined' && module.exports) module.exports = LITUrl;

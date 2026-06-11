@@ -118,21 +118,26 @@ function contactButtons(item) {
   return el('span', { className: 'contact-copies' }, buttons);
 }
 
-// "🤝 N mutuals" chip — opens LinkedIn's connection-of search in a new tab.
-// Renders only when we captured a real mutuals URL for this contact.
+// "🤝 N" chip — opens LinkedIn's connection-of search in a new tab.
+// Color logic: solid blue when the list of mutuals has NOT been captured
+// (CTA — click to navigate, the search-mutuals content script will save
+// the list when LinkedIn renders it); white/outlined when we've already
+// captured the list locally.
 function mutualsChip(item) {
   if (!item.mutualsUrl) return null;
-  const count = item.mutualsCount != null ? item.mutualsCount : '';
-  const labelText = count !== '' ? `🤝 ${count}` : '🤝 mutuals';
+  const labelText = item.mutualsCount != null ? `🤝 ${item.mutualsCount}` : '🤝';
+  const collected = Array.isArray(item.mutualsCollected) && item.mutualsCollected.length > 0;
   const a = el('a', {
-    className: 'mutuals-chip',
+    className: collected ? 'mutuals-chip collected' : 'mutuals-chip',
     href: item.mutualsUrl,
     target: '_blank',
     rel: 'noopener noreferrer',
   }, [labelText]);
-  a.title = item.mutualsText
-    ? `${item.mutualsText} — click to open the LinkedIn search`
-    : 'Open mutual connections on LinkedIn';
+  a.title = collected
+    ? `${item.mutualsCollected.length} mutual(s) saved locally${item.mutualsText ? ' — ' + item.mutualsText : ''}`
+    : (item.mutualsText
+        ? `${item.mutualsText} — click to capture the list locally`
+        : 'Open the LinkedIn search to capture mutuals locally');
   return a;
 }
 

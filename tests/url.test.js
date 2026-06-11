@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeProfileUrl, isEmailKey, extractEmail, decodeLinkedInRedirect, isProfilePath } from '../linkedin-tracker/core/url.js';
+import { normalizeProfileUrl, isEmailKey, extractEmail, decodeLinkedInRedirect, isProfilePath, extractURNFromConnectionOf, isPeopleSearchPath } from '../linkedin-tracker/core/url.js';
 
 describe('normalizeProfileUrl', () => {
   it('keeps a canonical /in/name/ URL untouched', () => {
@@ -116,5 +116,44 @@ describe('decodeLinkedInRedirect', () => {
   it('passes through empty/falsy input', () => {
     expect(decodeLinkedInRedirect('')).toBe('');
     expect(decodeLinkedInRedirect(null)).toBe(null);
+  });
+});
+
+describe('extractURNFromConnectionOf', () => {
+  it('extracts the URN from URL-encoded connectionOf', () => {
+    const url = 'https://www.linkedin.com/search/results/people/?origin=MEMBER_PROFILE_CANNED_SEARCH&network=%5B%22F%22%5D&connectionOf=%5B%22ACoAAAD3TQABqRHgsCZ_Ma8zqRLdxpuuiwR_xs4%22%5D';
+    expect(extractURNFromConnectionOf(url)).toBe('ACoAAAD3TQABqRHgsCZ_Ma8zqRLdxpuuiwR_xs4');
+  });
+
+  it('extracts the URN from already-decoded connectionOf', () => {
+    const url = 'https://www.linkedin.com/search/results/people/?connectionOf=["ACoAABcH_0ABWVl3iTrm-mzehDjBO0NoAq_ZLtE"]';
+    expect(extractURNFromConnectionOf(url)).toBe('ACoAABcH_0ABWVl3iTrm-mzehDjBO0NoAq_ZLtE');
+  });
+
+  it('returns null when connectionOf is missing', () => {
+    expect(extractURNFromConnectionOf('https://www.linkedin.com/search/results/people/?network=%5B%22F%22%5D')).toBeNull();
+  });
+
+  it('returns null when connectionOf value is not the expected ACoA URN shape', () => {
+    expect(extractURNFromConnectionOf('https://www.linkedin.com/search/results/people/?connectionOf=invalid')).toBeNull();
+    expect(extractURNFromConnectionOf('https://www.linkedin.com/search/results/people/?connectionOf=%5B%22XYZ%22%5D')).toBeNull();
+  });
+
+  it('returns null for empty/falsy input', () => {
+    expect(extractURNFromConnectionOf('')).toBeNull();
+    expect(extractURNFromConnectionOf(null)).toBeNull();
+  });
+});
+
+describe('isPeopleSearchPath', () => {
+  it('matches /search/results/people/ and /search/results/people', () => {
+    expect(isPeopleSearchPath('/search/results/people/')).toBe(true);
+    expect(isPeopleSearchPath('/search/results/people')).toBe(true);
+  });
+  it('rejects other paths', () => {
+    expect(isPeopleSearchPath('/in/jane/')).toBe(false);
+    expect(isPeopleSearchPath('/search/results/companies/')).toBe(false);
+    expect(isPeopleSearchPath('/feed/')).toBe(false);
+    expect(isPeopleSearchPath('')).toBe(false);
   });
 });

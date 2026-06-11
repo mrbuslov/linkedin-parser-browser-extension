@@ -9,6 +9,26 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
 ### Added
+- **Mutuals LIST captured on `/search/results/people/?...connectionOf=...`**.
+  New content script `search-mutuals.js` runs on LinkedIn's people-search
+  page, extracts the URN from `connectionOf=` (deterministic — anchored on
+  `ACoA[A-Za-z0-9_-]+` shape), looks up any local record whose
+  `mutualsUrl` contains that URN, and persists the visible search results
+  onto it as `mutualsCollected: [{name, profileUrl, avatar}, ...]` plus
+  `mutualsCollectedAt`. Polls every 1.5s so SPA filter changes and infinite
+  scroll are picked up automatically. New `core/search-results-parser.js`
+  exports `extractMutualsList(root, normalizeFn)` — pure DOM parsing,
+  anchored on `<a href="https://www.linkedin.com/in/...">` and the
+  `profile-displayphoto` image substring. Names are deduped by canonical
+  profileUrl and stripped of the trailing "• 1st/2nd/3rd" degree marker
+  and the "Premium" badge label. Real-HTML regression fixture
+  `tests/fixtures/common-connections-search.html`.
+- **Popup mutuals chip now signals capture state via color**: solid blue
+  ("call to action — click to capture the list") when `mutualsCollected`
+  is empty or missing; white outlined ("data captured locally") when we
+  have the list. Tooltip changes accordingly. The word "mutuals" was
+  dropped from the label (per user request) — chip shows `🤝 N` or
+  `🤝` alone.
 - **Mutuals captured for `pending` and `accepted` records too**, not just
   in the `contacts` journal. Previously only `contacts[url]` and accepted
   entries updated via `refreshMetadata` got the mutuals fields. Now:
