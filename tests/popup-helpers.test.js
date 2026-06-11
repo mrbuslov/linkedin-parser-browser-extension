@@ -3,7 +3,7 @@
 // now we cover the pure decision logic which is where the bugs would hide.
 
 import { describe, it, expect } from 'vitest';
-import { shouldShowDeclinedWarning, cleanHeadline, fixSwappedNameHeadline, parseMutualsCount } from '../linkedin-tracker/core/popup-logic.js';
+import { shouldShowDeclinedWarning, cleanHeadline, fixSwappedNameHeadline, parseMutualsCount, extractHeadlineFromScope } from '../linkedin-tracker/core/popup-logic.js';
 
 describe('shouldShowDeclinedWarning', () => {
   it('shows when there are declined entries and /connections/ was never scanned', () => {
@@ -136,6 +136,99 @@ describe('fixSwappedNameHeadline — undoes name/headline swap in legacy records
     });
     expect(r.name).toBe('Jane Doe');
     expect(r.headline).toBe('engineer at Acme');
+  });
+});
+
+describe('extractHeadlineFromScope — deterministic skip rules', () => {
+  function setup(html) {
+    document.body.innerHTML = `<div id="scope">${html}</div>`;
+    const scope = document.getElementById('scope');
+    const heading = scope.querySelector('h1, h2');
+    return { scope, heading };
+  }
+
+  it('returns first text-only node after the heading', () => {
+    const { scope, heading } = setup(`
+      <h1>Jane Doe</h1>
+      <p>Senior Engineer at Acme</p>
+    `);
+    expect(extractHeadlineFromScope(scope, heading, 'Jane Doe'))
+      .toBe('Senior Engineer at Acme');
+  });
+
+  it('skips the degree-badge text "· 1st" / "· 2nd" / "· 3rd"', () => {
+    const { scope, heading } = setup(`
+      <h1>Jane Doe</h1>
+      <p>· 1st</p>
+      <p>Senior Engineer at Acme</p>
+    `);
+    expect(extractHeadlineFromScope(scope, heading, 'Jane Doe'))
+      .toBe('Senior Engineer at Acme');
+  });
+
+  it('skips video.js placeholder text (vjs-* class ancestor) — Clare Suttie regression', () => {
+    // LinkedIn renders profile-cover videos with video.js. The loading
+    // spinner contains a <span class="vjs-control-text">Video Player is
+    // loading.</span> which our scan would otherwise grab as the headline.
+    const { scope, heading } = setup(`
+      <h1>Clare Suttie</h1>
+      <div class="vjs-loading-spinner vjs-hidden">
+        <span class="vjs-control-text">Video Player is loading.</span>
+      </div>
+      <p>Founder at SuttieCo</p>
+    `);
+    expect(extractHeadlineFromScope(scope, heading, 'Clare Suttie'))
+      .toBe('Founder at SuttieCo');
+  });
+
+  it('skips name-only text (no headline match yields empty string)', () => {
+    const { scope, heading } = setup(`
+      <h1>Jane Doe</h1>
+      <p>Jane Doe</p>
+    `);
+    expect(extractHeadlineFromScope(scope, heading, 'Jane Doe')).toBe('');
+  });
+
+  it('strips a "name + glued headline" SR-only node into a clean headline', () => {
+    const { scope, heading } = setup(`
+      <h1>Daniil Stankevich</h1>
+      <span>Daniil StankevichFullstack developer | React/Angular/NestJS</span>
+    `);
+    expect(extractHeadlineFromScope(scope, heading, 'Daniil Stankevich'))
+      .toBe('Fullstack developer | React/Angular/NestJS');
+  });
+
+  it('returns "" when scope has no usable text-only nodes after heading', () => {
+    const { scope, heading } = setup(`<h1>Jane Doe</h1>`);
+    expect(extractHeadlineFromScope(scope, heading, 'Jane Doe')).toBe('');
+  });
+
+  it('returns "" defensively when scope or name is missing', () => {
+    expect(extractHeadlineFromScope(null, null, 'X')).toBe('');
+    expect(extractHeadlineFromScope(document.body, null, '')).toBe('');
+  });
+});
+
+describe('extractHeadlineFromScope — real LinkedIn HTML fixture', () => {
+  it('Clare Suttie fixture: video.js placeholder is NOT picked up as headline', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const html = fs.readFileSync(
+      path.resolve(__dirname, 'fixtures/clare-suttie-headline.html'),
+      'utf8'
+    );
+    document.body.innerHTML = html;
+    // The fixture contains the cover-video element + a heading-like marker.
+    // We mimic the production scope (the top-card SECTION) by using the
+    // outermost wrapper we saved.
+    const scope = document.body.firstElementChild || document.body;
+    const heading = scope.querySelector('h1, h2') || scope;
+    const headline = extractHeadlineFromScope(scope, heading, 'Clare Suttie');
+    // The single hard requirement: the video.js placeholder must NOT be
+    // returned. (Whatever real headline the fixture surfaces is profile-
+    // specific and may shift across LinkedIn rebuilds; the regression is
+    // strictly "video.js text excluded".)
+    expect(headline).not.toContain('Video Player is loading');
   });
 });
 

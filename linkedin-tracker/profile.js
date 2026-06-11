@@ -97,31 +97,9 @@ function extractProfileInfo() {
   if (!name) name = (heading?.textContent || '').trim();
   if (!name) return null;
 
-  // Skip LinkedIn's connection-degree badge ("· 1st", "· 2nd", "· 3rd",
-  // localized variants like "· 1-й", "· 1-й степени") — it's rendered as a
-  // standalone text node right after the heading, so a naive scan grabs it
-  // as headline. Pattern: a separator (·) followed by a degree token.
-  const DEGREE_BADGE_RE = /^[·•・]\s*(1st|2nd|3rd|1-?[йгi]|2-?[йгi]|3-?[йгi])\b/i;
-  let headline = '';
-  // Scan within the top-card scope only.
-  for (const node of scope.querySelectorAll('div, span, p')) {
-    if (node.children.length > 0) continue;
-    const t = (node.textContent || '').trim();
-    if (!t || t.length < 3) continue;
-    if (t === name) continue;
-    if (DEGREE_BADGE_RE.test(t)) continue;
-    if (!heading || (heading.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)) {
-      // LinkedIn occasionally ships a single accessibility/SR text node that
-      // contains the name immediately followed by the headline:
-      //   "Daniil StankevichFullstack developer | React/Angular/NestJS"
-      // That node is the FIRST text-only match after the heading, so the
-      // naive scan grabs it as headline-with-name-glued. Strip the name
-      // prefix if present and keep the remainder as the headline.
-      headline = stripNamePrefix(t, name);
-      if (!headline) continue;  // nothing left after stripping → keep looking
-      break;
-    }
-  }
+  // Expose stripNamePrefix for the shared headline extractor in popup-logic.
+  globalThis.LITStripName = stripNamePrefix;
+  const headline = LITPopupLogic.extractHeadlineFromScope(scope, heading, name);
 
   // Avatar: LinkedIn profile photos always carry `profile-displayphoto` in their
   // URL — language-stable and survives class renames. Scope to top-card so we

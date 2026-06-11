@@ -9,6 +9,16 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
 ### Added
+- **Headline scan skips video.js elements**: LinkedIn renders profile-cover
+  videos using video.js (videojs.com). The loading spinner contains a span
+  `<span class="vjs-control-text">Video Player is loading.</span>` which
+  used to be grabbed as the headline (Clare Suttie regression — her
+  popup row showed "Video Player is loading." as her headline). We now
+  skip any node with a `vjs-*` ancestor class. The prefix is a stable
+  upstream-library convention LinkedIn can't rename without forking
+  video.js. Headline extraction logic extracted to
+  `LITPopupLogic.extractHeadlineFromScope` for testability; new fixture
+  `tests/fixtures/clare-suttie-headline.html` pins the regression.
 - **Mutual connections capture**: on every profile visit we read the
   "mutual connections" deep link from LinkedIn's top-card. Anchor is
   deterministic — `a[href*="connectionOf="]` filtered to the link with
