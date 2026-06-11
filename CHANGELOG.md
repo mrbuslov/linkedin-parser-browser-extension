@@ -9,6 +9,18 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
 ### Added
+- **`refreshMetadata` now overwrites headline/location/country with fresh
+  data on every visit**, not just on first-set. Old policy
+  (`info.X && !target.X`) was "first non-empty wins" — designed to prevent
+  mid-render junk from overwriting good data. Now that the extractor is
+  deterministically clean (video.js skip, degree-badge skip, name-glued
+  strip), the latest visit is the freshest truth and should win. Without
+  this, Clare Suttie's headline stayed permanently stuck on
+  "Video Player is loading." even after the extractor stopped producing
+  it. Avatar still uses the conservative "set only if empty" policy
+  because LinkedIn lazy-loads the cover/photo images and a mid-render
+  scrape can yield `""`. Identity fields (name) are still never overwritten
+  here — sticky identity is enforced upstream by cross-URL `memberId` dedup.
 - **Headline scan skips video.js elements**: LinkedIn renders profile-cover
   videos using video.js (videojs.com). The loading spinner contains a span
   `<span class="vjs-control-text">Video Player is loading.</span>` which
