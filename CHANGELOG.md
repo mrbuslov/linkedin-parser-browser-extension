@@ -9,6 +9,15 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
 ### Added
+- **In-popup detail view**: tiny `ⓘ` button next to every name (Pending /
+  Accepted / Marked / Declined block) opens a full-popup detail panel
+  showing all stored fields for that profile — headline, location,
+  email/phone/website/address/birthday (with one-click Copy), captured
+  mutuals (scrollable list with avatars + names, each clickable to open
+  on LinkedIn), connection metadata (status, accepted-at, days-pending,
+  first-seen, marked-at), and technical fields (profileUrl, memberId,
+  vanityName, contactsCapturedAt). Back arrow returns to the previously-
+  active tab. No new storage path — pure render of existing record fields.
 - **Mutuals LIST captured on `/search/results/people/?...connectionOf=...`**.
   New content script `search-mutuals.js` runs on LinkedIn's people-search
   page, extracts the URN from `connectionOf=` (deterministic — anchored on

@@ -196,6 +196,7 @@ function renderPending(rawItems) {
       el('div', { className: 'row-body' }, [
         el('div', { className: 'name-row' }, [
           profileLink(item.profileUrl, item.name),
+          infoButton(item),
           contactButtons(item),
           mutualsChip(item),
         ]),
@@ -239,6 +240,7 @@ function renderAcceptedRow(item, { primaryAction, primaryLabel }) {
     el('div', { className: 'row-body' }, [
       el('div', { className: 'name-row' }, [
         nameNode,
+        infoButton(item),
         statusBadge(item.verified),
         contactButtons(item),
         mutualsChip(item),
@@ -415,6 +417,204 @@ function deleteButton(item) {
   const btn = el('button', { className: 'danger', type: 'button' }, ['Delete']);
   btn.addEventListener('click', () => deleteEntry(item.profileUrl, item.name));
   return btn;
+}
+
+function infoButton(item) {
+  const btn = el('button', {
+    className: 'info-btn',
+    type: 'button',
+    title: 'Show full info',
+  }, ['ⓘ']);
+  btn.setAttribute('aria-label', 'Show full info');
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openDetailView(item.profileUrl);
+  });
+  return btn;
+}
+
+// ---------- Detail view ----------
+//
+// Click ⓘ on any row → the list panel hides, a full-width detail panel
+// renders every stored field for that profile. Back button returns to the
+// previously-active tab. Implemented as a separate <section id="detail-panel">
+// — same `.panel` slot system the tabs use, plus a `showing-detail` body
+// class that hides the tab switcher while a detail is open.
+
+let detailReturnTab = 'pending';
+
+async function openDetailView(profileUrl) {
+  detailReturnTab = activeTabName();
+  const { sentInvitations = {}, accepted = {}, contacts = {} } =
+    await dbGet(['sentInvitations', 'accepted', 'contacts']);
+  const item = accepted[profileUrl] || sentInvitations[profileUrl] || contacts[profileUrl];
+  if (!item) return;
+  renderDetail(item);
+  for (const panel of document.querySelectorAll('.panel')) {
+    panel.classList.remove('active');
+    if (panel.id !== 'detail-panel') panel.hidden = true;
+  }
+  const detail = $('detail-panel');
+  detail.hidden = false;
+  detail.classList.add('active');
+  document.body.classList.add('showing-detail');
+}
+
+function closeDetailView() {
+  document.body.classList.remove('showing-detail');
+  const detail = $('detail-panel');
+  detail.hidden = true;
+  detail.classList.remove('active');
+  for (const panel of document.querySelectorAll('.panel')) {
+    if (panel.id === 'detail-panel') continue;
+    panel.hidden = false;
+  }
+  switchTab(detailReturnTab);
+}
+
+function fmtDate(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+}
+
+function relTime(ts) {
+  if (!ts) return '';
+  const diff = Date.now() - ts;
+  const day = 86400000;
+  if (diff < day) return 'today';
+  const days = Math.floor(diff / day);
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo ago`;
+  return `${Math.floor(months / 12)}y ago`;
+}
+
+function field(label, value, opts = {}) {
+  if (value == null || value === '' || (Array.isArray(value) && value.length === 0)) return null;
+  const valNode = typeof value === 'string' || typeof value === 'number'
+    ? el('span', { className: 'field-value' + (opts.mono ? ' mono' : '') }, [String(value)])
+    : value;
+  const children = [el('div', { className: 'field-label' }, [label]), valNode];
+  if (opts.copy && typeof value === 'string') {
+    const btn = el('button', { className: 'copy-link', type: 'button' }, ['Copy']);
+    btn.addEventListener('click', () => copyToClipboard(value, label));
+    children.push(btn);
+  }
+  return el('div', { className: 'detail-field' }, children);
+}
+
+function renderDetail(item) {
+  const fixed = LITPopupLogic.fixSwappedNameHeadline(item);
+  const name = fixed.name;
+  const headline = LITPopupLogic.cleanHeadline(fixed.headline, name);
+  const panel = $('detail-panel');
+  panel.innerHTML = '';
+
+  const header = el('div', { className: 'detail-header' }, [
+    (() => {
+      const back = el('button', { className: 'detail-back', type: 'button', title: 'Back' }, ['←']);
+      back.setAttribute('aria-label', 'Back');
+      back.addEventListener('click', closeDetailView);
+      return back;
+    })(),
+    el('div', { className: 'detail-title-wrap' }, [
+      item.avatar ? el('img', { className: 'detail-avatar', src: item.avatar, alt: '' }) : null,
+      el('div', { className: 'detail-title-text' }, [
+        el('div', { className: 'detail-name' }, [name || '(no name)']),
+        item.verified ? statusBadge(item.verified) : null,
+      ]),
+    ]),
+  ]);
+  panel.append(header);
+
+  // ABOUT section
+  const about = el('div', { className: 'detail-section' }, [
+    el('h4', {}, ['About']),
+    field('Headline', headline),
+    field('Location', item.location),
+    field('Country', item.country),
+  ].filter(Boolean));
+  if (about.querySelectorAll('.detail-field').length > 0) panel.append(about);
+
+  // CONTACT section
+  const contactRows = [
+    field('Email', item.email, { copy: true, mono: true }),
+    field('Phone', item.phone ? `${item.phone}${item.phoneLabel ? ' (' + item.phoneLabel + ')' : ''}` : '', { copy: !!item.phone, mono: true }),
+    field('Website', item.website ? `${item.website}${item.websiteLabel ? ' (' + item.websiteLabel + ')' : ''}` : '', { copy: !!item.website, mono: true }),
+    field('Address', item.address),
+    field('Birthday', item.birthday),
+    field('Connected since', item.connectedSinceText),
+  ].filter(Boolean);
+  if (contactRows.length > 0) {
+    panel.append(el('div', { className: 'detail-section' }, [
+      el('h4', {}, ['Contact info']),
+      ...contactRows,
+    ]));
+  } else {
+    panel.append(el('div', { className: 'detail-section muted' }, [
+      el('h4', {}, ['Contact info']),
+      el('p', { className: 'hint' }, ['Open the LinkedIn "Contact info" overlay on this profile to capture email/phone/website here.']),
+    ]));
+  }
+
+  // MUTUALS section
+  if (item.mutualsUrl || (item.mutualsCollected && item.mutualsCollected.length)) {
+    const collected = Array.isArray(item.mutualsCollected) ? item.mutualsCollected : [];
+    const sec = el('div', { className: 'detail-section' }, [
+      el('h4', {}, [`Mutual connections${item.mutualsCount != null ? ` (${item.mutualsCount})` : ''}`]),
+      item.mutualsText ? el('p', { className: 'hint' }, [item.mutualsText]) : null,
+      item.mutualsUrl ? (() => {
+        const a = el('a', { href: item.mutualsUrl, target: '_blank', className: 'text-action' }, ['Open on LinkedIn →']);
+        return a;
+      })() : null,
+      collected.length > 0
+        ? el('div', { className: 'mutuals-collected-meta' }, [`${collected.length} saved locally · captured ${relTime(item.mutualsCollectedAt)}`])
+        : null,
+      collected.length > 0 ? el('ul', { className: 'mutuals-collected-list' }, collected.map((m) => {
+        const link = el('a', { href: m.profileUrl, target: '_blank', className: 'mutual-row' }, [
+          m.avatar ? el('img', { className: 'mutual-avatar', src: m.avatar, alt: '' }) : null,
+          el('span', { className: 'mutual-name' }, [m.name]),
+        ]);
+        return el('li', {}, [link]);
+      })) : null,
+    ].filter(Boolean));
+    panel.append(sec);
+  }
+
+  // CONNECTION section (status + dates)
+  panel.append(el('div', { className: 'detail-section' }, [
+    el('h4', {}, ['Connection']),
+    field('Status', item.verified || (item.connected ? 'connected' : null)),
+    field('Accepted at', item.acceptedAt ? `${fmtDate(item.acceptedAt)} · ${relTime(item.acceptedAt)}` : null),
+    field('Days pending before accept', item.daysPending != null ? item.daysPending : null),
+    field('First seen', item.firstSeenAt ? `${fmtDate(item.firstSeenAt)} · ${relTime(item.firstSeenAt)}` : null),
+    field('Last visited', item.visitedAt ? `${fmtDate(item.visitedAt)} · ${relTime(item.visitedAt)}` : null),
+    field('Marked at', item.markedAt ? `${fmtDate(item.markedAt)} · ${relTime(item.markedAt)}` : null),
+  ].filter(Boolean)));
+
+  // TECHNICAL section
+  panel.append(el('div', { className: 'detail-section' }, [
+    el('h4', {}, ['Technical']),
+    field('Profile URL', item.profileUrl, { copy: true, mono: true }),
+    field('Member ID', item.memberId, { mono: true }),
+    field('Vanity name', item.vanityName, { mono: true }),
+    field('Connected on (LinkedIn)', item.connectedOnText),
+    field('Captured contact info', item.contactsCapturedAt ? `${fmtDate(item.contactsCapturedAt)} · ${relTime(item.contactsCapturedAt)}` : null),
+  ].filter(Boolean)));
+
+  // ACTIONS section
+  const openLi = el('a', { href: item.profileUrl, target: '_blank', className: 'cta' }, ['Open LinkedIn profile']);
+  const del = el('button', { className: 'danger', type: 'button' }, ['Delete this entry']);
+  del.addEventListener('click', async () => {
+    await deleteEntry(item.profileUrl, name);
+    closeDetailView();
+  });
+  panel.append(el('div', { className: 'detail-section detail-actions' }, [
+    openLi,
+    del,
+  ]));
 }
 
 async function markAllAccepted() {
