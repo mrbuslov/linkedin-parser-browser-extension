@@ -53,19 +53,58 @@ const LOCALIZED_DEGREE_PATTERNS = [
   { re: /\b1\.\s*[Gg]rad/,   d: 1 },  // DE "1. Grad"
 ];
 
-function findDegreeFromAria(root) {
+// Returns the DOM element carrying the connection-degree aria-label, or null.
+// This element is LinkedIn's most stable per-profile anchor — it sits on the
+// top-card name wrapper for screen-reader accessibility and exists across
+// every profile shape we've seen (Premium, regular, Creator mode, etc).
+function findDegreeAnchorElement(root) {
   for (const node of root.querySelectorAll('[aria-label]')) {
     const aria = node.getAttribute('aria-label') || '';
-    const m = aria.match(ARIA_DEGREE_RE);
-    if (m) {
-      const tok = m[1].toLowerCase();
-      if (tok === '1st') return 1;
-      if (tok === '2nd') return 2;
-      if (tok === '3rd') return 3;
+    if (ARIA_DEGREE_RE.test(aria)) return node;
+    for (const { re } of LOCALIZED_DEGREE_PATTERNS) {
+      if (re.test(aria)) return node;
     }
-    for (const { re, d } of LOCALIZED_DEGREE_PATTERNS) {
-      if (re.test(aria)) return d;
-    }
+  }
+  return null;
+}
+
+function findDegreeFromAria(root) {
+  const node = findDegreeAnchorElement(root);
+  if (!node) return null;
+  const aria = node.getAttribute('aria-label') || '';
+  const m = aria.match(ARIA_DEGREE_RE);
+  if (m) {
+    const tok = m[1].toLowerCase();
+    if (tok === '1st') return 1;
+    if (tok === '2nd') return 2;
+    if (tok === '3rd') return 3;
+  }
+  for (const { re, d } of LOCALIZED_DEGREE_PATTERNS) {
+    if (re.test(aria)) return d;
+  }
+  return null;
+}
+
+// Identifies the top-card container — the bounded region of the page that
+// belongs to the VIEWED profile (name, headline, location, primary action
+// buttons). Sidebars (mutual connections, "People who follow X also follow",
+// recommendations) sit OUTSIDE this container, and their action buttons
+// belong to OTHER people. Without this scope, hasPending/hasConnect/hasFollow
+// would catch sidebar buttons and misclassify the current profile (the
+// canonical "Kimberly Martinez stuck in Pending" bug).
+//
+// Strategy: anchor on the aria-degree element (the most reliable per-profile
+// marker), then walk up DOM ancestors until we find a SECTION boundary —
+// LinkedIn wraps the top-card in its own section. If no SECTION is found
+// within a reasonable distance, we return null and let the caller decide
+// what to do (the legitimate "no aria signal at all" case).
+function findTopCardContainer(root) {
+  const anchor = findDegreeAnchorElement(root) || root.querySelector('h1, h2');
+  if (!anchor) return null;
+  let node = anchor.parentElement;
+  for (let i = 0; i < 12 && node && node !== root; i++) {
+    if (node.tagName === 'SECTION') return node;
+    node = node.parentElement;
   }
   return null;
 }
@@ -119,7 +158,13 @@ function detectConnectionStatus(root) {
     rscDistance = LITRSC.findNetworkDistance(payload);
   }
 
-  const actions = root.querySelectorAll('button, a, [role="button"]');
+  // Scope action-button scanning to the top-card container. Without this
+  // scope, sidebar buttons (mutuals, recommendations, "People who follow X")
+  // bleed into our state — Kimberly Martinez regression: a real 1st-degree
+  // contact was being classified as 'pending' because the sidebar had a
+  // Pending button for a different person the user had invited.
+  const scope = findTopCardContainer(root) || root;
+  const actions = scope.querySelectorAll('button, a, [role="button"]');
   let hasFollow = false, hasConnect = false, hasPending = false;
   for (const btn of actions) {
     if (!isVisible(btn)) continue;
@@ -134,17 +179,25 @@ function detectConnectionStatus(root) {
         || (containsAny(aria, PENDING_ARIA_SUBSTRS) && containsAny(aria, WITHDRAW_ARIA_SUBSTRS))) hasPending = true;
   }
 
-  const inviteLink = root.querySelector('a[href*="/preload/custom-invite/"]');
+  const inviteLink = scope.querySelector('a[href*="/preload/custom-invite/"]');
   const hasInviteLink = inviteLink != null && isVisible(inviteLink);
 
-  // 1) Real-time DOM Pending wins: user just sent an invite and the button
-  //    flipped to Pending. Both RSC and aria-label degree are stale here.
+  // 1) aria-label degree === 1 wins over DOM Pending. A 1st-degree contact
+  //    cannot have an outstanding invitation by definition — she's already
+  //    accepted. Any "Pending" button found in `<main>` (mutuals sidebar,
+  //    recommendations, "People who follow X") is for someone OTHER than the
+  //    viewed profile. Regression for Kimberly Martinez who shipped as 1st
+  //    degree but with 9 Connect / multiple Pending buttons in the sidebar:
+  //    old priority returned 'pending' and stuck her in sentInvitations.
+  if (ariaDegree === 1) return 'connected';
+
+  // 2) Real-time DOM Pending for non-1st-degree profiles: user just sent an
+  //    invite and the button flipped. aria-degree of the target is still 2/3
+  //    in the live DOM until reload, so we need this branch to catch fresh
+  //    invite events.
   if (hasPending) return 'pending';
 
-  // 2) DOM aria-label degree — the most reliable canonical signal. Works
-  //    even when LinkedIn ships no RSC payload (Premium profiles). The
-  //    1st/2nd/3rd token is in there for screen-reader accessibility.
-  if (ariaDegree === 1) return 'connected';
+  // 3) aria-label degree 2/3 → not connected.
   if (ariaDegree != null && ariaDegree >= 2) return 'not_connected';
 
   // 3) RSC ground truth (when aria-label didn't surface a degree). Same
@@ -158,12 +211,12 @@ function detectConnectionStatus(root) {
   //    why aria/RSC come first.
   if (hasFollow || hasConnect || hasInviteLink) return 'not_connected';
 
-  const messageLink = root.querySelector('a[href*="/messaging/compose/"]');
+  const messageLink = scope.querySelector('a[href*="/messaging/compose/"]');
   if (messageLink && isVisible(messageLink)) return 'connected';
 
   return null;
 }
 
-const LITDetect = { detectConnectionStatus, isVisible, findDegreeFromAria };
+const LITDetect = { detectConnectionStatus, isVisible, findDegreeFromAria, findTopCardContainer };
 if (typeof globalThis !== 'undefined') globalThis.LITDetect = LITDetect;
 if (typeof module !== 'undefined' && module.exports) module.exports = LITDetect;

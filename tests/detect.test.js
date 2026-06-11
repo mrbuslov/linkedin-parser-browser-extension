@@ -259,13 +259,74 @@ describe('detectConnectionStatus', () => {
     expect(detectConnectionStatus(root)).toBe('not_connected');
   });
 
-  it('Pending DOM button still wins over aria-degree (user just sent invite)', () => {
+  it('Pending DOM button wins over aria-degree 2nd (user just sent invite)', () => {
+    // The page's aria says 2nd degree; user clicked Connect; the button
+    // flipped to Pending. We want the freshly-updated DOM signal to win
+    // because aria-degree won't update until reload.
     const root = makeRoot(`
       <a aria-label="Foo Bar 2nd"><h1>Foo Bar</h1></a>
       <a aria-label="Pending, click to withdraw">Pending</a>
       <a href="/messaging/compose/">Message</a>
     `);
     expect(detectConnectionStatus(root)).toBe('pending');
+  });
+
+  it('Kimberly Martinez regression: sidebar Pending buttons do NOT leak into detection (scope to top-card)', () => {
+    // The top-card sits inside a <section>. Sidebars with OTHER people's
+    // action buttons live OUTSIDE the section, still inside <main>. The
+    // detector now scopes its button scan to the top-card section, so
+    // sidebar buttons are invisible to it by construction. Previously a
+    // sidebar Pending button caused a real 1st-degree contact to be
+    // classified as pending → stored in sentInvitations.
+    const root = makeRoot(`
+      <section>
+        <a aria-label="Kimberly Martinez Premium Profile 1st">
+          <h1>Kimberly Martinez</h1>
+        </a>
+        <a href="/messaging/compose/">Message</a>
+        <button>More</button>
+      </section>
+      <aside>
+        <button>Connect</button>
+        <button>Connect</button>
+        <a aria-label="Pending, click to withdraw invitation sent to Anton">Pending</a>
+        <button>Follow</button>
+        <button>Follow</button>
+      </aside>
+    `);
+    expect(detectConnectionStatus(root)).toBe('connected');
+  });
+
+  it('scope ignores sidebar Connect for a 1st-degree without explicit Message in top-card', () => {
+    // The top-card has aria-degree=1 and Message — detector returns 'connected'.
+    // Sidebar Connect buttons (for OTHER people) must not flip it to 'not_connected'.
+    const root = makeRoot(`
+      <section>
+        <a aria-label="Some Person 1st"><h1>Some Person</h1></a>
+        <a href="/messaging/compose/">Message</a>
+      </section>
+      <aside>
+        <button>Connect</button>
+        <button>Follow</button>
+        <a href="/preload/custom-invite/?profile=other">…</a>
+      </aside>
+    `);
+    expect(detectConnectionStatus(root)).toBe('connected');
+  });
+
+  it('scope ignores sidebar Follow for a 2nd-degree (real "Connect" still detected in top-card)', () => {
+    const root = makeRoot(`
+      <section>
+        <a aria-label="Some Person 2nd"><h1>Some Person</h1></a>
+        <button>Connect</button>
+        <a href="/messaging/compose/">Message</a>
+      </section>
+      <aside>
+        <button>Follow</button>
+        <button>Following</button>
+      </aside>
+    `);
+    expect(detectConnectionStatus(root)).toBe('not_connected');
   });
 
   it('prioritizes Pending over Connect when both are present', () => {

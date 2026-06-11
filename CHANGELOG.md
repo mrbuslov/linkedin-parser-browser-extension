@@ -8,6 +8,72 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
+### Changed
+- The CRM nudge no longer renders a visible "💾 Save to local CRM" pill
+  next to the Contact info link. It's now a plain browser tooltip
+  attached to the link itself via the `title` attribute — hover the
+  link to see "💾 Click to save contact info to your local CRM. Nothing
+  leaves your device." The tooltip is removed automatically once email/
+  phone/website are captured. Less visual noise on every 1st-degree
+  profile.
+
+### Fixed
+- **Kimberly Martinez "stuck in Pending" + entire class of sidebar-leak
+  bugs**: the detector used to scan EVERY `<button>` / `<a>` / `[role=button]`
+  in `<main>`, so action buttons belonging to other people in sidebars
+  ("People who follow X also follow", mutuals, recommendations) were
+  attributed to the viewed profile. A 1st-degree contact ended up
+  classified as `'pending'` because the sidebar had a Pending button.
+  Same scope-leak hit headline extraction (grabbed "Video Player is
+  loading." from autoplay video) and location extraction. Fix: introduced
+  `findTopCardContainer` in `core/detect.js` that anchors on the
+  `aria-label` degree element (the most stable per-profile marker LinkedIn
+  ships) and walks up to the enclosing top-card container. All action-
+  button scanning, headline extraction, and location extraction now scope
+  to that container. Sidebar content is invisible to the parsers by
+  construction. Regression tests cover Kimberly's DOM shape and "junk
+  text outside top-card stays out of headline".
+
+### Migration note
+- Existing stuck records (Kimberly et al.) auto-correct on the next
+  profile visit: `applyProfileVisit` with the corrected `status='connected'`
+  enters the sentInvitations→accepted promotion branch and removes the
+  stale pending entry. Headline garbage refreshes from the corrected
+  extractor on revisit.
+
+## [1.2.4] — 2026-06-11
+
+CRM nudge — a non-intrusive prompt that reminds the user to open the
+LinkedIn "Contact info" overlay on 1st-degree profiles where we haven't
+yet captured their email/phone/website. The pill sits inline next to
+the link, clicks through to open the modal, and disappears the moment
+the parser captures any contact data. Deliberately NOT auto-opening
+the modal — that pattern is a textbook anti-automation signal that
+gets LinkedIn accounts banned within weeks.
+
+### Added
+- `profile.js` renders an inline "💾 Save to local CRM" pill next to
+  LinkedIn's "Contact info" link when:
+  (1) status === 'connected' (1st-degree); AND
+  (2) no `email`/`phone`/`website` is stored for this profile in either
+      the `contacts` or `accepted` store.
+  Clicking the pill is equivalent to clicking the link — it opens the
+  modal LinkedIn rendered, and our existing parser captures from there.
+  Tooltip on hover explains the local-only data policy.
+- The nudge auto-hides as soon as `persistVisit` saves contact data
+  (cache busts → next 250 ms tick re-reads storage → pill removed).
+- On profile URL change (SPA navigation or new tab), the nudge cache
+  invalidates and the new profile gets a fresh check.
+
+### Notes
+- Why not auto-open the modal: opening Contact info on every profile
+  visit creates a deterministic detection signal for LinkedIn's
+  anti-automation systems. Real users open it on 5-15% of profiles;
+  an extension that opens it on 100% gets flagged inside one weekly
+  retrain. The cost (account ban, extension removal from CWS) far
+  outweighs the convenience. The nudge is the conscious-action
+  alternative — UI hint, not automation.
+
 ## [1.2.3] — 2026-06-11
 
 Hardening release on top of 1.2.2. Real-world testing surfaced layout

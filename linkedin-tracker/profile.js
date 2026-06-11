@@ -21,8 +21,10 @@ function stripNamePrefix(text, name) {
 //   <p>City, Country</p>  <p>·</p>  <p><a href="#">Contact info</a></p>
 // The "·" + href="#" anchor combo is unique to the profile top card and
 // doesn't get localized, so this survives across languages and class renames.
-function extractLocation() {
-  const root = document.querySelector('main') || document.body;
+// Scoped to the top-card container to avoid grabbing similar structures
+// from sidebar widgets ("People you may know" etc).
+function extractLocation(scope) {
+  const root = scope || document.querySelector('main') || document.body;
   for (const div of root.querySelectorAll('div')) {
     const ps = Array.from(div.children).filter((c) => c.tagName === 'P');
     if (ps.length !== 3) continue;
@@ -42,7 +44,14 @@ function parseCountry(location) {
 
 function extractProfileInfo() {
   const root = document.querySelector('main') || document.body;
-  const heading = root.querySelector('h1') || root.querySelector('h2');
+  // Scope: the profile top-card. Everything we extract (heading, headline,
+  // location, avatar) lives inside this bounded region. Without scoping, the
+  // headline scan grabbed garbage like "Video Player is loading." from the
+  // page's autoplay video, location grabbed sidebar widgets with similar
+  // structure, etc. If we can't identify the top-card, we degrade to root
+  // — but that's the rare "LinkedIn changed structure radically" case.
+  const scope = LITDetect.findTopCardContainer(root) || root;
+  const heading = scope.querySelector('h1') || scope.querySelector('h2');
 
   // Prefer canonical name from the RSC payload — survives any DOM weirdness
   // (long-headline-stuck-to-name, missing h2 mid-render, locale variants).
@@ -65,13 +74,14 @@ function extractProfileInfo() {
   // as headline. Pattern: a separator (·) followed by a degree token.
   const DEGREE_BADGE_RE = /^[·•・]\s*(1st|2nd|3rd|1-?[йгi]|2-?[йгi]|3-?[йгi])\b/i;
   let headline = '';
-  for (const node of root.querySelectorAll('div, span, p')) {
+  // Scan within the top-card scope only.
+  for (const node of scope.querySelectorAll('div, span, p')) {
     if (node.children.length > 0) continue;
     const t = (node.textContent || '').trim();
     if (!t || t.length < 3) continue;
     if (t === name) continue;
     if (DEGREE_BADGE_RE.test(t)) continue;
-    if (heading.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING) {
+    if (!heading || (heading.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)) {
       // LinkedIn occasionally ships a single accessibility/SR text node that
       // contains the name immediately followed by the headline:
       //   "Daniil StankevichFullstack developer | React/Angular/NestJS"
@@ -85,15 +95,16 @@ function extractProfileInfo() {
   }
 
   // Avatar: LinkedIn profile photos always carry `profile-displayphoto` in their
-  // URL — language-stable and survives class renames.
+  // URL — language-stable and survives class renames. Scope to top-card so we
+  // don't pick up a mutual-connection's avatar from the sidebar.
   let avatar = '';
-  for (const img of root.querySelectorAll('img[src]')) {
+  for (const img of scope.querySelectorAll('img[src]')) {
     if (img.src.includes('profile-displayphoto')) {
       avatar = img.src;
       break;
     }
   }
-  if (!avatar) {
+  if (!avatar && heading) {
     let parent = heading.parentElement;
     for (let i = 0; i < 6 && parent && !avatar; i++) {
       const img = parent.querySelector('img[src]');
@@ -102,7 +113,7 @@ function extractProfileInfo() {
     }
   }
 
-  const location = extractLocation();
+  const location = extractLocation(scope);
   const country = parseCountry(location);
 
   return {
@@ -144,7 +155,12 @@ async function persistVisit() {
   if (result.sentChanged) patch.sentInvitations = result.sentInvitations;
   if (Object.keys(patch).length > 0) await dbSet(patch);
 
-  if (contactInfo) showCaptureToast(contactInfo);
+  if (contactInfo) {
+    showCaptureToast(contactInfo);
+    // Bust the nudge cache so the next tick re-reads storage and hides the
+    // chip if we just captured email/phone/website.
+    nudgeCache = { url: null, hasContacts: null };
+  }
 
   console.log(`[LI Tracker] visited ${info.name} (${status})`);
 }
@@ -281,6 +297,70 @@ function contactsFingerprint(info) {
     .map((v) => v || '').join('|');
 }
 
+// CRM nudge: a native browser tooltip attached to LinkedIn's "Contact info"
+// link on 1st-degree profiles where we haven't yet captured email/phone/
+// website. Less intrusive than a visible chip — only appears on hover and
+// uses the browser's standard title-attribute tooltip. We mark the link
+// with `data-lit-nudge="1"` so we know to clean it up when contacts are
+// saved (and so we don't trample a `title` LinkedIn ever decides to add).
+const NUDGE_TOOLTIP =
+  '💾 Click to save contact info to your local CRM. Nothing leaves your device.';
+let nudgeCache = { url: null, hasContacts: null };
+
+function findContactInfoLink() {
+  // Same heuristic as extractLocation: the row has exactly three <p>
+  // children — city, "·" separator, then a <p> wrapping <a href="#">.
+  const root = document.querySelector('main') || document.body;
+  for (const div of root.querySelectorAll('div')) {
+    const ps = Array.from(div.children).filter((c) => c.tagName === 'P');
+    if (ps.length !== 3) continue;
+    if (ps[1].textContent.trim() !== '·') continue;
+    const link = ps[2].querySelector('a[href="#"]');
+    if (link) return link;
+  }
+  return null;
+}
+
+function removeNudge(link) {
+  const target = link || document.querySelector('[data-lit-nudge="1"]');
+  if (!target) return;
+  if (target.dataset.litNudge === '1') {
+    target.removeAttribute('title');
+    delete target.dataset.litNudge;
+  }
+}
+
+function showNudge(link) {
+  if (!link) return;
+  if (link.dataset.litNudge === '1') return;  // already wired
+  link.setAttribute('title', NUDGE_TOOLTIP);
+  link.dataset.litNudge = '1';
+}
+
+async function updateCRMNudge(profileUrl, status) {
+  if (status !== 'connected') {
+    removeNudge();
+    return;
+  }
+  // Re-check storage only on URL change — same-profile ticks reuse the cache.
+  // Cache is invalidated by persistVisit() after a successful contact-info
+  // save, so the tooltip is removed as soon as the parser captures data.
+  if (nudgeCache.url !== profileUrl) {
+    const stored = await dbGet(['contacts', 'accepted']);
+    const rec = (stored.contacts || {})[profileUrl] || (stored.accepted || {})[profileUrl] || {};
+    nudgeCache = {
+      url: profileUrl,
+      hasContacts: Boolean(rec.email || rec.phone || rec.website),
+    };
+  }
+  const link = findContactInfoLink();
+  if (nudgeCache.hasContacts) {
+    removeNudge(link);
+  } else {
+    showNudge(link);
+  }
+}
+
 async function tick() {
   // SPA-navigation gate: the content script keeps running after the user
   // navigates away from /in/* (e.g. into /search/results/people/). The
@@ -295,6 +375,11 @@ async function tick() {
   const root = document.querySelector('main') || document.body;
   const status = LITDetect.detectConnectionStatus(root);
   if (!info || !status) return;
+
+  // Render the CRM nudge on 1st-degree profiles with no saved contacts.
+  // Done OUTSIDE the dedup short-circuit below so the chip survives across
+  // ticks even when status/contactsKey are unchanged.
+  await updateCRMNudge(info.profileUrl, status);
   const contactsKey = contactsFingerprint(LITContactsModal.parseContactsModal(document));
   if (lastDetected.url === info.profileUrl
       && lastDetected.status === status
