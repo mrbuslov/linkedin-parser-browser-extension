@@ -3,7 +3,7 @@
 // now we cover the pure decision logic which is where the bugs would hide.
 
 import { describe, it, expect } from 'vitest';
-import { shouldShowDeclinedWarning, cleanHeadline, fixSwappedNameHeadline } from '../linkedin-tracker/core/popup-logic.js';
+import { shouldShowDeclinedWarning, cleanHeadline, fixSwappedNameHeadline, parseMutualsCount } from '../linkedin-tracker/core/popup-logic.js';
 
 describe('shouldShowDeclinedWarning', () => {
   it('shows when there are declined entries and /connections/ was never scanned', () => {
@@ -136,5 +136,35 @@ describe('fixSwappedNameHeadline — undoes name/headline swap in legacy records
     });
     expect(r.name).toBe('Jane Doe');
     expect(r.headline).toBe('engineer at Acme');
+  });
+});
+
+describe('parseMutualsCount — extract count from anchor text', () => {
+  it('"X, Y and N other mutual connections" → N + 2 (names visible)', () => {
+    expect(parseMutualsCount('Anton, Mikhail and 79 other mutual connections')).toBe(81);
+  });
+
+  it('single visible name + "and N other"', () => {
+    expect(parseMutualsCount('Mykhailo and 12 other mutual connections')).toBe(13);
+  });
+
+  it('no visible names, "and N other"', () => {
+    expect(parseMutualsCount('and 12 other mutual connections')).toBe(12);
+  });
+
+  it('"N mutual connections" (single number form)', () => {
+    expect(parseMutualsCount('5 mutual connections')).toBe(5);
+    expect(parseMutualsCount('1 mutual connection')).toBe(1);
+  });
+
+  it('returns null when no count is parseable', () => {
+    expect(parseMutualsCount('See all mutuals')).toBeNull();
+    expect(parseMutualsCount('')).toBeNull();
+    expect(parseMutualsCount(null)).toBeNull();
+    expect(parseMutualsCount(undefined)).toBeNull();
+  });
+
+  it('locale-stable on whitespace normalization (multi-space, tabs)', () => {
+    expect(parseMutualsCount('Anton,  Mikhail  and  79  other  mutual  connections')).toBe(81);
   });
 });

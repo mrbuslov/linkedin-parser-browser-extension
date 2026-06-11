@@ -47,6 +47,26 @@ function fixSwappedNameHeadline(record) {
   return { name, headline };
 }
 
-const LITPopupLogic = { shouldShowDeclinedWarning, cleanHeadline, fixSwappedNameHeadline };
+// Parse the mutual-connections count from the anchor's text content.
+//   "Anton, Mikhail and 79 other mutual connections" → 81
+//   "and 12 other mutual connections"                 → 12
+//   "5 mutual connections"                            → 5
+// Returns null when the text doesn't carry a deterministic count — caller
+// MUST treat null as "not known" and not substitute a guess.
+function parseMutualsCount(text) {
+  if (!text) return null;
+  const others = text.match(/\band\s+(\d+)\s+other\b/i);
+  if (others) {
+    const n = parseInt(others[1], 10);
+    const before = text.split(/\band\s+\d+\s+other\b/i)[0];
+    const names = before.split(',').map((s) => s.trim()).filter(Boolean).length;
+    return n + names;
+  }
+  const single = text.match(/(\d+)\s+mutual/i);
+  if (single) return parseInt(single[1], 10);
+  return null;
+}
+
+const LITPopupLogic = { shouldShowDeclinedWarning, cleanHeadline, fixSwappedNameHeadline, parseMutualsCount };
 if (typeof globalThis !== 'undefined') globalThis.LITPopupLogic = LITPopupLogic;
 if (typeof module !== 'undefined' && module.exports) module.exports = LITPopupLogic;

@@ -11,10 +11,15 @@ const DAY_MS = 86400000;
 
 function refreshMetadata(target, info) {
   let changed = false;
-  if (info.avatar   && !target.avatar)   { target.avatar = info.avatar; changed = true; }
-  if (info.headline && !target.headline) { target.headline = info.headline; changed = true; }
-  if (info.location && !target.location) { target.location = info.location; changed = true; }
-  if (info.country  && !target.country)  { target.country = info.country; changed = true; }
+  if (info.avatar      && !target.avatar)      { target.avatar = info.avatar; changed = true; }
+  if (info.headline    && !target.headline)    { target.headline = info.headline; changed = true; }
+  if (info.location    && !target.location)    { target.location = info.location; changed = true; }
+  if (info.country     && !target.country)     { target.country = info.country; changed = true; }
+  // Mutuals: overwrite when we have a fresh value, not just on first-set.
+  // The count drifts as the user's network grows, so the latest visit wins.
+  if (info.mutualsUrl  && info.mutualsUrl  !== target.mutualsUrl)  { target.mutualsUrl  = info.mutualsUrl;  changed = true; }
+  if (info.mutualsText && info.mutualsText !== target.mutualsText) { target.mutualsText = info.mutualsText; changed = true; }
+  if (info.mutualsCount != null && info.mutualsCount !== target.mutualsCount) { target.mutualsCount = info.mutualsCount; changed = true; }
   return changed;
 }
 
@@ -143,8 +148,14 @@ function applyProfileVisit(stored, info, status, now, contactInfo) {
     ...carriedContactFields,
     // memberId/vanityName from RSC when available — these enable bulletproof
     // dedup on subsequent visits, even if names don't match or change.
-    ...(info.memberId  && { memberId: info.memberId }),
+    ...(info.memberId   && { memberId: info.memberId }),
     ...(info.vanityName && { vanityName: info.vanityName }),
+    // Mutual-connections deep link + count. Always reflect the freshest visit
+    // when present; preserve previous when this tick didn't surface them
+    // (mid-render or LinkedIn dropped the widget for some reason).
+    mutualsUrl:   info.mutualsUrl   || prev.mutualsUrl   || '',
+    mutualsText:  info.mutualsText  || prev.mutualsText  || '',
+    mutualsCount: info.mutualsCount != null ? info.mutualsCount : (prev.mutualsCount != null ? prev.mutualsCount : null),
   };
   applyContactInfo(contacts[profileUrl], contactInfo, now);
 

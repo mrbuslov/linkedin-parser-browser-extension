@@ -42,6 +42,7 @@
         "core/detect.js",
         "core/contacts-modal.js",
         "core/profile-state.js",
+        "core/popup-logic.js",
         "profile.js"
       ],
       "run_at": "document_idle"

@@ -8,6 +8,22 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
+### Added
+- **Mutual connections capture**: on every profile visit we read the
+  "mutual connections" deep link from LinkedIn's top-card. Anchor is
+  deterministic — `a[href*="connectionOf="]` filtered to the link with
+  `network=["F"]` (mutual = first-degree common). The other connectionOf
+  link on the same page (with `network=["F","S"]`) is "all her connections"
+  and gets ignored. Scoped to the top-card section so sidebar widgets
+  ("People who follow X also follow") can't bleed in.
+  Each contact record now carries `mutualsUrl`, `mutualsText`
+  ("Anton, Mikhail and 79 other mutual connections") and a deterministic
+  `mutualsCount` (parsed from the text — null if the format doesn't yield
+  a count).
+- Popup rows render a blue "🤝 N" chip next to the name when the field is
+  set; click opens LinkedIn's mutual-connections search in a new tab.
+  Hover shows the full mutuals text as a tooltip.
+
 ### Changed
 - The CRM nudge no longer renders a visible "💾 Save to local CRM" pill
   next to the Contact info link. It's now a plain browser tooltip

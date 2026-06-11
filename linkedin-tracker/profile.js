@@ -17,6 +17,35 @@ function stripNamePrefix(text, name) {
   return trimmed;
 }
 
+// Mutual-connections link. LinkedIn renders an anchor whose href is a
+// search URL with two stable query parameters:
+//   connectionOf=<urn>  — the viewed profile's member URN
+//   network=["F"]       — filter to FIRST-degree network only ⇒ MUTUAL
+//                         (the other link on the page has network=["F","S"]
+//                          which is "all her connections", not mutuals)
+// We anchor on both parameters; nothing else is needed. Scope to top-card
+// keeps us from picking up the sidebar "People who follow X also follow"
+// widgets which have similar-looking search links but with different
+// network filters.
+function extractMutuals(scope) {
+  for (const a of scope.querySelectorAll('a[href*="connectionOf="]')) {
+    if (!a.href || !/^https?:/i.test(a.href)) continue;
+    const url = new URL(a.href);
+    if (url.searchParams.get('network') !== '["F"]') continue;
+    const text = (a.textContent || '').trim().replace(/\s+/g, ' ');
+    return { mutualsUrl: a.href, mutualsText: text };
+  }
+  return null;
+}
+
+// parseMutualsCount lives in core/popup-logic.js so tests in jsdom can pin
+// the regression cases without dragging in profile.js (which calls
+// chrome.* APIs at module load). Content scripts see it on globalThis via
+// the popup-logic.js script tag in manifest.json's /in/* content_scripts.
+const parseMutualsCount = (typeof LITPopupLogic !== 'undefined' && LITPopupLogic.parseMutualsCount)
+  ? LITPopupLogic.parseMutualsCount
+  : () => null;
+
 // Location lives in a row with exactly three <p> children:
 //   <p>City, Country</p>  <p>·</p>  <p><a href="#">Contact info</a></p>
 // The "·" + href="#" anchor combo is unique to the profile top card and
@@ -115,6 +144,8 @@ function extractProfileInfo() {
 
   const location = extractLocation(scope);
   const country = parseCountry(location);
+  const mutuals = extractMutuals(scope) || {};
+  const mutualsCount = parseMutualsCount(mutuals.mutualsText);
 
   return {
     profileUrl: LITUrl.normalizeProfileUrl(window.location.href),
@@ -125,6 +156,9 @@ function extractProfileInfo() {
     country,
     memberId,
     vanityName,
+    mutualsUrl: mutuals.mutualsUrl || '',
+    mutualsText: mutuals.mutualsText || '',
+    mutualsCount: mutualsCount,
   };
 }
 

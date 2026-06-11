@@ -352,6 +352,25 @@ main {
   background: #d1d6db;
 }
 
+.mutuals-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  background: #eaf3ff;
+  color: #0a66c2;
+  border: 1px solid #b3d4f5;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-decoration: none;
+  flex-shrink: 0;
+  line-height: 1.4;
+}
+.mutuals-chip:hover {
+  background: #d8e8ff;
+  text-decoration: none;
+}
+
 .toast {
   position: fixed;
   bottom: 14px;

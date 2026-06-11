@@ -118,6 +118,24 @@ function contactButtons(item) {
   return el('span', { className: 'contact-copies' }, buttons);
 }
 
+// "🤝 N mutuals" chip — opens LinkedIn's connection-of search in a new tab.
+// Renders only when we captured a real mutuals URL for this contact.
+function mutualsChip(item) {
+  if (!item.mutualsUrl) return null;
+  const count = item.mutualsCount != null ? item.mutualsCount : '';
+  const labelText = count !== '' ? `🤝 ${count}` : '🤝 mutuals';
+  const a = el('a', {
+    className: 'mutuals-chip',
+    href: item.mutualsUrl,
+    target: '_blank',
+    rel: 'noopener noreferrer',
+  }, [labelText]);
+  a.title = item.mutualsText
+    ? `${item.mutualsText} — click to open the LinkedIn search`
+    : 'Open mutual connections on LinkedIn';
+  return a;
+}
+
 function el(tag, props = {}, children = []) {
   const node = document.createElement(tag);
   Object.assign(node, props);
@@ -174,6 +192,7 @@ function renderPending(rawItems) {
         el('div', { className: 'name-row' }, [
           profileLink(item.profileUrl, item.name),
           contactButtons(item),
+          mutualsChip(item),
         ]),
         (() => { const h = cleanHeadline(item.headline, item.name); return h ? el('div', { className: 'headline' }, [h]) : null; })(),
         el('div', { className: 'meta' }, [
@@ -217,6 +236,7 @@ function renderAcceptedRow(item, { primaryAction, primaryLabel }) {
         nameNode,
         statusBadge(item.verified),
         contactButtons(item),
+        mutualsChip(item),
       ]),
       (() => { const h = cleanHeadline(item.headline, item.name); return h ? el('div', { className: 'headline' }, [h]) : null; })(),
       item.location ? el('div', { className: 'location' }, [item.location]) : null,
