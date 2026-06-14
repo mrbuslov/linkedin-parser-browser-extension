@@ -127,6 +127,11 @@ function extractProfileInfo() {
   const mutuals = extractMutuals(scope) || {};
   const mutualsCount = LITPopupLogic.parseMutualsCount(mutuals.mutualsText);
 
+  // Activity scope is the FULL <main>, not the top-card. The Activity card
+  // sits below the top card in the page DOM tree, so scoping to top-card
+  // would miss every post. The parser bounds itself by finding <h2>Activity</h2>.
+  const activity = LITActivityParser.extractActivity(root, name, Date.now());
+
   return {
     profileUrl: LITUrl.normalizeProfileUrl(window.location.href),
     name,
@@ -139,6 +144,9 @@ function extractProfileInfo() {
     mutualsUrl: mutuals.mutualsUrl || '',
     mutualsText: mutuals.mutualsText || '',
     mutualsCount: mutualsCount,
+    lastActivityAt: activity.lastActivityAt,
+    lastPostAt:     activity.lastPostAt,
+    recentActivity: activity.recentActivity,
   };
 }
 

@@ -22,10 +22,51 @@ function metadataFromInfo(info) {
     mutualsUrl:   info.mutualsUrl   || '',
     mutualsText:  info.mutualsText  || '',
     mutualsCount: info.mutualsCount != null ? info.mutualsCount : null,
+    lastActivityAt: info.lastActivityAt || null,
+    lastPostAt:     info.lastPostAt     || null,
+    recentActivity: Array.isArray(info.recentActivity) ? info.recentActivity : [],
   };
   if (info.memberId)   out.memberId   = info.memberId;
   if (info.vanityName) out.vanityName = info.vanityName;
   return out;
+}
+
+// Inline merge of recentActivity[] — kept here (not imported from
+// activity-parser.js) so profile-state.js remains a standalone module that
+// jsdom tests can import without dragging the DOM-scraping parser into Node.
+// Dedupe by urnActivityId, sort desc by postedAt, cap at 5.
+function mergeRecentActivityInline(existing, fresh, max = 5) {
+  const byUrn = new Map();
+  for (const c of existing || []) {
+    if (c && c.urnActivityId) byUrn.set(c.urnActivityId, c);
+  }
+  for (const c of fresh || []) {
+    if (c && c.urnActivityId) byUrn.set(c.urnActivityId, c);
+  }
+  return Array.from(byUrn.values())
+    .filter((c) => c.postedAt)
+    .sort((a, b) => b.postedAt.localeCompare(a.postedAt))
+    .slice(0, max);
+}
+
+// Apply fresh activity fields onto `target` given `prev` as the previous
+// snapshot. Three semantics:
+//   - recentActivity → merge (URN dedupe, prefer fresh on collision, cap 5).
+//   - lastActivityAt / lastPostAt → keep the LATER of (prev, fresh). The
+//     fresh value is the freshest of the 5 currently rendered cards; the
+//     stored value is the freshest we've ever seen on this profile. Either
+//     could be more recent depending on whether the user posted since.
+function applyActivityFields(target, prev, info) {
+  if (!target) return;
+  const prevList = (prev && prev.recentActivity) || target.recentActivity || [];
+  const freshList = Array.isArray(info.recentActivity) ? info.recentActivity : [];
+  target.recentActivity = mergeRecentActivityInline(prevList, freshList);
+
+  const pickNewer = (a, b) => (!a ? (b || null) : !b ? a : (a > b ? a : b));
+  const prevLA = (prev && prev.lastActivityAt) || target.lastActivityAt || null;
+  const prevLP = (prev && prev.lastPostAt)     || target.lastPostAt     || null;
+  target.lastActivityAt = pickNewer(prevLA, info.lastActivityAt || null);
+  target.lastPostAt     = pickNewer(prevLP, info.lastPostAt     || null);
 }
 
 // Refresh field policy:
@@ -187,6 +228,7 @@ function applyProfileVisit(stored, info, status, now, contactInfo) {
     mutualsCount: info.mutualsCount != null ? info.mutualsCount : (prev.mutualsCount != null ? prev.mutualsCount : null),
   };
   applyContactInfo(contacts[profileUrl], contactInfo, now);
+  applyActivityFields(contacts[profileUrl], prev, info);
 
   let acceptedChanged = acceptedDedup;
   let sentChanged = sentDedup;
@@ -206,6 +248,7 @@ function applyProfileVisit(stored, info, status, now, contactInfo) {
       // mid-render-corrupted) name on top of fresh truth doesn't help.
       if (info.name) existing.name = info.name;
       refreshMetadata(existing, info);
+      applyActivityFields(existing, existing, info);
     } else {
       sentInvitations[profileUrl] = {
         profileUrl,
@@ -218,6 +261,7 @@ function applyProfileVisit(stored, info, status, now, contactInfo) {
         addedFrom: 'profile',
         ...metadataFromInfo(info),
       };
+      applyActivityFields(sentInvitations[profileUrl], null, info);
     }
     applyContactInfo(sentInvitations[profileUrl], contactInfo, now);
     sentChanged = true;
@@ -241,6 +285,10 @@ function applyProfileVisit(stored, info, status, now, contactInfo) {
         verified: 'accepted',
         verifiedAt: now,
       };
+      // Activity: merge against whichever record had the longer history. Prefer
+      // existing-accepted (had been a connection before, then re-invited), else
+      // the sent-entry's stored activity (captured during pending phase).
+      applyActivityFields(accepted[profileUrl], existingAccepted || sentEntry, info);
       delete sentInvitations[profileUrl];
       sentChanged = true;
       acceptedChanged = true;
@@ -252,6 +300,12 @@ function applyProfileVisit(stored, info, status, now, contactInfo) {
         acceptedChanged = true;
       }
       if (refreshMetadata(entry, info)) acceptedChanged = true;
+      const prevActivityLA = entry.lastActivityAt;
+      const prevActivityList = entry.recentActivity;
+      applyActivityFields(entry, entry, info);
+      if (entry.lastActivityAt !== prevActivityLA || entry.recentActivity !== prevActivityList) {
+        acceptedChanged = true;
+      }
     } else {
       // Brand-new connection never in our tracking → pre-existing contact.
       accepted[profileUrl] = {
@@ -266,6 +320,7 @@ function applyProfileVisit(stored, info, status, now, contactInfo) {
         autoMarked: true,
         ...metadataFromInfo(info),
       };
+      applyActivityFields(accepted[profileUrl], null, info);
       acceptedChanged = true;
     }
     if (applyContactInfo(accepted[profileUrl], contactInfo, now)) acceptedChanged = true;
@@ -312,6 +367,13 @@ function applyProfileVisit(stored, info, status, now, contactInfo) {
   return { contacts, accepted, sentInvitations, acceptedChanged, sentChanged };
 }
 
-const LITProfileState = { applyProfileVisit, applyContactInfo, CONTACT_FIELDS, DAY_MS };
+const LITProfileState = {
+  applyProfileVisit,
+  applyContactInfo,
+  applyActivityFields,
+  mergeRecentActivityInline,
+  CONTACT_FIELDS,
+  DAY_MS,
+};
 if (typeof globalThis !== 'undefined') globalThis.LITProfileState = LITProfileState;
 if (typeof module !== 'undefined' && module.exports) module.exports = LITProfileState;

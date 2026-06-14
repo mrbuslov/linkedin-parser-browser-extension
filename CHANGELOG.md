@@ -8,6 +8,71 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
+## [1.2.5] — 2026-06-12
+
+### Added
+- **Recent-activity capture on profile visits**. The Activity card LinkedIn
+  SSR-renders directly into the /in/<vanity>/ DOM (10 cards before any
+  scroll) is now parsed into three new fields on every record (contacts,
+  sentInvitations, accepted):
+  - `lastActivityAt` — ISO timestamp of the freshest activity (any type)
+  - `lastPostAt` — ISO timestamp of the freshest OWN post (where the card
+    author equals the profile owner)
+  - `recentActivity[]` — up to 5 most-recent items, each
+    `{ urnActivityId, url, author, type, text, postedAt, postedAtText }`.
+    `type` is one of `post` (own), `share` (someone else's), `unknown`.
+    Full body text is included — LinkedIn renders the full post in the DOM
+    even when CSS-collapses it behind a "...more" button, so the parser
+    captures everything visible to the user without expanding anything.
+- **Detail view "Recent activity" section** (popup `ⓘ` button → detail
+  panel). Shows the two timestamps + a scrollable list of cards with type
+  badge (green for own posts, blue for shares), relative-time pill, author
+  name (when not own), 4-line text snippet, and an "Open ↗" deep link to
+  the post on LinkedIn.
+- CSV export now includes `lastActivityAt` and `lastPostAt` columns
+  (falling back to the value joined from the contacts store when the
+  pending/accepted row's own copy is empty).
+
+### Parser anchors (per the project ZERO-FALLBACKS rule)
+1. `<h2>Activity</h2>` heading text — localized variants kept in
+   `ACTIVITY_HEADINGS` (`Activity`, `Активность`, `Активність`,
+   `Aktivität`, `Activité`, `Aktywność`).
+2. `<button aria-label="Open control menu for post by <NAME>">` — per-card
+   menu button. Anchors author name AND lets us walk up to the card
+   wrapper (the nearest ancestor that also contains an expandable-text-box).
+3. `<svg aria-label="Visibility: ...">` — visibility icon. Its parent `<p>`
+   begins with the relative-time text (`"4d •"`, `"1mo •"`, etc).
+4. `<span data-testid="expandable-text-box">` — the full post body. The
+   `...more` expand button is stripped from `textContent`.
+5. `urn:li:activity:<id>` in any descendant href — canonical post ID and
+   dedup key. URL pattern: `/feed/update/urn:li:activity:<id>/`.
+
+When any anchor fails on a card, we SKIP that card — never guess from
+class names or text patterns. Half-parsed garbage is worse than missing.
+
+### Merge semantics
+Subsequent visits dedupe `recentActivity` by `urnActivityId` (fresh wins
+on collision), sort by `postedAt` desc, and cap at 5. `lastActivityAt` and
+`lastPostAt` track the LATER of (stored, fresh) — the stored copy stays
+when the user re-visits an old profile whose top 5 cards have since
+rotated and we'd otherwise lose the more-recent record.
+
+### Tests
+- `tests/activity-parser.test.js` — 20 cases covering time-unit parsing
+  (`5m`/`3h`/`4d`/`2w`/`1mo`/`5mo`/`1y`), merge-by-URN with cap, the
+  full Lija T. fixture (single-author profile, 5 cards parsed, full body
+  text including the long "translation agency" post), the Igor Alentyev
+  fixture (mixed authors → correct `type` classification of own posts vs
+  reshares), degenerate input handling, and localized heading matching.
+- `tests/profile-state.test.js` — 6 new cases for the persistence path:
+  fields land on sentInvitations / accepted / contacts; later-of merge
+  for the two scalar timestamps; URN-dedup merge for `recentActivity[]`
+  with cap-at-5 push-out of the oldest item; preservation of stored
+  activity when the current tick yields an empty list.
+- Real-HTML fixtures added:
+  `tests/fixtures/lija-activity-section.html` (single author, 10 cards)
+  and `tests/fixtures/igor-activity-section.html` (6 distinct authors).
+
 ### Added
 - **In-popup detail view**: tiny `ⓘ` button next to every name (Pending /
   Accepted / Marked / Declined block) opens a full-popup detail panel

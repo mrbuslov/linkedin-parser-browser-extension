@@ -27,6 +27,10 @@ export default [
         LITMergeConnections: 'readonly',
         LITPopupLogic: 'readonly',
         LITRSC: 'readonly',
+        LITActivityParser: 'readonly',
+        LITContactsModal: 'readonly',
+        LITSearchResults: 'readonly',
+        LITStripName: 'writable',
         // db-client.js exposes these
         dbGet: 'readonly',
         dbSet: 'readonly',

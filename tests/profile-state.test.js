@@ -673,3 +673,118 @@ describe('applyProfileVisit — contact info modal integration', () => {
     expect(c.contactsCapturedAt).toBe(NOW);
   });
 });
+
+describe('applyProfileVisit — activity fields', () => {
+  function activityInfo(overrides = {}) {
+    return info({
+      lastActivityAt: '2026-06-10T12:00:00.000Z',
+      lastPostAt:     '2026-06-08T09:00:00.000Z',
+      recentActivity: [
+        { urnActivityId: 'A', url: 'https://x/A', author: 'Jane Doe', type: 'post',  text: 'A', postedAt: '2026-06-10T12:00:00.000Z', postedAtText: '4d' },
+        { urnActivityId: 'B', url: 'https://x/B', author: 'Other',    type: 'share', text: 'B', postedAt: '2026-06-08T09:00:00.000Z', postedAtText: '1w' },
+      ],
+      ...overrides,
+    });
+  }
+
+  it('persists lastActivityAt, lastPostAt, recentActivity on first visit (connected)', () => {
+    const r = applyProfileVisit({}, activityInfo(), 'connected', NOW, null);
+    const c = r.contacts['https://www.linkedin.com/in/jane/'];
+    expect(c.lastActivityAt).toBe('2026-06-10T12:00:00.000Z');
+    expect(c.lastPostAt).toBe('2026-06-08T09:00:00.000Z');
+    expect(c.recentActivity).toHaveLength(2);
+    expect(c.recentActivity[0].urnActivityId).toBe('A');
+    // accepted record gets the same fields
+    const a = r.accepted['https://www.linkedin.com/in/jane/'];
+    expect(a.lastActivityAt).toBe('2026-06-10T12:00:00.000Z');
+    expect(a.recentActivity).toHaveLength(2);
+  });
+
+  it('persists activity on a pending visit (sentInvitations)', () => {
+    const r = applyProfileVisit({}, activityInfo(), 'pending', NOW, null);
+    const s = r.sentInvitations['https://www.linkedin.com/in/jane/'];
+    expect(s.lastActivityAt).toBe('2026-06-10T12:00:00.000Z');
+    expect(s.lastPostAt).toBe('2026-06-08T09:00:00.000Z');
+    expect(s.recentActivity).toHaveLength(2);
+  });
+
+  it('keeps the LATER lastActivityAt across visits (stored > fresh)', () => {
+    const stored = {
+      contacts: {
+        'https://www.linkedin.com/in/jane/': {
+          profileUrl: 'https://www.linkedin.com/in/jane/',
+          lastActivityAt: '2026-06-30T00:00:00.000Z',  // stored is newer than fresh
+          firstSeenAt: NOW - 10 * DAY,
+        },
+      },
+    };
+    const r = applyProfileVisit(stored, activityInfo(), 'connected', NOW, null);
+    expect(r.contacts['https://www.linkedin.com/in/jane/'].lastActivityAt)
+      .toBe('2026-06-30T00:00:00.000Z');
+  });
+
+  it('keeps the LATER lastActivityAt across visits (fresh > stored)', () => {
+    const stored = {
+      contacts: {
+        'https://www.linkedin.com/in/jane/': {
+          profileUrl: 'https://www.linkedin.com/in/jane/',
+          lastActivityAt: '2026-05-01T00:00:00.000Z',
+          firstSeenAt: NOW - 10 * DAY,
+        },
+      },
+    };
+    const r = applyProfileVisit(stored, activityInfo(), 'connected', NOW, null);
+    expect(r.contacts['https://www.linkedin.com/in/jane/'].lastActivityAt)
+      .toBe('2026-06-10T12:00:00.000Z');
+  });
+
+  it('merges recentActivity across visits, dedupes by URN, caps at 5', () => {
+    const stored = {
+      contacts: {
+        'https://www.linkedin.com/in/jane/': {
+          profileUrl: 'https://www.linkedin.com/in/jane/',
+          recentActivity: [
+            { urnActivityId: 'B', postedAt: '2026-06-08T09:00:00.000Z', text: 'old-B' },
+            { urnActivityId: 'C', postedAt: '2026-05-01T00:00:00.000Z', text: 'C' },
+            { urnActivityId: 'D', postedAt: '2026-04-01T00:00:00.000Z', text: 'D' },
+            { urnActivityId: 'E', postedAt: '2026-03-01T00:00:00.000Z', text: 'E' },
+            { urnActivityId: 'F', postedAt: '2026-02-01T00:00:00.000Z', text: 'F' },
+          ],
+          firstSeenAt: NOW - 10 * DAY,
+        },
+      },
+    };
+    const r = applyProfileVisit(stored, activityInfo(), 'connected', NOW, null);
+    const list = r.contacts['https://www.linkedin.com/in/jane/'].recentActivity;
+    expect(list).toHaveLength(5);
+    expect(list.map((c) => c.urnActivityId)).toEqual(['A', 'B', 'C', 'D', 'E']);
+    // Fresh wins for B (the URN that overlapped)
+    const b = list.find((c) => c.urnActivityId === 'B');
+    expect(b.text).toBe('B');
+    // F got pushed out by A which is newer
+    expect(list.find((c) => c.urnActivityId === 'F')).toBeUndefined();
+  });
+
+  it('preserves stored activity when this tick has no recentActivity (Activity card not rendered)', () => {
+    const stored = {
+      accepted: {
+        'https://www.linkedin.com/in/jane/': {
+          profileUrl: 'https://www.linkedin.com/in/jane/',
+          name: 'Jane Doe',
+          acceptedAt: NOW - 10 * DAY,
+          marked: false,
+          verified: 'accepted',
+          recentActivity: [{ urnActivityId: 'Z', postedAt: '2026-05-20T00:00:00.000Z', text: 'Z' }],
+          lastActivityAt: '2026-05-20T00:00:00.000Z',
+        },
+      },
+    };
+    // info has no activity (Activity section was empty or not yet rendered)
+    const tickInfo = info({ lastActivityAt: null, lastPostAt: null, recentActivity: [] });
+    const r = applyProfileVisit(stored, tickInfo, 'connected', NOW, null);
+    const a = r.accepted['https://www.linkedin.com/in/jane/'];
+    expect(a.recentActivity).toHaveLength(1);
+    expect(a.recentActivity[0].urnActivityId).toBe('Z');
+    expect(a.lastActivityAt).toBe('2026-05-20T00:00:00.000Z');
+  });
+});

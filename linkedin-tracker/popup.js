@@ -200,7 +200,7 @@ function renderPending(rawItems) {
           contactButtons(item),
           mutualsChip(item),
         ]),
-        (() => { const h = cleanHeadline(item.headline, item.name); return h ? el('div', { className: 'headline' }, [h]) : null; })(),
+        (() => { const h = LITPopupLogic.cleanHeadline(item.headline, item.name); return h ? el('div', { className: 'headline' }, [h]) : null; })(),
         el('div', { className: 'meta' }, [
           el('span', {}, [`Pending ${days}d`]),
           item.sentDateRelative ? el('span', {}, [item.sentDateRelative]) : null,
@@ -245,7 +245,7 @@ function renderAcceptedRow(item, { primaryAction, primaryLabel }) {
         contactButtons(item),
         mutualsChip(item),
       ]),
-      (() => { const h = cleanHeadline(item.headline, item.name); return h ? el('div', { className: 'headline' }, [h]) : null; })(),
+      (() => { const h = LITPopupLogic.cleanHeadline(item.headline, item.name); return h ? el('div', { className: 'headline' }, [h]) : null; })(),
       item.location ? el('div', { className: 'location' }, [item.location]) : null,
       el('div', { className: 'meta' }, [
         el('span', {}, [`Accepted ${sinceAccepted}d ago`]),
@@ -583,6 +583,32 @@ function renderDetail(item) {
     panel.append(sec);
   }
 
+  // ACTIVITY section — only if we have any captured posts
+  const recent = Array.isArray(item.recentActivity) ? item.recentActivity : [];
+  if (recent.length > 0 || item.lastActivityAt || item.lastPostAt) {
+    const activitySection = el('div', { className: 'detail-section' }, [
+      el('h4', {}, ['Recent activity']),
+      item.lastActivityAt ? field('Last activity', `${fmtDate(item.lastActivityAt)} · ${relTime(item.lastActivityAt)}`) : null,
+      item.lastPostAt     ? field('Last own post', `${fmtDate(item.lastPostAt)} · ${relTime(item.lastPostAt)}`) : null,
+      recent.length > 0 ? el('ul', { className: 'activity-list' }, recent.map((c) => {
+        const snippet = (c.text || '').slice(0, 280) + ((c.text || '').length > 280 ? '…' : '');
+        const typeLabel = c.type === 'post' ? 'post' : c.type === 'share' ? 'share' : c.type;
+        const meta = el('div', { className: 'activity-meta' }, [
+          el('span', { className: `activity-type activity-type-${c.type}` }, [typeLabel]),
+          el('span', { className: 'activity-time' }, [c.postedAtText || '']),
+          c.author ? el('span', { className: 'activity-author' }, [`· ${c.author}`]) : null,
+        ].filter(Boolean));
+        const link = el('a', { href: c.url, target: '_blank', className: 'activity-link' }, ['Open ↗']);
+        return el('li', { className: 'activity-row' }, [
+          meta,
+          snippet ? el('p', { className: 'activity-text' }, [snippet]) : null,
+          link,
+        ].filter(Boolean));
+      })) : null,
+    ].filter(Boolean));
+    panel.append(activitySection);
+  }
+
   // CONNECTION section (status + dates)
   panel.append(el('div', { className: 'detail-section' }, [
     el('h4', {}, ['Connection']),
@@ -654,17 +680,23 @@ async function exportCsv() {
     'status', 'verified', 'name', 'profileUrl', 'headline',
     'firstSeenAt', 'acceptedAt', 'daysPending', 'welcomeSent',
     'email', 'phone', 'phoneLabel', 'website', 'address', 'birthday',
+    'lastActivityAt', 'lastPostAt',
   ]];
   // contacts holds the captured contact-info modal fields. We join them in
   // by profileUrl so even accepted rows where the user opened the overlay
   // get their email/phone exported alongside.
   const contactOf = (url) => contacts[url] || {};
+  const pickActivity = (rec, c) => [
+    rec.lastActivityAt || c.lastActivityAt || '',
+    rec.lastPostAt     || c.lastPostAt     || '',
+  ];
   for (const x of Object.values(sentInvitations)) {
     const c = contactOf(x.profileUrl);
     rows.push(['pending', '', x.name, x.profileUrl, x.headline,
       new Date(x.firstSeenAt).toISOString(), '', '', '',
       x.email || c.email || '', x.phone || c.phone || '', x.phoneLabel || c.phoneLabel || '',
-      x.website || c.website || '', x.address || c.address || '', x.birthday || c.birthday || '']);
+      x.website || c.website || '', x.address || c.address || '', x.birthday || c.birthday || '',
+      ...pickActivity(x, c)]);
   }
   for (const x of Object.values(accepted)) {
     const c = contactOf(x.profileUrl);
@@ -672,7 +704,8 @@ async function exportCsv() {
       new Date(x.firstSeenAt).toISOString(), new Date(x.acceptedAt).toISOString(),
       x.daysPending, x.welcomeMessageSent,
       x.email || c.email || '', x.phone || c.phone || '', x.phoneLabel || c.phoneLabel || '',
-      x.website || c.website || '', x.address || c.address || '', x.birthday || c.birthday || '']);
+      x.website || c.website || '', x.address || c.address || '', x.birthday || c.birthday || '',
+      ...pickActivity(x, c)]);
   }
   const csv = rows.map((r) => r.map(csvEscape).join(',')).join('\n');
   downloadBlob(new Blob([csv], { type: 'text/csv' }), `linkedin-tracker-${new Date().toISOString().slice(0, 10)}.csv`);
