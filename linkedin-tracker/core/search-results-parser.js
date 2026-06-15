@@ -2,64 +2,105 @@
 // search-mutuals content script to collect the list of mutual connections
 // when the user navigates to `/search/results/people/?...connectionOf=...`.
 //
-// Deterministic anchors only (per project CLAUDE.md):
-//   1) Profile URL — `<a href="https://www.linkedin.com/in/<vanity>/">`.
-//      The /in/<vanity>/ pattern is LinkedIn's canonical profile URL
-//      structure; nothing else uses it.
-//   2) Name — the `<a>` element's `textContent`, normalized.
-//   3) Avatar — `<img src>` with `profile-displayphoto` in the URL.
-//      Same anchor we use on profile pages — language-stable, class-stable.
+// Deterministic per-card anchor (per project CLAUDE.md):
+//   `<div componentkey="SearchResults<URN>">` — LinkedIn's own internal
+//   identifier for a search-result card. The URN is the canonical member
+//   ID (`ACoA…` shape). LinkedIn also renders a SECOND componentkey on
+//   the snippet sub-area as `SearchResultssnippet_<URN>` — we filter that
+//   out so the same card doesn't count twice.
 //
-// Dedupe by canonical profileUrl (each result has multiple anchors —
-// name link + avatar link — they all point at the same /in/...).
-// Returns an array of { name, profileUrl, avatar } (avatar may be '').
+// Why this matters: the previous version scanned ALL `<a href="/in/...">`
+// in the page, which swept up names from sidebar widgets, "people who
+// connect at X also follow", and the carousel of "X mutual connections"
+// rendered inside each result card. The user saw the connections-of-
+// connections rather than the actual result list. Anchoring on the
+// SearchResults<URN> wrapper bounds the scope to ONE card per URN.
+//
+// Inside each card, we take the FIRST `<a href="/in/<vanity>/">` — that's
+// the name link. Subsequent /in/ anchors in the same card are noise
+// (mutual-connection chips, "Followed by …" lines, sidebar items).
+//
+// Returns: array of { name, profileUrl, avatar } in document order.
+
+const URN_CK_RE = /^SearchResults(ACoA[A-Za-z0-9_-]+)$/;
 
 function extractMutualsList(root, normalizeFn) {
   if (!root) return [];
-  const seen = new Set();
+  const normalize = normalizeFn || ((s) => s);
   const list = [];
-  for (const a of root.querySelectorAll('a[href*="/in/"]')) {
-    const href = a.href;
-    if (!href || !/\/in\/[^/]+/.test(href)) continue;
-    const normalize = normalizeFn || ((s) => s);
-    const profileUrl = normalize(href);
-    if (seen.has(profileUrl)) continue;
-    const text = (a.textContent || '').trim().replace(/\s+/g, ' ');
-    // Skip anchors with no readable name (image-wrapper anchors render
-    // empty textContent). We pick up the named anchor for the same profile
-    // on a later iteration.
-    if (!text || text.length < 2) continue;
-    // LinkedIn appends extra labels in the name anchor's text:
-    //   "Usman Kiyani Premium • 1st"
-    // Strip the "• 1st"/"• 2nd"/"• 3rd" degree marker and the "Premium"
-    // badge label from the displayed name.
+  const seenUrl = new Set();
+  const seenCards = new Set();
+
+  // Seed on `componentkey="SearchResults<URN>"` — one per result card.
+  // The componentkey sits on an inner element (avatar wrapper area), NOT
+  // the card root. Walk up to the surrounding `[role="listitem"]` to get
+  // the actual card bounds. Inside that scope, the FIRST `<a href="/in/">`
+  // with non-empty visible text is the result's name link; subsequent /in/
+  // anchors are the mutual-connection chips and snippet links (noise).
+  for (const seed of root.querySelectorAll('[componentkey]')) {
+    const ck = seed.getAttribute('componentkey') || '';
+    if (!URN_CK_RE.test(ck)) continue;
+    const card = seed.closest('[role="listitem"]');
+    if (!card || seenCards.has(card)) continue;
+    seenCards.add(card);
+
+    const links = card.querySelectorAll('a[href*="/in/"]');
+    let nameLink = null;
+    for (const a of links) {
+      const t = (a.textContent || '').trim();
+      if (t.length >= 2) { nameLink = a; break; }
+    }
+    if (!nameLink) continue;
+    const href = nameLink.getAttribute('href') || nameLink.href || '';
+    if (!/\/in\/[^/]+/.test(href)) continue;
+    const profileUrl = normalize(nameLink.href || href);
+    if (seenUrl.has(profileUrl)) continue;
+
+    const text = (nameLink.textContent || '').trim().replace(/\s+/g, ' ');
     const cleanName = text
       .replace(/\s*•\s*(1st|2nd|3rd)\b/i, '')
       .replace(/\s+Premium\b/, '')
       .trim();
-    if (!cleanName) continue;
-    seen.add(profileUrl);
-    list.push({ name: cleanName, profileUrl });
+    if (!cleanName || cleanName.length < 2) continue;
+
+    const imgEl = card.querySelector('img[src*="profile-displayphoto"]');
+    const avatar = (imgEl && imgEl.src) ? imgEl.src : '';
+
+    seenUrl.add(profileUrl);
+    list.push({ name: cleanName, profileUrl, avatar });
   }
-  // Pick up avatars in a second pass — anchor result entries to their
-  // figures by walking up to the nearest shared container.
-  for (const item of list) {
-    // Find any <img src*=profile-displayphoto> that lives inside or near
-    // an <a href> for this profile. We pick the first match in document
-    // order; LinkedIn renders one avatar per card.
-    for (const a of root.querySelectorAll(`a[href*="/in/"]`)) {
-      if (!a.href || normalizeFn(a.href) !== item.profileUrl) continue;
-      // Walk up 5 ancestors looking for an <img> in any descendant.
+
+  // Backwards-compat path: when the URN-componentkey anchor is absent (a
+  // unit test passes a hand-written DOM, or LinkedIn changes the wrapper
+  // attribute name), fall back to the legacy per-anchor scan WITHOUT the
+  // sidebar-noise problem — caller is expected to have already scoped to
+  // a sub-DOM (e.g. <main>) where only real results live.
+  if (list.length === 0) {
+    for (const a of root.querySelectorAll('a[href*="/in/"]')) {
+      const href = a.getAttribute('href') || a.href || '';
+      if (!/\/in\/[^/]+/.test(href)) continue;
+      const profileUrl = normalize(a.href || href);
+      if (seenUrl.has(profileUrl)) continue;
+      const text = (a.textContent || '').trim().replace(/\s+/g, ' ');
+      if (!text || text.length < 2) continue;
+      const cleanName = text
+        .replace(/\s*•\s*(1st|2nd|3rd)\b/i, '')
+        .replace(/\s+Premium\b/, '')
+        .trim();
+      if (!cleanName) continue;
+      // Find an avatar in any of the link's ancestor containers (5 levels).
+      let avatar = '';
       let node = a.parentElement;
-      for (let i = 0; i < 5 && node; i++) {
+      for (let i = 0; i < 5 && node && !avatar; i++) {
         const img = node.querySelector('img[src*="profile-displayphoto"]');
-        if (img && img.src) { item.avatar = img.src; break; }
+        if (img && img.src) avatar = img.src;
         node = node.parentElement;
       }
-      if (item.avatar) break;
+      seenUrl.add(profileUrl);
+      list.push({ name: cleanName, profileUrl, avatar });
     }
-    if (!item.avatar) item.avatar = '';
   }
+
   return list;
 }
 

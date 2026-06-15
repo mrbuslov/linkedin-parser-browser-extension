@@ -27,6 +27,34 @@ In development for the next release. See [plan.md](plan.md) for the prioritized 
   Records the user explicitly Marked are left alone (no autoMarked flag
   on those).
 
+### Fixed (mutuals capture on /search/results/people/)
+- **Parser was collecting connections-of-connections, not the actual search
+  results.** The legacy implementation scanned every `<a href="/in/...">`
+  in the page DOM — which also matches the mutual-connection chips
+  rendered INSIDE each result card ("X, Y and 5 others connect with Z"),
+  the sidebar widgets ("People you may know"), and a few one-off
+  recommendation anchors. Result: the user saw 13-18 names captured per
+  search instead of the 10 actual results, with strangers mixed in. New
+  anchor: `componentkey="SearchResults<URN>"` (LinkedIn's own internal
+  card identifier — the `<URN>` matches `ACoA…` member URN shape). The
+  componentkey sits on an INNER card element; we walk up via
+  `.closest('[role="listitem"]')` to get the card root, then take the
+  first /in/ anchor with non-empty visible text. Snippet sub-area
+  (`componentkey="SearchResultssnippet_<URN>"`) is filtered out so the
+  same card doesn't count twice. Real-HTML fixture replaced with a
+  bounded results-section from a fresh /search/ visit; tests pin the
+  exact 10-result count plus the three target names the user flagged in
+  the bug report and explicitly reject 3 known-noise vanities.
+
+### Fixed (detail-view favorite star)
+- **Star didn't turn yellow when toggled from inside the detail view.** The
+  list panels re-render via the `DB_CHANGED` broadcast that fires on every
+  dbSet, but the detail panel is rendered once at openDetailView() time
+  and is not on the broadcast path. Added `currentDetailUrl` tracking +
+  `refreshDetailView()`; toggleFavorite now awaits the write and then
+  re-renders the panel from the freshly-stored record, so the visible
+  star flips state immediately.
+
 ### Changed
 - **Brand-new accepted profile visits no longer auto-mark.** Previously, the
   first time we visited a profile that LinkedIn marked "connected" and we

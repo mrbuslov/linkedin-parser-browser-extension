@@ -586,6 +586,11 @@ async function toggleFavorite(profileUrl) {
   }
   if (Object.keys(patch).length === 0) return;
   await dbSet(patch);
+  // The list-panel re-render is triggered by the DB_CHANGED broadcast
+  // (loadData reads fresh stores). Detail panel is rendered once on
+  // open() and won't pick up the new favorite state unless we refresh it
+  // explicitly here.
+  await refreshDetailView();
 }
 
 // ---------- Detail view ----------
@@ -597,9 +602,11 @@ async function toggleFavorite(profileUrl) {
 // class that hides the tab switcher while a detail is open.
 
 let detailReturnTab = 'pending';
+let currentDetailUrl = null;
 
 async function openDetailView(profileUrl) {
   detailReturnTab = activeTabName();
+  currentDetailUrl = profileUrl;
   const { sentInvitations = {}, accepted = {}, contacts = {} } =
     await dbGet(['sentInvitations', 'accepted', 'contacts']);
   const item = accepted[profileUrl] || sentInvitations[profileUrl] || contacts[profileUrl];
@@ -616,6 +623,7 @@ async function openDetailView(profileUrl) {
 }
 
 function closeDetailView() {
+  currentDetailUrl = null;
   document.body.classList.remove('showing-detail');
   const detail = $('detail-panel');
   detail.hidden = true;
@@ -625,6 +633,20 @@ function closeDetailView() {
     panel.hidden = false;
   }
   switchTab(detailReturnTab);
+}
+
+// Re-fetch the current detail-view record from storage and re-render. Used
+// after in-place mutations (e.g. favorite toggle) so the panel reflects
+// fresh field values without closing/reopening. No-op when detail view is
+// not currently showing.
+async function refreshDetailView() {
+  if (!currentDetailUrl) return;
+  const { sentInvitations = {}, accepted = {}, contacts = {} } =
+    await dbGet(['sentInvitations', 'accepted', 'contacts']);
+  const url = currentDetailUrl;
+  const item = accepted[url] || sentInvitations[url] || contacts[url];
+  if (!item) return;
+  renderDetail(item);
 }
 
 function fmtDate(ts) {
