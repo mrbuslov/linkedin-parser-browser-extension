@@ -170,9 +170,19 @@ function profileLink(url, text) {
 }
 
 function statusBadge(verified) {
-  if (verified === 'accepted') return el('span', { className: 'status-badge accepted' }, ['✓ accepted']);
-  if (verified === 'declined') return el('span', { className: 'status-badge declined' }, ['✗ declined']);
-  return el('span', { className: 'status-badge unverified' }, ['?']);
+  if (verified === 'accepted') {
+    const b = el('span', { className: 'status-badge accepted' }, ['✓']);
+    b.title = 'accepted';
+    return b;
+  }
+  if (verified === 'declined') {
+    const b = el('span', { className: 'status-badge declined' }, ['✗']);
+    b.title = 'declined';
+    return b;
+  }
+  const b = el('span', { className: 'status-badge unverified' }, ['?']);
+  b.title = 'unverified';
+  return b;
 }
 
 function renderPending(rawItems) {
