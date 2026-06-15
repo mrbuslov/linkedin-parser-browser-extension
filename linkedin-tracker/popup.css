@@ -401,6 +401,38 @@ main {
 }
 .info-btn:hover { background: #f0f0f0; color: #0a66c2; border-color: #0a66c2; }
 
+.fav-btn {
+  background: transparent;
+  border: none;
+  color: #b0b6bc;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, transform 0.1s;
+}
+.fav-btn:hover { color: #f5a623; transform: scale(1.15); }
+.fav-btn.favorited { color: #f5a623; }
+.fav-btn.favorited:hover { color: #c98410; }
+
+/* Star tab — visual emphasis (same yellow as the favorited star). */
+.tab[data-tab="favorites"] {
+  font-size: 14px;
+  color: #b0b6bc;
+}
+.tab[data-tab="favorites"].active { color: #f5a623; }
+.tab[data-tab="favorites"]:not(.active):hover { color: #f5a623; }
+
+.detail-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 body.showing-detail .tabs,
 body.showing-detail #search,
 body.showing-detail .actions,

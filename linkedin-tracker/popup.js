@@ -188,27 +188,7 @@ function renderPending(rawItems) {
       : `${items.length} pending · sorted oldest first`;
 
   const sorted = filtered.slice().sort((a, b) => a.firstSeenAt - b.firstSeenAt);
-
-  for (const item of sorted) {
-    const days = ageDays(item.firstSeenAt);
-    list.append(el('li', { className: `row ${ageClassFromDays(days)}` }, [
-      item.avatar ? el('img', { className: 'avatar', src: item.avatar, alt: '' }) : null,
-      el('div', { className: 'row-body' }, [
-        el('div', { className: 'name-row' }, [
-          profileLink(item.profileUrl, item.name),
-          infoButton(item),
-          contactButtons(item),
-          mutualsChip(item),
-        ]),
-        (() => { const h = LITPopupLogic.cleanHeadline(item.headline, item.name); return h ? el('div', { className: 'headline' }, [h]) : null; })(),
-        el('div', { className: 'meta' }, [
-          el('span', {}, [`Pending ${days}d`]),
-          item.sentDateRelative ? el('span', {}, [item.sentDateRelative]) : null,
-        ]),
-        el('div', { className: 'row-actions' }, [deleteButton(item)]),
-      ]),
-    ]));
-  }
+  for (const item of sorted) list.append(renderPendingRow(item));
 }
 
 function isMarked(item) {
@@ -240,6 +220,7 @@ function renderAcceptedRow(item, { primaryAction, primaryLabel }) {
     el('div', { className: 'row-body' }, [
       el('div', { className: 'name-row' }, [
         nameNode,
+        favoriteButton(item),
         infoButton(item),
         statusBadge(item.verified),
         contactButtons(item),
@@ -332,6 +313,95 @@ function renderMarked(rawItems) {
   }
 }
 
+// Favorites tab: aggregates `favorite: true` records from all three stores,
+// dedupes by profileUrl. When a person lives in both `accepted` and
+// `contacts` we prefer the accepted record (richer — has acceptedAt,
+// verified, etc); when they're in sentInvitations + contacts, sentInvitations
+// wins. Each row uses the same row-renderer as the source tab would, so the
+// UI is consistent (Mark/Unmark/Delete buttons all work).
+function renderFavorites(sentInvitations, accepted, contacts) {
+  const list = $('favorites-list');
+  list.innerHTML = '';
+
+  const byUrl = new Map();
+  // Order matters: later writes win for the same URL. accepted has the richest
+  // data; sentInvitations is next; contacts is the lowest-priority fallback.
+  for (const [src, store] of [['contact', contacts], ['pending', sentInvitations], ['accepted', accepted]]) {
+    for (const item of Object.values(store)) {
+      if (!item.favorite) continue;
+      byUrl.set(item.profileUrl, { ...item, _source: src });
+    }
+  }
+
+  const all = Array.from(byUrl.values()).map(viewItem);
+  const visible = all.filter(matchesSearch);
+  $('favorites-empty').hidden = all.length > 0;
+  $('favorites-summary').textContent = all.length === 0
+    ? ''
+    : searchQuery
+      ? `${visible.length} of ${all.length} match`
+      : `${all.length} favorited`;
+
+  const sorted = visible.slice().sort((a, b) => (b.favoritedAt || 0) - (a.favoritedAt || 0));
+  for (const item of sorted) {
+    if (item._source === 'accepted') {
+      list.append(renderAcceptedRow(item, {
+        primaryAction: (url) => setMarked(url, !isMarked(item)),
+        primaryLabel: isMarked(item) ? 'Unmark' : 'Mark',
+      }));
+    } else if (item._source === 'pending') {
+      list.append(renderPendingRow(item));
+    } else {
+      // contacts-only entry — no Pending/Accepted bucket, render a simpler row.
+      list.append(renderContactOnlyRow(item));
+    }
+  }
+}
+
+// Pull the per-row render out of renderPending() so the Favorites tab can
+// reuse it without re-running the whole search/sort/summary pipeline.
+function renderPendingRow(item) {
+  const days = ageDays(item.firstSeenAt);
+  return el('li', { className: `row ${ageClassFromDays(days)}` }, [
+    item.avatar ? el('img', { className: 'avatar', src: item.avatar, alt: '' }) : null,
+    el('div', { className: 'row-body' }, [
+      el('div', { className: 'name-row' }, [
+        profileLink(item.profileUrl, item.name),
+        favoriteButton(item),
+        infoButton(item),
+        contactButtons(item),
+        mutualsChip(item),
+      ]),
+      (() => { const h = LITPopupLogic.cleanHeadline(item.headline, item.name); return h ? el('div', { className: 'headline' }, [h]) : null; })(),
+      el('div', { className: 'meta' }, [
+        el('span', {}, [`Pending ${days}d`]),
+        item.sentDateRelative ? el('span', {}, [item.sentDateRelative]) : null,
+      ]),
+      el('div', { className: 'row-actions' }, [deleteButton(item)]),
+    ]),
+  ]);
+}
+
+// Contacts-only row (favorited person who never appeared in pending/accepted
+// — e.g. a 3rd-degree profile the user visited). Minimal but functional.
+function renderContactOnlyRow(item) {
+  return el('li', { className: 'row' }, [
+    item.avatar ? el('img', { className: 'avatar', src: item.avatar, alt: '' }) : null,
+    el('div', { className: 'row-body' }, [
+      el('div', { className: 'name-row' }, [
+        profileLink(item.profileUrl, item.name),
+        favoriteButton(item),
+        infoButton(item),
+        contactButtons(item),
+        mutualsChip(item),
+      ]),
+      (() => { const h = LITPopupLogic.cleanHeadline(item.headline, item.name); return h ? el('div', { className: 'headline' }, [h]) : null; })(),
+      item.location ? el('div', { className: 'location' }, [item.location]) : null,
+      el('div', { className: 'row-actions' }, [deleteButton(item)]),
+    ]),
+  ]);
+}
+
 // One-shot migration: walk every record across the three stores and undo
 // any name/headline swap. Runs once per popup open. Idempotent: if all
 // records are already clean, no write happens. We persist the corrected
@@ -363,15 +433,46 @@ async function migrateSwappedNames() {
   }
 }
 
+// One-shot cleanup of pre-1.2.5 auto-marked records. The brand-new accepted
+// branch used to set `marked: true, autoMarked: true` on any "first time we
+// see this connection" profile visit — including freshly accepted invites
+// whose pending phase we missed. Those entries got silently buried in the
+// Marked tab. Now they land in Accepted; this migration unsticks the
+// pre-existing legacy records so the user doesn't have to Unmark each by
+// hand. Idempotent: only flips records where BOTH `autoMarked === true`
+// AND `marked === true` (so a user who explicitly marked an entry that
+// happened to also be autoMarked is left alone).
+async function migrateAutoMarkedToUnmarked() {
+  const { accepted = {} } = await dbGet('accepted');
+  let changed = 0;
+  for (const rec of Object.values(accepted)) {
+    if (rec.autoMarked === true && rec.marked === true) {
+      rec.marked = false;
+      rec.markedAt = null;
+      // Clear autoMarked so this migration is permanently idempotent — a
+      // second pass finds nothing to do. If the user later re-marks the
+      // entry explicitly, it stays manually-marked (no autoMarked flag).
+      delete rec.autoMarked;
+      changed++;
+    }
+  }
+  if (changed > 0) {
+    await dbSet({ accepted });
+    console.log(`[LI Tracker] migration: unmarked ${changed} legacy auto-marked records`);
+  }
+}
+
 async function loadData() {
   await migrateSwappedNames();
+  await migrateAutoMarkedToUnmarked();
 
-  const { sentInvitations = {}, accepted = {}, scanHistory = [], scanState = {} } =
-    await dbGet(['sentInvitations', 'accepted', 'scanHistory', 'scanState']);
+  const { sentInvitations = {}, accepted = {}, contacts = {}, scanHistory = [], scanState = {} } =
+    await dbGet(['sentInvitations', 'accepted', 'contacts', 'scanHistory', 'scanState']);
 
   renderPending(Object.values(sentInvitations));
   renderAccepted(Object.values(accepted), scanState.connections);
   renderMarked(Object.values(accepted));
+  renderFavorites(sentInvitations, accepted, contacts);
   renderScanInfo($('pending-scan-info'), scanState.sent);
   renderScanInfo($('accepted-scan-info'), scanState.connections);
 
@@ -432,6 +533,49 @@ function infoButton(item) {
     openDetailView(item.profileUrl);
   });
   return btn;
+}
+
+// Star toggle. Filled ★ = favorited, outline ☆ = not. Click toggles the
+// `favorite` boolean on whichever store(s) hold this profileUrl (a person
+// can live in sentInvitations OR accepted, plus contacts in parallel — we
+// flip ALL of them so reads are consistent regardless of which store the
+// renderer pulled from).
+function favoriteButton(item) {
+  const fav = !!item.favorite;
+  const btn = el('button', {
+    className: fav ? 'fav-btn favorited' : 'fav-btn',
+    type: 'button',
+    title: fav ? 'Remove from favorites' : 'Add to favorites',
+  }, [fav ? '★' : '☆']);
+  btn.setAttribute('aria-label', btn.title);
+  btn.setAttribute('aria-pressed', String(fav));
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleFavorite(item.profileUrl);
+  });
+  return btn;
+}
+
+async function toggleFavorite(profileUrl) {
+  const stored = await dbGet(['sentInvitations', 'accepted', 'contacts']);
+  const cur =
+       stored.sentInvitations?.[profileUrl]?.favorite
+    || stored.accepted?.[profileUrl]?.favorite
+    || stored.contacts?.[profileUrl]?.favorite
+    || false;
+  const next = !cur;
+  const now = Date.now();
+  const patch = {};
+  for (const storeName of ['sentInvitations', 'accepted', 'contacts']) {
+    const store = stored[storeName] || {};
+    if (!store[profileUrl]) continue;
+    store[profileUrl].favorite = next;
+    store[profileUrl].favoritedAt = next ? now : null;
+    patch[storeName] = store;
+  }
+  if (Object.keys(patch).length === 0) return;
+  await dbSet(patch);
 }
 
 // ---------- Detail view ----------
@@ -522,7 +666,10 @@ function renderDetail(item) {
     el('div', { className: 'detail-title-wrap' }, [
       item.avatar ? el('img', { className: 'detail-avatar', src: item.avatar, alt: '' }) : null,
       el('div', { className: 'detail-title-text' }, [
-        el('div', { className: 'detail-name' }, [name || '(no name)']),
+        el('div', { className: 'detail-name' }, [
+          name || '(no name)',
+          favoriteButton(item),
+        ]),
         item.verified ? statusBadge(item.verified) : null,
       ]),
     ]),

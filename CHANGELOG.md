@@ -10,6 +10,23 @@ In development for the next release. See [plan.md](plan.md) for the prioritized 
 
 ## [1.2.5] — 2026-06-12
 
+### Added (Favorites)
+- **Favorites tab** with a star toggle on every row. Click ☆ next to anyone's
+  name in Pending / Accepted / Marked to flip it to ★ — they appear in the
+  new ★ tab (between Marked and Settings), sorted by when you favorited
+  them. Favoriting is a cross-cutting tag, not a state change: a favorited
+  person STAYS visible in their original tab. Aggregation pulls from all
+  three stores (sentInvitations, accepted, contacts) and dedupes by
+  profileUrl with accepted > sentInvitations > contacts precedence (richer
+  data wins). New record fields: `favorite: boolean`, `favoritedAt: ts|null`.
+- Favorite star also appears in the detail-view header (`ⓘ` panel) — same
+  toggle, same writes.
+- **One-time migration on popup open** (`migrateAutoMarkedToUnmarked`)
+  unsticks legacy pre-1.2.5 auto-marked records: sets `marked: false,
+  markedAt: null` and deletes `autoMarked` so a second pass is no-op.
+  Records the user explicitly Marked are left alone (no autoMarked flag
+  on those).
+
 ### Changed
 - **Brand-new accepted profile visits no longer auto-mark.** Previously, the
   first time we visited a profile that LinkedIn marked "connected" and we

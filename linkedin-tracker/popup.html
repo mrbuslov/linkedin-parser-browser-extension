@@ -11,6 +11,7 @@
       <button class="tab active" data-tab="pending">Pending</button>
       <button class="tab" data-tab="accepted">Accepted</button>
       <button class="tab" data-tab="marked">Marked</button>
+      <button class="tab" data-tab="favorites" title="Favorites">★</button>
       <button class="tab" data-tab="settings">Settings</button>
     </div>
     <div class="actions">
@@ -68,6 +69,15 @@
       <div class="empty" id="marked-empty" hidden>
         <p>Nothing marked yet.</p>
         <p class="hint">Use the Mark button in Accepted to hide people you've already handled.</p>
+      </div>
+    </section>
+
+    <section id="favorites-panel" class="panel">
+      <div class="summary" id="favorites-summary"></div>
+      <ul class="list" id="favorites-list"></ul>
+      <div class="empty" id="favorites-empty" hidden>
+        <p>No favorites yet.</p>
+        <p class="hint">Click the ☆ next to anyone's name to add them here. Independent of Pending / Accepted / Marked — favorited people still show in their original tab.</p>
       </div>
     </section>
 
