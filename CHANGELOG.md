@@ -8,6 +8,40 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
+## [1.2.6] — 2026-06-15
+
+### Fixed (search-results parser hardening)
+- **Glued/doubled names captured for some mutuals.** Real-world examples
+  from a 3-mutuals capture: `"Kanstantsin Hupalau Kanstantsin Hupalau"`
+  (name appears twice — SR-only label + visible text inside one anchor's
+  `textContent`), and `"Patrice Dussault, s.a.h., b.a. • 1stCommunication
+  consultant…"` (everything after `"• 1st"` glued together with no
+  whitespace, headline+location+followers all concatenated). Two
+  independent root causes — fixed together:
+  1. **Wrong anchor picked when a card has multiple links to the same
+     profile.** LinkedIn renders 2–3 anchors per card to the same /in/
+     vanity: the photo wrapper (empty text), the name-only link
+     ("Kelsey Frick"), and a wider card-click target wrapping
+     name+headline+location+follower-count+mutual-snippet all glued
+     together. The previous "first link with non-empty text" heuristic
+     sometimes picked the wider one. Now: among all anchors to the
+     result URL, pick the SHORTEST-text one — that's the name-only link.
+  2. **Degree-marker strip didn't cover the no-space case.** Old regex
+     used `\b` after `1st/2nd/3rd`, which doesn't match when the
+     headline node renders glued ("1stCommunication" has no word
+     boundary between "t" and "C"). New `sanitizeName()` cuts everything
+     starting at `" • 1st/2nd/3rd"` with no trailing boundary, so the
+     glued-headline case strips cleanly. Also dedupes the
+     "Foo Bar Foo Bar" doubled-name pattern (split on whitespace, if
+     length is even and the halves are equal, keep one half).
+
+### Migration note
+Existing `mutualsCollected[]` lists in storage stay as-captured until the
+content script re-runs on the relevant `/search/results/people/
+?…connectionOf=…` page. To clean up: open the popup → click the 🤝 chip
+on the affected contact → wait for the `[LI Tracker] saved N mutuals…`
+console log; the list is overwritten with sanitized names.
+
 ## [1.2.5] — 2026-06-12
 
 ### Added (Favorites)
