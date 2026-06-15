@@ -10,6 +10,33 @@ In development for the next release. See [plan.md](plan.md) for the prioritized 
 
 ## [1.2.5] — 2026-06-12
 
+### Changed
+- **Brand-new accepted profile visits no longer auto-mark.** Previously, the
+  first time we visited a profile that LinkedIn marked "connected" and we
+  had no prior tracking (no `sentInvitations` entry, no `accepted` entry),
+  we wrote the record as `marked: true, autoMarked: true` on the
+  assumption "user is discovering a pre-install contact, hide it from the
+  Accepted tab." That heuristic also fired on the much more common case
+  of "user invited someone via /mynetwork/ or /search/ without ever
+  visiting their profile during the pending phase; person accepted; user
+  now opens their profile" — silently burying fresh acceptances in
+  Marked. Same thing happened when the pre-1.2.3 pending detector failed
+  on a profile (rotated class names → "Kimberly bug"): the missed pending
+  surfaced as brand-new-accepted and got auto-marked. New behavior: land
+  in Accepted with `marked: false`. Users with a real pre-install
+  backlog can clear it once via the existing "Mark all" button.
+
+### Fixed
+- **profile.js tick dedup ignored fresh `recentActivity`.** LinkedIn renders
+  the Activity card incrementally — tick #1 typically reads
+  `<h2>Activity</h2>` before its children hydrate (recentActivity=[]),
+  tick #2 sees all 10 SSR cards. The old dedup key
+  `(url, status, contactsKey)` was unchanged between ticks → tick #2 was
+  short-circuited and the parsed activity never got persisted. Result:
+  "I see posts on the LinkedIn profile but the extension shows none."
+  Added `activityFingerprint` (joined URN ids) to the dedup key so
+  changes in the parsed list trigger a re-write.
+
 ### Added
 - **Recent-activity capture on profile visits**. The Activity card LinkedIn
   SSR-renders directly into the /in/<vanity>/ DOM (10 cards before any

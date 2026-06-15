@@ -156,16 +156,24 @@ describe('applyProfileVisit — status:connected', () => {
     expect(r.sentInvitations['https://www.linkedin.com/in/jane/']).toBeUndefined();
   });
 
-  it('auto-marks a brand-new connection as pre-existing contact', () => {
+  it('lands a brand-new connection in Accepted with marked=false', () => {
+    // Regression: before this change, profile-page visits to "connected"
+    // people we had no prior tracking for were auto-marked. That silently
+    // buried fresh acceptances whose pending phase we missed — common when
+    // the user invited from /mynetwork/ without visiting the profile, OR
+    // when pre-1.2.3 pending detection failed on that profile. Now they
+    // appear in Accepted; legacy pre-install contacts can be cleared via
+    // the "Mark all" button (one-time action).
     const r = applyProfileVisit({}, info(), 'connected', NOW);
     const a = r.accepted['https://www.linkedin.com/in/jane/'];
     expect(a).toMatchObject({
       verified: 'accepted',
-      autoMarked: true,
-      marked: true,
+      marked: false,
+      markedAt: null,
       acceptedAt: NOW,
       daysPending: 0,
     });
+    expect(a.autoMarked).toBeUndefined();
   });
 
   it('promotes pending → accepted preserving firstSeenAt for daysPending calculation', () => {

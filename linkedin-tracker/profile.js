@@ -308,7 +308,7 @@ function showCaptureToast(contactInfo) {
 // scan) are immune to downgrades from a profile visit. So even a transient
 // mid-tick false positive can't damage a confirmed connection.
 const POLL_INTERVAL_MS = 250;
-let lastDetected = { url: null, status: null, contactsKey: '' };
+let lastDetected = { url: null, status: null, contactsKey: '', activityKey: '' };
 
 // Cheap stable hash of the contact-info fields so we re-persist exactly when
 // the user opens or edits the overlay, and not on every quiet tick. Empty
@@ -317,6 +317,19 @@ function contactsFingerprint(info) {
   if (!info) return '';
   return [info.email, info.phone, info.website, info.address, info.birthday, info.connectedSinceText]
     .map((v) => v || '').join('|');
+}
+
+// Activity fingerprint: comma-joined URN ids of the parsed recentActivity[].
+// Why this exists: LinkedIn renders the Activity card INCREMENTALLY. tick #1
+// after page load typically catches `<h2>Activity</h2>` before any feed
+// children have hydrated → recentActivity=[]. tick #2 (~250ms later) sees the
+// 10 SSR-rendered cards. Without including activity in the dedup key, the
+// status+contactsKey check short-circuits tick #2 and the fresh, non-empty
+// activity NEVER gets persisted. That was reported as "I see posts on the
+// LinkedIn profile but the extension shows none for this person".
+function activityFingerprint(info) {
+  if (!info || !Array.isArray(info.recentActivity)) return '';
+  return info.recentActivity.map((c) => c.urnActivityId).join(',');
 }
 
 // CRM nudge: a native browser tooltip attached to LinkedIn's "Contact info"
@@ -403,10 +416,12 @@ async function tick() {
   // ticks even when status/contactsKey are unchanged.
   await updateCRMNudge(info.profileUrl, status);
   const contactsKey = contactsFingerprint(LITContactsModal.parseContactsModal(document));
+  const activityKey = activityFingerprint(info);
   if (lastDetected.url === info.profileUrl
       && lastDetected.status === status
-      && lastDetected.contactsKey === contactsKey) return;
-  lastDetected = { url: info.profileUrl, status, contactsKey };
+      && lastDetected.contactsKey === contactsKey
+      && lastDetected.activityKey === activityKey) return;
+  lastDetected = { url: info.profileUrl, status, contactsKey, activityKey };
   await persistVisit();
 }
 

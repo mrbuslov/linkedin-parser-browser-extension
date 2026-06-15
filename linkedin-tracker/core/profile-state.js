@@ -307,17 +307,30 @@ function applyProfileVisit(stored, info, status, now, contactInfo) {
         acceptedChanged = true;
       }
     } else {
-      // Brand-new connection never in our tracking → pre-existing contact.
+      // Brand-new connection never in our tracking. Two real scenarios fall
+      // through here:
+      //   1. Pre-existing contact (was in your network before you installed
+      //      the extension) — you visit them once, we discover them.
+      //   2. Fresh acceptance whose pending phase we missed — you invited
+      //      via /mynetwork/ or /search/ without visiting the profile, OR
+      //      the pre-1.2.3 pending detector failed on this profile (class
+      //      names rotated → "Kimberly bug"). Person accepted, you now
+      //      visit their profile; we see "connected" with no history.
+      //
+      // We CANNOT reliably distinguish (1) from (2) from the DOM alone. The
+      // old behavior auto-marked all of these, which silently buried fresh
+      // acceptances in the Marked tab. Now we land them in Accepted with
+      // marked=false. Users with pre-1.x install state can tap "Mark all"
+      // once to clear the legacy backlog.
       accepted[profileUrl] = {
         profileUrl,
         name: info.name,
         acceptedAt: now,
         daysPending: 0,
-        marked: true,
-        markedAt: now,
+        marked: false,
+        markedAt: null,
         verified: 'accepted',
         verifiedAt: now,
-        autoMarked: true,
         ...metadataFromInfo(info),
       };
       applyActivityFields(accepted[profileUrl], null, info);
