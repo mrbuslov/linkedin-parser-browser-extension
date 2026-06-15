@@ -24,6 +24,33 @@
 
 const URN_CK_RE = /^SearchResults(ACoA[A-Za-z0-9_-]+)$/;
 
+// Clean a single name string captured from a search result link.
+//   1) Cut everything starting at the degree marker " • 1st"/" • 2nd"/
+//      " • 3rd". On wide-link captures the headline is often glued
+//      directly after "1st" with no separator ("• 1stCommunication
+//      consultant…"); this still catches it because we anchor on the
+//      bullet+digit pattern, no trailing word-boundary needed.
+//   2) Strip the standalone "Premium" badge token.
+//   3) Dedup an immediately-doubled name. LinkedIn renders the SR-only
+//      accessible label AND the visible text inside the same anchor;
+//      `textContent` concatenates them as "Foo Bar Foo Bar". When the
+//      first half equals the second half (word-for-word), keep one.
+function sanitizeName(raw) {
+  if (!raw) return '';
+  let s = raw
+    .replace(/\s*•\s*(?:1st|2nd|3rd).*$/i, '')
+    .replace(/\s+Premium\b/, '')
+    .trim();
+  const parts = s.split(/\s+/);
+  if (parts.length >= 2 && parts.length % 2 === 0) {
+    const half = parts.length / 2;
+    const a = parts.slice(0, half).join(' ');
+    const b = parts.slice(half).join(' ');
+    if (a === b) s = a;
+  }
+  return s;
+}
+
 function extractMutualsList(root, normalizeFn) {
   if (!root) return [];
   const normalize = normalizeFn || ((s) => s);
@@ -44,23 +71,33 @@ function extractMutualsList(root, normalizeFn) {
     if (!card || seenCards.has(card)) continue;
     seenCards.add(card);
 
+    // Result URL: the FIRST `/in/<vanity>/` anchor in the card is always
+    // the card's own subject (the avatar wrapper points to it, the name
+    // link points to it). Subsequent anchors point at mutual-connection
+    // chips (different vanities). Anchor on the first link's href.
     const links = card.querySelectorAll('a[href*="/in/"]');
-    let nameLink = null;
-    for (const a of links) {
-      const t = (a.textContent || '').trim();
-      if (t.length >= 2) { nameLink = a; break; }
-    }
-    if (!nameLink) continue;
-    const href = nameLink.getAttribute('href') || nameLink.href || '';
-    if (!/\/in\/[^/]+/.test(href)) continue;
-    const profileUrl = normalize(nameLink.href || href);
+    if (!links.length) continue;
+    const resultHref = links[0].getAttribute('href') || links[0].href || '';
+    if (!/\/in\/[^/]+/.test(resultHref)) continue;
+    const profileUrl = normalize(links[0].href || resultHref);
     if (seenUrl.has(profileUrl)) continue;
 
-    const text = (nameLink.textContent || '').trim().replace(/\s+/g, ' ');
-    const cleanName = text
-      .replace(/\s*•\s*(1st|2nd|3rd)\b/i, '')
-      .replace(/\s+Premium\b/, '')
-      .trim();
+    // Name text: SHORTEST textContent among the anchors that point at the
+    // result URL. LinkedIn renders 2-3 anchors per card to the same
+    // profile — the photo wrapper (empty text), the name-only link (just
+    // the visible name), and sometimes a wider link that wraps
+    // name+headline+location+followers+mutual-snippet glued together.
+    // Shortest non-empty text = the name-only link.
+    let nameText = '';
+    for (const a of links) {
+      const aHref = a.getAttribute('href') || a.href || '';
+      if (normalize(a.href || aHref) !== profileUrl) continue;
+      const t = (a.textContent || '').trim().replace(/\s+/g, ' ');
+      if (t.length < 2) continue;
+      if (!nameText || t.length < nameText.length) nameText = t;
+    }
+    if (!nameText) continue;
+    const cleanName = sanitizeName(nameText);
     if (!cleanName || cleanName.length < 2) continue;
 
     const imgEl = card.querySelector('img[src*="profile-displayphoto"]');
@@ -83,11 +120,8 @@ function extractMutualsList(root, normalizeFn) {
       if (seenUrl.has(profileUrl)) continue;
       const text = (a.textContent || '').trim().replace(/\s+/g, ' ');
       if (!text || text.length < 2) continue;
-      const cleanName = text
-        .replace(/\s*•\s*(1st|2nd|3rd)\b/i, '')
-        .replace(/\s+Premium\b/, '')
-        .trim();
-      if (!cleanName) continue;
+      const cleanName = sanitizeName(text);
+      if (!cleanName || cleanName.length < 2) continue;
       // Find an avatar in any of the link's ancestor containers (5 levels).
       let avatar = '';
       let node = a.parentElement;

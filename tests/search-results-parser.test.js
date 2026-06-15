@@ -30,6 +30,46 @@ describe('extractMutualsList — pure DOM parsing', () => {
     expect(list[0].name).toBe('Alice Smith');
   });
 
+  it('cuts off everything after "• 1st"/"• 2nd"/"• 3rd" — handles headline glued to the degree marker', () => {
+    // Real captured bug: legacy parser saved
+    //   "Patrice Dussault, s.a.h., b.a. • 1stCommunication consultant…"
+    // because the headline node was rendered with no whitespace between
+    // "1st" and the next character. The new \b-less cut handles this.
+    document.body.innerHTML = `
+      <main>
+        <a href="https://www.linkedin.com/in/patrice/">Patrice Dussault, s.a.h., b.a. • 1stCommunication consultant and keynote speaker | Europe-Canada</a>
+      </main>
+    `;
+    const list = extractMutualsList(document.querySelector('main'), normalizeProfileUrl);
+    expect(list[0].name).toBe('Patrice Dussault, s.a.h., b.a.');
+  });
+
+  it('dedupes immediately-doubled name from SR-only + visible text concatenation', () => {
+    // LinkedIn renders an SR-only accessible label AND visible text inside
+    // the same anchor; textContent concatenates them as "Foo Bar Foo Bar".
+    document.body.innerHTML = `<main><a href="https://www.linkedin.com/in/kanstantsin/">Kanstantsin Hupalau Kanstantsin Hupalau</a></main>`;
+    const list = extractMutualsList(document.querySelector('main'), normalizeProfileUrl);
+    expect(list[0].name).toBe('Kanstantsin Hupalau');
+  });
+
+  it('prefers the SHORTEST-text anchor when a card has both a name-only link AND a wider catch-all link to the same profile', () => {
+    // Real captured bug: card has 3 links to /in/kelsey/ — image wrapper
+    // (empty), name-only ("Kelsey Frick"), and a wider card-click target
+    // wrapping name+headline+followers ("Kelsey Frick💬 Freelance Translation…").
+    // We want the shortest-text one.
+    document.body.innerHTML = `
+      <div role="listitem">
+        <div componentkey="SearchResultsACoAAAk71yABzV4-mgJ_2a4Nips86x1r9JTDhbA">x</div>
+        <a href="https://www.linkedin.com/in/frick-kelsey/"><img src="x"/></a>
+        <a href="https://www.linkedin.com/in/frick-kelsey/">Kelsey Frick💬 Freelance Translation Account Manager | French to English Subtitling Specialist | Social Media Consultant 🤳🏻Glasgow, Scotland, United Kingdom30K followers</a>
+        <a href="https://www.linkedin.com/in/frick-kelsey/">Kelsey Frick</a>
+      </div>
+    `;
+    const list = extractMutualsList(document.body, normalizeProfileUrl);
+    expect(list).toHaveLength(1);
+    expect(list[0].name).toBe('Kelsey Frick');
+  });
+
   it('dedupes by canonical profileUrl when multiple anchors point to the same profile', () => {
     // Real LinkedIn renders the name anchor and avatar anchor as separate
     // <a> tags both pointing to the same profile.
