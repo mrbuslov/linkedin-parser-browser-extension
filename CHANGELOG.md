@@ -11,16 +11,29 @@ In development for the next release. See [plan.md](plan.md) for the prioritized 
 ## [1.2.7] — 2026-06-15
 
 ### Fixed
-- **Avatar pointed at the wrong person on profiles that have no photo.**
-  Real case: Costa Vasili has no profile photo on LinkedIn — LinkedIn
-  shows a default person-accent SVG placeholder instead. The legacy
-  parser scanned for the first `<img src=…profile-displayphoto…>` in the
-  top-card section and grabbed a stranger's avatar from a "People also
-  view" carousel that lives inside the top card. New extraction anchors
-  on `aria-label="Profile photo"` — LinkedIn's own accessibility marker,
+- **Avatar grabbed a stranger's face on profiles with framed photos
+  (Hiring/OpenToWork/Verified badge).** LinkedIn URL for a framed avatar
+  is `profile-framedphoto-*`, not `profile-displayphoto-*` like a plain
+  photo. The first iteration of the avatar fix anchored on
+  `aria-label="Profile photo"` and looked for `img[src*="profile-
+  displayphoto"]` inside — which missed Costa Vasili's actual avatar
+  (he uses the Hiring frame, so his img has `profile-framedphoto`).
+  Result: parser said "Costa has no photo" and stored empty. New rule:
+  inside the Profile photo anchor, accept any `<img src*=".licdn.com">`
+  — anchor scope is narrow enough that the only matching img is the
+  user's actual avatar regardless of which photo-URL variant LinkedIn
+  picked. Fallback path also broadened from `profile-displayphoto` only
+  to `profile-(display|framed)photo`.
+- **Avatar pointed at the wrong person on profiles that genuinely have
+  no photo.** Real case: a profile with no photo where LinkedIn renders
+  a person-accent SVG placeholder. The legacy parser scanned for the
+  first `<img src=…profile-displayphoto…>` in the top-card section and
+  grabbed a stranger's avatar from a "People also view" carousel that
+  lives inside the top card. New extraction anchors on
+  `aria-label="Profile photo"` — LinkedIn's own accessibility marker,
   exactly one per profile, language-stable. Inside that element:
-  - If there's an `<img profile-displayphoto>` → that IS the canonical
-    photo URL. Use it.
+  - If there's an `<img>` from media.licdn.com → that IS the canonical
+    photo URL (covers both displayphoto and framedphoto variants). Use it.
   - If there's only an SVG (placeholder) → user has no photo. Record an
     empty string AFFIRMATIVELY (with `avatarConfirmed=true`) so the
     refresh policy clears any stale wrong URL we captured earlier.

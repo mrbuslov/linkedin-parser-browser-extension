@@ -7,11 +7,11 @@ import { JSDOM } from 'jsdom';
 function extractAvatar(root) {
   const photoAnchor = root.querySelector('[aria-label="Profile photo"]');
   if (photoAnchor) {
-    const img = photoAnchor.querySelector('img[src*="profile-displayphoto"]');
-    return img ? img.src : '';
+    const img = photoAnchor.querySelector('img[src*=".licdn.com/"]');
+    return img && img.src ? img.src : '';
   }
   for (const img of root.querySelectorAll('img[src]')) {
-    if (img.src.includes('profile-displayphoto')) return img.src;
+    if (/profile-(display|framed)photo/.test(img.src)) return img.src;
   }
   return '';
 }
@@ -50,10 +50,33 @@ describe('avatar extraction — pinned to aria-label="Profile photo" anchor', ()
     expect(extractAvatar(dom.window.document.querySelector('main'))).toBe('');
   });
 
-  it('costa-vasili real-HTML fixture: returns empty (he has no profile photo)', () => {
+  it('returns the framedphoto URL (Hiring/OpenToWork/Verified frame) when present alongside SVG placeholder', () => {
+    // Real Costa Vasili case: LinkedIn renders the SVG placeholder PLUS
+    // the actual user photo overlaid on top inside the same Profile photo
+    // anchor. The user uses LinkedIn's Hiring frame around their photo,
+    // so the URL pattern is `profile-framedphoto` (not displayphoto).
+    // Earlier version of this parser only matched `profile-displayphoto`
+    // and missed the framed variant — saved empty / a stranger's avatar.
+    const dom = new JSDOM(`
+      <body>
+        <main>
+          <div aria-label="Profile photo">
+            <figure><svg id="person-accent-4"></svg></figure>
+            <img class="overlay" src="https://media.licdn.com/dms/image/v2/D5635AQHPGzLx4rhMvQ/profile-framedphoto-shrink_200_200/x.jpg"/>
+          </div>
+        </main>
+      </body>
+    `);
+    expect(extractAvatar(dom.window.document.querySelector('main')))
+      .toContain('profile-framedphoto');
+  });
+
+  it('costa-vasili real-HTML fixture: returns the framedphoto URL inside the Profile photo anchor', () => {
     const html = readFileSync('tests/fixtures/costa-vasili-topcard.html', 'utf8');
     const dom = new JSDOM(html);
-    expect(extractAvatar(dom.window.document.body)).toBe('');
+    const url = extractAvatar(dom.window.document.body);
+    expect(url).toMatch(/profile-framedphoto/);
+    expect(url).toContain('D5635AQHPGzLx4rhMvQ');
   });
 
   it('falls back to legacy first-displayphoto-in-scope when the Profile photo anchor is missing entirely', () => {

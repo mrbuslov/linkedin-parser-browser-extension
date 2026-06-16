@@ -122,12 +122,22 @@ function extractProfileInfo() {
   // means we couldn't find the canonical anchor — fall back to the legacy
   // pick and treat the result as best-effort (don't overwrite a stored
   // good value with our guess).
+  //
+  // Inside the `aria-label="Profile photo"` anchor LinkedIn renders both a
+  // person-accent SVG placeholder AND the actual <img> overlaid on top
+  // (placeholder hides via CSS once the img has loaded). We accept the
+  // photo whether it's a plain `profile-displayphoto` (no badge) OR a
+  // `profile-framedphoto` (LinkedIn Hiring/OpenToWork/Verified frame
+  // around the photo — same actual user image, different URL path).
+  // Both patterns share the `profile-` prefix and live on
+  // media.licdn.com; the anchor scope is already narrow enough that any
+  // `<img src*=licdn.com>` inside it IS the user's avatar.
   let avatarConfirmed = false;
   const photoAnchor = root.querySelector('[aria-label="Profile photo"]');
   if (photoAnchor) {
     avatarConfirmed = true;
-    const img = photoAnchor.querySelector('img[src*="profile-displayphoto"]');
-    if (img) avatar = img.src;
+    const img = photoAnchor.querySelector('img[src*=".licdn.com/"]');
+    if (img && img.src) avatar = img.src;
     // Else: avatar stays '' — the user has no profile photo. The empty
     // string is the AFFIRMATIVE answer; refreshMetadata writes it back to
     // clear any stale wrong avatar we may have captured previously.
@@ -136,7 +146,7 @@ function extractProfileInfo() {
     // hasn't hydrated). Fall back to the legacy in-scope pick. Not
     // confirmed — if stale, future tick with the anchor present will fix it.
     for (const img of scope.querySelectorAll('img[src]')) {
-      if (img.src.includes('profile-displayphoto')) {
+      if (/profile-(display|framed)photo/.test(img.src)) {
         avatar = img.src;
         break;
       }
