@@ -86,7 +86,19 @@ function applyActivityFields(target, prev, info) {
 //     name change picks up on the next clean tick.
 function refreshMetadata(target, info) {
   let changed = false;
-  if (info.avatar      && info.avatar   !== target.avatar)        { target.avatar = info.avatar; changed = true; }
+  // Avatar policy:
+  //   info.avatarConfirmed === true → AFFIRMATIVE answer from the
+  //     `aria-label="Profile photo"` anchor. Write info.avatar verbatim
+  //     (even if empty — that means the user genuinely has no photo, and
+  //     any stored stale wrong URL we captured earlier should be cleared).
+  //   info.avatarConfirmed === false → best-effort fallback pick. Only
+  //     overwrite when fresh value is non-empty AND different (legacy
+  //     lazy-load guard: don't wipe a known-good URL with a mid-render '').
+  if (info.avatarConfirmed) {
+    if (info.avatar !== target.avatar) { target.avatar = info.avatar || ''; changed = true; }
+  } else if (info.avatar && info.avatar !== target.avatar) {
+    target.avatar = info.avatar; changed = true;
+  }
   if (info.headline    && info.headline !== target.headline)      { target.headline = info.headline; changed = true; }
   if (info.location    && info.location !== target.location)      { target.location = info.location; changed = true; }
   if (info.country     && info.country  !== target.country)       { target.country  = info.country;  changed = true; }
@@ -208,11 +220,18 @@ function applyProfileVisit(stored, info, status, now, contactInfo) {
   }
   if (prev.contactsCapturedAt) carriedContactFields.contactsCapturedAt = prev.contactsCapturedAt;
 
+  // Avatar in contacts rebuild: respect info.avatarConfirmed. When the
+  // affirmative anchor says "no photo" (info.avatarConfirmed && !info.avatar),
+  // write empty — don't fall back to prev.avatar which may be a stale
+  // wrong URL we captured before the anchor-based fix.
+  const newAvatar = info.avatarConfirmed
+    ? (info.avatar || '')
+    : (info.avatar || prev.avatar || '');
   contacts[profileUrl] = {
     profileUrl,
     name: info.name,
     headline: info.headline || prev.headline || '',
-    avatar: info.avatar || prev.avatar || '',
+    avatar: newAvatar,
     location: info.location || prev.location || '',
     country: info.country || prev.country || '',
     connected: status === 'connected',

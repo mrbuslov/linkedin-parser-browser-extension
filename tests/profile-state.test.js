@@ -690,6 +690,48 @@ describe('applyProfileVisit — metadata refresh policy (1.2.7 change)', () => {
   // (avatar, headline, location, country, mutuals*) overwrites when
   // fresh non-empty value differs from stored.
 
+  it('clears stored stale avatar when avatarConfirmed=true and fresh=empty (Costa case)', () => {
+    // Costa Vasili case: LinkedIn shows aria-label="Profile photo" wrapping
+    // an SVG placeholder — the user has no photo. The extractor now returns
+    // info.avatar="" with avatarConfirmed=true. The stored field should be
+    // cleared so the popup stops displaying a stranger's avatar we'd
+    // grabbed from elsewhere in the top card on an earlier visit.
+    const stored = {
+      sentInvitations: {
+        'https://www.linkedin.com/in/jane/': {
+          profileUrl: 'https://www.linkedin.com/in/jane/',
+          name: 'Jane Doe',
+          avatar: 'https://media.licdn.com/STRANGERS_FACE/profile-displayphoto.jpg',
+          firstSeenAt: NOW - 10 * DAY,
+        },
+      },
+    };
+    const r = applyProfileVisit(stored, info({
+      avatar: '',
+      avatarConfirmed: true,
+    }), 'pending', NOW);
+    expect(r.sentInvitations['https://www.linkedin.com/in/jane/'].avatar).toBe('');
+  });
+
+  it('preserves stored avatar when avatarConfirmed=false and fresh=empty (lazy-load guard)', () => {
+    const stored = {
+      sentInvitations: {
+        'https://www.linkedin.com/in/jane/': {
+          profileUrl: 'https://www.linkedin.com/in/jane/',
+          name: 'Jane Doe',
+          avatar: 'https://media.licdn.com/known-good.jpg',
+          firstSeenAt: NOW - 10 * DAY,
+        },
+      },
+    };
+    const r = applyProfileVisit(stored, info({
+      avatar: '',
+      avatarConfirmed: false,
+    }), 'pending', NOW);
+    expect(r.sentInvitations['https://www.linkedin.com/in/jane/'].avatar)
+      .toBe('https://media.licdn.com/known-good.jpg');
+  });
+
   it('overwrites avatar on a subsequent visit when LinkedIn returns a different URL', () => {
     const stored = {
       sentInvitations: {

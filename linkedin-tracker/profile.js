@@ -103,22 +103,43 @@ function extractProfileInfo() {
   globalThis.LITStripName = stripNamePrefix;
   const headline = LITPopupLogic.extractHeadlineFromScope(scope, heading, name);
 
-  // Avatar: LinkedIn profile photos always carry `profile-displayphoto` in their
-  // URL — language-stable and survives class renames. Scope to top-card so we
-  // don't pick up a mutual-connection's avatar from the sidebar.
+  // Avatar: pin to LinkedIn's own accessibility anchor — every profile page
+  // renders exactly ONE `aria-label="Profile photo"` element. When the user
+  // has a photo, that element contains an `<img src=…profile-displayphoto…>`
+  // — that IS the canonical profile photo URL. When the user has NO photo
+  // (LinkedIn renders a default `<svg id="person-accent-…">` placeholder
+  // instead), the element contains no img → we record avatar="". Anything
+  // else in scope tagged with `profile-displayphoto` is from a sidebar
+  // widget / featured-item carousel / etc. and would be wrong.
+  //
+  // Real failure this rule prevents: a profile with NO photo where the
+  // legacy "first profile-displayphoto in main" picker grabbed a stranger's
+  // avatar from a "People who view this profile also view" carousel inside
+  // the top card and stored it as the user's avatar (Costa Vasili case).
   let avatar = '';
-  for (const img of scope.querySelectorAll('img[src]')) {
-    if (img.src.includes('profile-displayphoto')) {
-      avatar = img.src;
-      break;
-    }
-  }
-  if (!avatar && heading) {
-    let parent = heading.parentElement;
-    for (let i = 0; i < 6 && parent && !avatar; i++) {
-      const img = parent.querySelector('img[src]');
-      if (img?.src && !img.src.startsWith('data:')) avatar = img.src;
-      parent = parent.parentElement;
+  // avatarConfirmed=true means we have an AFFIRMATIVE answer (either a real
+  // URL or a verified "no photo" SVG placeholder). avatarConfirmed=false
+  // means we couldn't find the canonical anchor — fall back to the legacy
+  // pick and treat the result as best-effort (don't overwrite a stored
+  // good value with our guess).
+  let avatarConfirmed = false;
+  const photoAnchor = root.querySelector('[aria-label="Profile photo"]');
+  if (photoAnchor) {
+    avatarConfirmed = true;
+    const img = photoAnchor.querySelector('img[src*="profile-displayphoto"]');
+    if (img) avatar = img.src;
+    // Else: avatar stays '' — the user has no profile photo. The empty
+    // string is the AFFIRMATIVE answer; refreshMetadata writes it back to
+    // clear any stale wrong avatar we may have captured previously.
+  } else {
+    // Anchor missing entirely (LinkedIn changed the aria-label or DOM
+    // hasn't hydrated). Fall back to the legacy in-scope pick. Not
+    // confirmed — if stale, future tick with the anchor present will fix it.
+    for (const img of scope.querySelectorAll('img[src]')) {
+      if (img.src.includes('profile-displayphoto')) {
+        avatar = img.src;
+        break;
+      }
     }
   }
 
@@ -137,6 +158,7 @@ function extractProfileInfo() {
     name,
     headline,
     avatar,
+    avatarConfirmed,
     location,
     country,
     memberId,
@@ -184,7 +206,13 @@ async function persistVisit() {
     nudgeCache = { url: null, hasContacts: null };
   }
 
+  const stored2 = await dbGet(['sentInvitations', 'accepted']);
+  const rec = stored2.sentInvitations?.[info.profileUrl]
+           || stored2.accepted?.[info.profileUrl]
+           || {};
   console.log(`[LI Tracker] visited ${info.name} (${status})`);
+  console.log(`[LI Tracker]   fresh avatar : ${info.avatar?.slice(0, 90) || '(empty)'}`);
+  console.log(`[LI Tracker]   stored avatar: ${rec.avatar?.slice(0, 90) || '(empty)'}`);
 }
 
 // LinkedIn-style in-page confirmation that runs only when the user has actually

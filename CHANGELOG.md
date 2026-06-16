@@ -11,6 +11,22 @@ In development for the next release. See [plan.md](plan.md) for the prioritized 
 ## [1.2.7] — 2026-06-15
 
 ### Fixed
+- **Avatar pointed at the wrong person on profiles that have no photo.**
+  Real case: Costa Vasili has no profile photo on LinkedIn — LinkedIn
+  shows a default person-accent SVG placeholder instead. The legacy
+  parser scanned for the first `<img src=…profile-displayphoto…>` in the
+  top-card section and grabbed a stranger's avatar from a "People also
+  view" carousel that lives inside the top card. New extraction anchors
+  on `aria-label="Profile photo"` — LinkedIn's own accessibility marker,
+  exactly one per profile, language-stable. Inside that element:
+  - If there's an `<img profile-displayphoto>` → that IS the canonical
+    photo URL. Use it.
+  - If there's only an SVG (placeholder) → user has no photo. Record an
+    empty string AFFIRMATIVELY (with `avatarConfirmed=true`) so the
+    refresh policy clears any stale wrong URL we captured earlier.
+  Fallback to the legacy in-scope pick only when the anchor is missing
+  entirely (sets `avatarConfirmed=false` so a stored good value isn't
+  wiped by a mid-render best-effort empty read).
 - **Stale avatar / metadata never refreshed.** When a LinkedIn user
   updated their photo, headline, location, etc., the extension kept
   showing the original values we captured on the first visit. Root: the
