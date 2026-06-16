@@ -682,6 +682,75 @@ describe('applyProfileVisit — contact info modal integration', () => {
   });
 });
 
+describe('applyProfileVisit — metadata refresh policy (1.2.7 change)', () => {
+  // Real complaint: "the photo saved in Pending differs from what's
+  // actually on the LinkedIn profile." Root cause was the avatar field
+  // being "set-only-if-empty" — once captured, it never refreshed even
+  // if the person updated their photo. New policy: every metadata field
+  // (avatar, headline, location, country, mutuals*) overwrites when
+  // fresh non-empty value differs from stored.
+
+  it('overwrites avatar on a subsequent visit when LinkedIn returns a different URL', () => {
+    const stored = {
+      sentInvitations: {
+        'https://www.linkedin.com/in/jane/': {
+          profileUrl: 'https://www.linkedin.com/in/jane/',
+          name: 'Jane Doe',
+          avatar: 'https://media.licdn.com/old-profile-displayphoto.jpg',
+          firstSeenAt: NOW - 10 * DAY,
+        },
+      },
+    };
+    const r = applyProfileVisit(stored, info({
+      avatar: 'https://media.licdn.com/new-profile-displayphoto.jpg',
+    }), 'pending', NOW);
+    expect(r.sentInvitations['https://www.linkedin.com/in/jane/'].avatar)
+      .toBe('https://media.licdn.com/new-profile-displayphoto.jpg');
+  });
+
+  it('does NOT wipe a stored avatar when the current tick yields empty (lazy-load guard)', () => {
+    const stored = {
+      sentInvitations: {
+        'https://www.linkedin.com/in/jane/': {
+          profileUrl: 'https://www.linkedin.com/in/jane/',
+          name: 'Jane Doe',
+          avatar: 'https://media.licdn.com/known-good.jpg',
+          firstSeenAt: NOW - 10 * DAY,
+        },
+      },
+    };
+    const r = applyProfileVisit(stored, info({ avatar: '' }), 'pending', NOW);
+    expect(r.sentInvitations['https://www.linkedin.com/in/jane/'].avatar)
+      .toBe('https://media.licdn.com/known-good.jpg');
+  });
+
+  it('overwrites headline/location/country/mutuals when fresh non-empty value differs', () => {
+    const stored = {
+      sentInvitations: {
+        'https://www.linkedin.com/in/jane/': {
+          profileUrl: 'https://www.linkedin.com/in/jane/',
+          name: 'Jane Doe',
+          headline: 'Old headline',
+          location: 'Berlin, Germany',
+          country: 'Germany',
+          mutualsCount: 3,
+          firstSeenAt: NOW - 10 * DAY,
+        },
+      },
+    };
+    const r = applyProfileVisit(stored, info({
+      headline: 'New headline',
+      location: 'Munich, Germany',
+      country: 'Germany',
+      mutualsCount: 7,
+    }), 'pending', NOW);
+    const rec = r.sentInvitations['https://www.linkedin.com/in/jane/'];
+    expect(rec.headline).toBe('New headline');
+    expect(rec.location).toBe('Munich, Germany');
+    expect(rec.mutualsCount).toBe(7);
+  });
+});
+
 describe('applyProfileVisit — activity fields', () => {
   function activityInfo(overrides = {}) {
     return info({

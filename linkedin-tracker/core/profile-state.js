@@ -69,21 +69,24 @@ function applyActivityFields(target, prev, info) {
   target.lastPostAt     = pickNewer(prevLP, info.lastPostAt     || null);
 }
 
-// Refresh field policy:
-//   - name → never overwrite here (identity is sticky; mid-render bad names
-//     would corrupt it; cross-URL dedup handles legitimate name changes)
-//   - headline / location / country → ALWAYS overwrite when we have a fresh
-//     non-empty value. The extractor is now deterministically clean (skips
-//     video.js placeholders, degree badges, name-glued SR text), so the
-//     latest visit is the freshest truth. Old "first non-empty wins" policy
-//     left stale junk like "Video Player is loading." permanently stuck.
-//   - avatar → only set if currently empty. LinkedIn lazy-loads cover/photo
-//     images, so a mid-render scrape can yield "" — we don't want to wipe
-//     a known-good URL with empty.
-//   - mutuals* → overwrite when fresh value differs. Counts drift naturally.
+// Refresh field policy: "fresh non-empty value wins, always."
+//   - The DOM extractor in profile.js is now deterministic (anchors on
+//     stable aria-labels, RSC payload, top-card scope) — when it yields a
+//     non-empty value, that's the freshest truth on the live profile.
+//     LinkedIn users DO change their photo, headline, location, etc.; we
+//     must reflect that, not freeze on the first capture.
+//   - The `info.X` truthy guard keeps mid-render empty reads from wiping
+//     known-good stored data. Empty stays empty (no overwrite); non-empty
+//     and DIFFERENT triggers update.
+//   - name is intentionally NOT refreshed here. Identity-level mutations
+//     (legal name changes) are rare; mid-render bogus "name" reads are
+//     not — keeping name sticky avoids one whole class of corruption. The
+//     applyProfileVisit branches still write `info.name` directly into
+//     fresh records (sent/accepted creation, contacts rebuild) so a real
+//     name change picks up on the next clean tick.
 function refreshMetadata(target, info) {
   let changed = false;
-  if (info.avatar      && !target.avatar)                         { target.avatar = info.avatar; changed = true; }
+  if (info.avatar      && info.avatar   !== target.avatar)        { target.avatar = info.avatar; changed = true; }
   if (info.headline    && info.headline !== target.headline)      { target.headline = info.headline; changed = true; }
   if (info.location    && info.location !== target.location)      { target.location = info.location; changed = true; }
   if (info.country     && info.country  !== target.country)       { target.country  = info.country;  changed = true; }

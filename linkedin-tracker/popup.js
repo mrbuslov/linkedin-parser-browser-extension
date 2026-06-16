@@ -195,9 +195,12 @@ function renderPending(rawItems) {
     ? ''
     : searchQuery
       ? `${filtered.length} of ${items.length} match`
-      : `${items.length} pending · sorted oldest first`;
+      : `${items.length} pending · sorted newest first`;
 
-  const sorted = filtered.slice().sort((a, b) => a.firstSeenAt - b.firstSeenAt);
+  // Newest first: invitations sent recently appear at the top. Old
+  // long-pending ones drift to the bottom (and the row's age class still
+  // visually flags them, regardless of position).
+  const sorted = filtered.slice().sort((a, b) => b.firstSeenAt - a.firstSeenAt);
   for (const item of sorted) list.append(renderPendingRow(item));
 }
 

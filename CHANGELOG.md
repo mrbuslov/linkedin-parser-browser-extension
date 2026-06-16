@@ -8,6 +8,28 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
+## [1.2.7] — 2026-06-15
+
+### Fixed
+- **Stale avatar / metadata never refreshed.** When a LinkedIn user
+  updated their photo, headline, location, etc., the extension kept
+  showing the original values we captured on the first visit. Root: the
+  refresh-metadata policy was "set-only-if-empty" for avatar — once a
+  non-empty URL was stored, no subsequent visit could overwrite it.
+  Headline / location / country / mutuals* already updated on every
+  fresh non-empty read; avatar is now aligned with that same rule. Empty
+  fresh reads (mid-render lazy-load) still don't wipe known-good stored
+  data, so this is a pure improvement, no regression on the lazy-load
+  edge case.
+
+### Changed
+- **Pending list sorts newest-first.** New invitations appear at the top
+  of the Pending tab instead of the bottom, so you can immediately
+  confirm that an invite you just sent was captured. Long-pending ones
+  drift to the bottom (their row-age color class still flags them no
+  matter where they sit in the list). Summary text updated to "sorted
+  newest first."
+
 ## [1.2.6] — 2026-06-15
 
 ### Fixed (search-results parser hardening)
