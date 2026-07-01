@@ -180,6 +180,7 @@ async function diffAndPersist(snapshot) {
     stored.contacts = result.contacts;
     stored.scanHistory = result.scanHistory;
     await dbSet(stored);
+    await dbDelete(LITSchema.LEGACY_STORE_KEYS);
   } else {
     await dbSet({
       contacts: result.contacts,

@@ -412,6 +412,7 @@ async function ensureSchemaV2() {
   const migrated = LITSchema.migrateToV2(stored);
   migrated._backup_v1._migratedAt = Date.now();
   await dbSet(migrated);
+  await dbDelete(LITSchema.LEGACY_STORE_KEYS);
   console.log('[LI Tracker] popup migrated storage to v2.');
 }
 

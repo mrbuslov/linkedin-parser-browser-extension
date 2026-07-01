@@ -13,6 +13,10 @@ async function dbSet(data) {
   await chrome.runtime.sendMessage({ type: 'DB_SET', data });
 }
 
+async function dbDelete(keys) {
+  await chrome.runtime.sendMessage({ type: 'DB_DELETE', keys });
+}
+
 async function dbClear() {
   await chrome.runtime.sendMessage({ type: 'DB_CLEAR' });
 }
@@ -21,4 +25,5 @@ async function dbClear() {
 // can see them, and so ESLint stops warning "defined but never used".
 globalThis.dbGet = dbGet;
 globalThis.dbSet = dbSet;
+globalThis.dbDelete = dbDelete;
 globalThis.dbClear = dbClear;

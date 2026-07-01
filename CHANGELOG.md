@@ -36,6 +36,15 @@ In development for the next release. See [plan.md](plan.md) for the prioritized 
   defensive backstop. Idempotent — a v2 storage passes through unchanged.
   A `_backup_v1` snapshot of the pre-migration state is saved in IDB as
   a disaster-recovery net (never touched again unless the user needs it).
+- **Legacy IDB keys physically removed.** The two v1 top-level keys
+  (`sentInvitations`, `accepted`) are deleted from IndexedDB during
+  migration — not just overwritten with `{}`. New `dbDelete(keys)` in
+  the db-client wraps a `DB_DELETE` message. In the service worker the
+  put-migrated + delete-legacy pair runs in a single readwrite
+  transaction to avoid a half-migrated state (schemaVersion=2 with
+  legacy keys still lingering forever, since next boot would short-
+  circuit as v2 and never clean up). Popup and content-script guards
+  chain the same delete after their fallback dbSet.
 - **Backward-compat import.** A v1 JSON backup file (with
   `version: 1` and `data.sentInvitations` / `data.accepted` top-level
   keys) is auto-detected on import and migrated in-memory before writing

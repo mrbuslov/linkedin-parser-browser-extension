@@ -36,6 +36,7 @@ export default [
         // db-client.js exposes these
         dbGet: 'readonly',
         dbSet: 'readonly',
+        dbDelete: 'readonly',
         dbClear: 'readonly',
       },
     },

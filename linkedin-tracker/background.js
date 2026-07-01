@@ -78,6 +78,20 @@ async function dbSet(data) {
   notifyChange(Object.keys(data));
 }
 
+async function dbDelete(keys) {
+  const keyList = Array.isArray(keys) ? keys : [keys];
+  if (keyList.length === 0) return;
+  const db = await openDB();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    const store = tx.objectStore(STORE);
+    for (const k of keyList) store.delete(k);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  notifyChange(keyList);
+}
+
 async function dbClear() {
   const db = await openDB();
   await new Promise((resolve, reject) => {
@@ -134,6 +148,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     dbSet(msg.data).then(() => sendResponse(true), (e) => { console.error('[LI Tracker] DB_SET', e); sendResponse(false); });
     return true;
   }
+  if (msg?.type === 'DB_DELETE') {
+    dbDelete(msg.keys).then(() => sendResponse(true), (e) => { console.error('[LI Tracker] DB_DELETE', e); sendResponse(false); });
+    return true;
+  }
   if (msg?.type === 'DB_CLEAR') {
     dbClear().then(() => sendResponse(true), (e) => { console.error('[LI Tracker] DB_CLEAR', e); sendResponse(false); });
     return true;
@@ -161,7 +179,20 @@ async function runStorageMigration() {
     if (LITSchema.isV2(stored)) return;
     const migrated = LITSchema.migrateToV2(stored);
     migrated._backup_v1._migratedAt = Date.now();
-    await dbSet(migrated);
+    // Atomic: put every migrated top-level key AND delete the legacy
+    // ones in a single readwrite tx, so we never end at a half-state
+    // (schemaVersion=2 but legacy keys still there — next boot would
+    // treat storage as v2 and never clean them up).
+    const db = await openDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      const store = tx.objectStore(STORE);
+      for (const [k, v] of Object.entries(migrated)) store.put(v, k);
+      for (const k of LITSchema.LEGACY_STORE_KEYS) store.delete(k);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    notifyChange([...Object.keys(migrated), ...LITSchema.LEGACY_STORE_KEYS]);
     console.log('[LI Tracker] migrated storage to v2 (contacts unified).');
   } catch (err) {
     console.error('[LI Tracker] storage migration failed:', err);

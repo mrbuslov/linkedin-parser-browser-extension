@@ -217,8 +217,8 @@ function buildUnifiedContacts(v1) {
 //   - `contacts` — unified v2 dict
 //   - `schemaVersion: 2`
 //   - `_backup_v1` — snapshot of pre-migration state for disaster recovery
-//   - `sentInvitations: {}` and `accepted: {}` — cleared but keys retained
-//     (deleting them via db-client is more work than the empty payload)
+//   - `sentInvitations` and `accepted` ABSENT (callers must delete these
+//     IDB keys separately — see LEGACY_STORE_KEYS)
 //   - all OTHER top-level keys (scanHistory, scanState, scanInProgress,
 //     settings) passed through unchanged
 function migrateToV2(stored) {
@@ -237,10 +237,16 @@ function migrateToV2(stored) {
   out.contacts = unified;
   out.schemaVersion = 2;
   out._backup_v1 = backup;
-  out.sentInvitations = {};
-  out.accepted = {};
+  delete out.sentInvitations;
+  delete out.accepted;
   return out;
 }
+
+// The v1 top-level IDB keys that are gone in v2. Callers use this to
+// physically delete them from IDB after writing the migrated state — a
+// dbSet cannot remove keys, only overwrite, so leaving them out of
+// migrateToV2's return is not enough on its own.
+const LEGACY_STORE_KEYS = Object.freeze(['sentInvitations', 'accepted']);
 
 // Detect whether an imported JSON backup is v1-shaped. Used by the import
 // path so we can run the same migration on incoming data before writing.
@@ -263,6 +269,7 @@ const LITSchema = {
   STATUS,
   ALL_STATUSES,
   DROPPED_FIELDS,
+  LEGACY_STORE_KEYS,
   migrateToV2,
   buildUnifiedContacts,
   isV2,

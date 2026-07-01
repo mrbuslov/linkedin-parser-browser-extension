@@ -338,14 +338,19 @@ describe('migrateToV2 — end-to-end wrapper', () => {
     expect(out._backup_v1.contacts).toEqual({ 'c': contactRec('c') });
   });
 
-  it('clears sentInvitations and accepted keys to empty objects post-migration', () => {
+  it('removes legacy sentInvitations and accepted keys from migrated output', () => {
     const stored = v1({
       sentInvitations: { 'a': sentRec('a') },
       accepted: { 'b': acceptedRec('b') },
     });
     const out = migrateToV2(stored);
-    expect(out.sentInvitations).toEqual({});
-    expect(out.accepted).toEqual({});
+    // The v2 storage shape has NO legacy top-level keys — callers must
+    // delete them from IDB after writing (see LEGACY_STORE_KEYS + the
+    // atomic migration tx in background.js).
+    expect(out.sentInvitations).toBeUndefined();
+    expect(out.accepted).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(out, 'sentInvitations')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(out, 'accepted')).toBe(false);
   });
 
   it('idempotent: v2 input returns unchanged (no double-backup)', () => {
