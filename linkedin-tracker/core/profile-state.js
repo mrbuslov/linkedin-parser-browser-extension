@@ -1,18 +1,37 @@
 // Pure state-transition function for a single profile visit.
-// Caller (profile.js content script) has the raw DOM-scraped `info` and a
-// `status` from detectConnectionStatus(). This function applies the "one bucket
-// at a time" invariant: each profileUrl lives in EITHER sentInvitations OR
-// accepted OR neither (only in contacts) — never both.
 //
-// Returns the mutated stores plus changed flags so the caller can skip writes
-// that didn't touch certain keys (small perf optimization for IndexedDB).
+// v2 (unified `contacts` store): every profile lives in ONE dict keyed by
+// profileUrl. Each entry has a `status` field:
+//   'pending'  — invite sent, awaiting response
+//   'accepted' — 1st-degree connection
+//   'declined' — invite withdrawn/rejected OR we later saw them as
+//                not-connected without canonical /connections/ proof
+//   'visited'  — we saw the profile but never invited and it's not a connection
+//
+// Invariants preserved from v1:
+//   - `connectedOnText` guard: an entry whose status has been canonically
+//     confirmed via the /connections/ scan is NEVER downgraded by a
+//     transient profile-page read that says "not_connected".
+//   - Cross-URL dedup by memberId: if the same LinkedIn member appears
+//     under a NEW URL (person changed their vanity), we merge histories
+//     and drop the stale URL.
+//   - "One record per profileUrl" is now trivial — one dict, one key.
+//   - Contact-info modal data is on the same entry as everything else
+//     (used to be in `contacts`, joined by URL on read).
 
 const DAY_MS = 86400000;
 
-// Single source of truth for "metadata fields that flow from info into any
-// record we create or update". Keeps sentInvitations / accepted / contacts
-// in sync — every store gets the same shape, no field gets silently dropped
-// because we forgot to copy it into one specific branch.
+const STATUS = {
+  PENDING:  'pending',
+  ACCEPTED: 'accepted',
+  DECLINED: 'declined',
+  VISITED:  'visited',
+};
+
+// Metadata fields that flow from `info` (DOM extraction) into any record
+// we create. Kept as a single source of truth so a new metadata field
+// added to the extractor propagates through every write path with one
+// edit here.
 function metadataFromInfo(info) {
   const out = {
     headline:     info.headline     || '',
@@ -31,10 +50,8 @@ function metadataFromInfo(info) {
   return out;
 }
 
-// Inline merge of recentActivity[] — kept here (not imported from
-// activity-parser.js) so profile-state.js remains a standalone module that
-// jsdom tests can import without dragging the DOM-scraping parser into Node.
-// Dedupe by urnActivityId, sort desc by postedAt, cap at 5.
+// Inline merge of recentActivity[]. Dedupe by urnActivityId (fresh wins
+// on collision), sort by postedAt desc, cap at 5.
 function mergeRecentActivityInline(existing, fresh, max = 5) {
   const byUrn = new Map();
   for (const c of existing || []) {
@@ -49,13 +66,9 @@ function mergeRecentActivityInline(existing, fresh, max = 5) {
     .slice(0, max);
 }
 
-// Apply fresh activity fields onto `target` given `prev` as the previous
-// snapshot. Three semantics:
-//   - recentActivity → merge (URN dedupe, prefer fresh on collision, cap 5).
-//   - lastActivityAt / lastPostAt → keep the LATER of (prev, fresh). The
-//     fresh value is the freshest of the 5 currently rendered cards; the
-//     stored value is the freshest we've ever seen on this profile. Either
-//     could be more recent depending on whether the user posted since.
+// Apply fresh activity fields onto `target`, preserving history:
+//   - recentActivity → merge (URN dedupe, prefer fresh on collision).
+//   - lastActivityAt / lastPostAt → keep the LATER of (prev, fresh).
 function applyActivityFields(target, prev, info) {
   if (!target) return;
   const prevList = (prev && prev.recentActivity) || target.recentActivity || [];
@@ -69,31 +82,16 @@ function applyActivityFields(target, prev, info) {
   target.lastPostAt     = pickNewer(prevLP, info.lastPostAt     || null);
 }
 
-// Refresh field policy: "fresh non-empty value wins, always."
-//   - The DOM extractor in profile.js is now deterministic (anchors on
-//     stable aria-labels, RSC payload, top-card scope) — when it yields a
-//     non-empty value, that's the freshest truth on the live profile.
-//     LinkedIn users DO change their photo, headline, location, etc.; we
-//     must reflect that, not freeze on the first capture.
-//   - The `info.X` truthy guard keeps mid-render empty reads from wiping
-//     known-good stored data. Empty stays empty (no overwrite); non-empty
-//     and DIFFERENT triggers update.
-//   - name is intentionally NOT refreshed here. Identity-level mutations
-//     (legal name changes) are rare; mid-render bogus "name" reads are
-//     not — keeping name sticky avoids one whole class of corruption. The
-//     applyProfileVisit branches still write `info.name` directly into
-//     fresh records (sent/accepted creation, contacts rebuild) so a real
-//     name change picks up on the next clean tick.
+// Refresh field policy: fresh non-empty value wins, always.
+//   - Avatar has TWO signals now: info.avatar (URL or '') AND
+//     info.avatarConfirmed (bool). Confirmed=true means we saw the
+//     canonical Profile-photo anchor and can be trusted; confirmed=false
+//     means the anchor was missing (mid-render) and we shouldn't wipe
+//     stored good data with an empty read.
+//   - Name is NOT refreshed here — identity is sticky. `applyProfileVisit`
+//     overwrites name at fresh-record creation and via cross-URL dedup.
 function refreshMetadata(target, info) {
   let changed = false;
-  // Avatar policy:
-  //   info.avatarConfirmed === true → AFFIRMATIVE answer from the
-  //     `aria-label="Profile photo"` anchor. Write info.avatar verbatim
-  //     (even if empty — that means the user genuinely has no photo, and
-  //     any stored stale wrong URL we captured earlier should be cleared).
-  //   info.avatarConfirmed === false → best-effort fallback pick. Only
-  //     overwrite when fresh value is non-empty AND different (legacy
-  //     lazy-load guard: don't wipe a known-good URL with a mid-render '').
   if (info.avatarConfirmed) {
     if (info.avatar !== target.avatar) { target.avatar = info.avatar || ''; changed = true; }
   } else if (info.avatar && info.avatar !== target.avatar) {
@@ -114,32 +112,26 @@ const CONTACT_FIELDS = [
   'address', 'birthday', 'connectedSinceText',
 ];
 
-// Find an existing record in `store` under a DIFFERENT URL that refers to
-// the same person as `targetUrl`. We rely ONLY on memberId — LinkedIn's
-// internal numeric profile ID, which is canonical and unforgeable. Name
-// matching is deliberately NOT used: two different people can share a name,
-// and silently merging them corrupts data with no recovery. If memberId is
-// missing on either side, we simply don't dedup — the user can clean up
-// duplicates manually if they bother them, but we never auto-merge by guess.
-function findDuplicateRecord(store, targetUrl, targetMemberId) {
+// Find an existing record in `contacts` under a DIFFERENT URL that refers
+// to the same LinkedIn member as `targetUrl`. Anchored on `memberId`
+// only — name matching is deliberately never used (two real people can
+// share a name; silent merge corrupts data with no recovery).
+function findDuplicateRecord(contacts, targetUrl, targetMemberId) {
   if (!targetMemberId) return null;
-  for (const [url, rec] of Object.entries(store)) {
+  for (const [url, rec] of Object.entries(contacts)) {
     if (url === targetUrl) continue;
     if (rec.memberId && rec.memberId === targetMemberId) return url;
   }
   return null;
 }
 
-// Migrate the OLD record's fields into the CURRENT record at `targetUrl`,
-// then delete the old key. Used by the cross-URL dedup pass. Current record
-// takes precedence for fresh fields (name, status), but we restore:
-//   - non-empty contact info and metadata from old when current doesn't have it
-//   - earlier firstSeenAt / acceptedAt (real history > current snapshot)
-//   - marked status (don't lose the user's manual action)
-//   - 'accepted' verified status (don't auto-downgrade)
-function mergeIntoTarget(store, oldUrl, targetUrl) {
-  const old = store[oldUrl] || {};
-  const cur = store[targetUrl] || {};
+// Migrate the OLD record's fields into the CURRENT record at `targetUrl`
+// (both under `contacts`), then delete the old key. Current record's
+// STATUS wins (it's the freshest observation), but historical fields
+// from the old record are grafted in where the current lacks them.
+function mergeIntoTarget(contacts, oldUrl, targetUrl) {
+  const old = contacts[oldUrl] || {};
+  const cur = contacts[targetUrl] || {};
   const merged = { ...old, ...cur };
   merged.profileUrl = targetUrl;
   for (const f of ['headline', 'avatar', 'location', 'country', ...CONTACT_FIELDS]) {
@@ -158,22 +150,26 @@ function mergeIntoTarget(store, oldUrl, targetUrl) {
     merged.marked = true;
     if (!cur.markedAt && old.markedAt) merged.markedAt = old.markedAt;
   }
-  if (old.verified === 'accepted' && cur.verified !== 'accepted') {
-    merged.verified = 'accepted';
-    if (!cur.verifiedAt && old.verifiedAt) merged.verifiedAt = old.verifiedAt;
+  if (old.favorite) {
+    merged.favorite = true;
+    if (!cur.favoritedAt && old.favoritedAt) merged.favoritedAt = old.favoritedAt;
+  }
+  // Status: current record's status is the freshest observation. Special
+  // case: a previously-accepted record downgrading to visited should
+  // NOT lose the accepted status without canonical proof (connectedOnText).
+  if (old.status === STATUS.ACCEPTED && cur.status !== STATUS.ACCEPTED && old.connectedOnText) {
+    merged.status = STATUS.ACCEPTED;
   }
   if (old.connectedOnText && !cur.connectedOnText) merged.connectedOnText = old.connectedOnText;
   if (old.connectedOnDate && !cur.connectedOnDate) merged.connectedOnDate = old.connectedOnDate;
-  store[targetUrl] = merged;
-  delete store[oldUrl];
+  // Preserve prior-URL history (useful for debugging vanity-rename cases).
+  merged._priorUrls = merged._priorUrls || [];
+  if (!merged._priorUrls.includes(oldUrl)) merged._priorUrls.push(oldUrl);
+  contacts[targetUrl] = merged;
+  delete contacts[oldUrl];
 }
 
-// Overwrite-on-visit semantics: every time the user opens the Contact info
-// overlay we replace the stored fields with the freshly parsed ones. Simpler
-// than a history log, and the LinkedIn UI is itself the source of truth — if
-// the user edits their phone, we want the latest. We stamp `contactsCapturedAt`
-// so the popup can tell "saved" from "never captured". Returns true iff
-// anything changed in the target record.
+// Overwrite-on-visit semantics for the Contact-info modal fields.
 function applyContactInfo(target, contactInfo, now) {
   if (!contactInfo) return false;
   let changed = false;
@@ -186,220 +182,189 @@ function applyContactInfo(target, contactInfo, now) {
   return changed;
 }
 
+// Main entry point. `stored` is the whole IDB snapshot (v2 shape:
+// `{contacts, schemaVersion, ...}`). Returns { contacts, changed }
+// where `changed` tells the caller whether anything actually mutated
+// (so it can skip the dbSet on quiet ticks).
 function applyProfileVisit(stored, info, status, now, contactInfo) {
   const contacts = { ...(stored.contacts || {}) };
-  const accepted = { ...(stored.accepted || {}) };
-  const sentInvitations = { ...(stored.sentInvitations || {}) };
   const profileUrl = info.profileUrl;
 
-  // CROSS-URL DEDUP — runs BEFORE the per-store branching below so that the
-  // status/contact-info updates land on the merged record, not on a stale
-  // duplicate. Common case fixed: a contact got verified=declined on the
-  // OLD URL (pre-1.2.2 RSC bug), now visited at the NEW URL post-fix and
-  // re-detected as connected. Without dedup we'd leave the old declined
-  // entry orphaned and create a fresh accepted entry under the new URL —
-  // user sees two rows for the same person.
-  let acceptedDedup = false;
-  let sentDedup = false;
-  for (const store of [contacts, accepted, sentInvitations]) {
-    const dupUrl = findDuplicateRecord(store, profileUrl, info.memberId);
-    if (dupUrl) {
-      mergeIntoTarget(store, dupUrl, profileUrl);
-      if (store === accepted) acceptedDedup = true;
-      if (store === sentInvitations) sentDedup = true;
-    }
+  // Cross-URL dedup FIRST so status/contact-info updates land on the
+  // merged record, not on a stale duplicate at the old URL.
+  const dupUrl = findDuplicateRecord(contacts, profileUrl, info.memberId);
+  if (dupUrl) {
+    mergeIntoTarget(contacts, dupUrl, profileUrl);
   }
 
   const prev = contacts[profileUrl] || {};
 
-  // Preserve contact-info fields across visits — even when the modal isn't
-  // open this tick. We only overwrite them via applyContactInfo below.
+  // Preserve fields the current tick cannot re-produce:
+  //   - carriedContactFields: modal fields we captured on a previous
+  //     visit when the user had the overlay open
+  //   - user-authored: notes, tags, favorite, marked
+  //   - source-of-truth timestamps: firstSeenAt, acceptedAt, verifiedAt
+  //     (only earlier values win; never move forward here)
   const carriedContactFields = {};
   for (const f of CONTACT_FIELDS) {
     if (prev[f] !== undefined) carriedContactFields[f] = prev[f];
   }
   if (prev.contactsCapturedAt) carriedContactFields.contactsCapturedAt = prev.contactsCapturedAt;
 
-  // Avatar in contacts rebuild: respect info.avatarConfirmed. When the
-  // affirmative anchor says "no photo" (info.avatarConfirmed && !info.avatar),
-  // write empty — don't fall back to prev.avatar which may be a stale
-  // wrong URL we captured before the anchor-based fix.
-  const newAvatar = info.avatarConfirmed
-    ? (info.avatar || '')
-    : (info.avatar || prev.avatar || '');
-  contacts[profileUrl] = {
+  // Compute the new status and any timestamp side-effects. `observed`
+  // (raw detector output) is passed to timingUpdates separately so the
+  // anti-downgrade guard doesn't accidentally bump verifiedAt on a
+  // not_connected tick that was refused for lack of canonical proof.
+  const newStatus = statusFromVisit(status, prev);
+  const timing = timingUpdates(newStatus, status, prev, now);
+
+  // Build the record. Metadata refresh policy for headline/location/etc.
+  // is applied via metadataFromInfo (write-through); avatar goes through
+  // the explicit refresh helper because it has the avatarConfirmed guard.
+  const next = {
     profileUrl,
-    name: info.name,
-    headline: info.headline || prev.headline || '',
-    avatar: newAvatar,
-    location: info.location || prev.location || '',
-    country: info.country || prev.country || '',
-    connected: status === 'connected',
-    visitedAt: now,
+    // Identity — sticky from prev unless fresh has non-empty.
+    name: info.name || prev.name || '',
+    memberId:   info.memberId   || prev.memberId   || undefined,
+    vanityName: info.vanityName || prev.vanityName || undefined,
+
+    // Timeline
     firstSeenAt: prev.firstSeenAt || now,
+    visitedAt: now,
+
+    // Sticky user flags — carried from prev, tick may override marked/favorite
+    marked:       prev.marked       || false,
+    markedAt:     prev.markedAt     || null,
+    favorite:     prev.favorite     || false,
+    favoritedAt:  prev.favoritedAt  || null,
+
+    // Sent-page shape carried from prev if present
+    lastSeenAt:       prev.lastSeenAt       || null,
+    sentDateRelative: prev.sentDateRelative || '',
+    addedFrom:        prev.addedFrom        || 'profile',
+    withdrawnAt:      prev.withdrawnAt      || null,
+
+    // Welcome tracking
+    welcomeMessageSent: prev.welcomeMessageSent || false,
+
+    // Canonical connection proof carried through
+    connectedOnText: prev.connectedOnText || '',
+    connectedOnDate: prev.connectedOnDate || '',
+
+    // Contact-info modal (carried)
     ...carriedContactFields,
-    // memberId/vanityName from RSC when available — these enable bulletproof
-    // dedup on subsequent visits, even if names don't match or change.
-    ...(info.memberId   && { memberId: info.memberId }),
-    ...(info.vanityName && { vanityName: info.vanityName }),
-    // Mutual-connections deep link + count. Always reflect the freshest visit
-    // when present; preserve previous when this tick didn't surface them
-    // (mid-render or LinkedIn dropped the widget for some reason).
-    mutualsUrl:   info.mutualsUrl   || prev.mutualsUrl   || '',
-    mutualsText:  info.mutualsText  || prev.mutualsText  || '',
-    mutualsCount: info.mutualsCount != null ? info.mutualsCount : (prev.mutualsCount != null ? prev.mutualsCount : null),
+
+    // Notes / tags carried
+    notes: prev.notes || '',
+    tags:  Array.isArray(prev.tags) ? prev.tags : [],
+
+    // Mutuals carried
+    mutualsCollected:   prev.mutualsCollected   || undefined,
+    mutualsCollectedAt: prev.mutualsCollectedAt || undefined,
+
+    // Prior URLs history (from cross-URL dedup)
+    _priorUrls: prev._priorUrls,
+
+    // Metadata refresh (write-through fresh non-empty)
+    ...metadataFromInfo(info),
+
+    // Status + status-timing
+    status: newStatus,
+    acceptedAt:  timing.acceptedAt,
+    declinedAt:  timing.declinedAt,
+    verifiedAt:  timing.verifiedAt,
+    daysPending: timing.daysPending,
   };
-  applyContactInfo(contacts[profileUrl], contactInfo, now);
-  applyActivityFields(contacts[profileUrl], prev, info);
 
-  let acceptedChanged = acceptedDedup;
-  let sentChanged = sentDedup;
-
-  if (status === 'pending') {
-    // Pending lives in sentInvitations only. If a stale accepted entry exists
-    // (e.g. previously declined or removed, now re-invited), drop it.
-    if (accepted[profileUrl]) {
-      delete accepted[profileUrl];
-      acceptedChanged = true;
-    }
-    const existing = sentInvitations[profileUrl];
-    if (existing) {
-      existing.lastSeenAt = now;
-      // Name: overwrite when fresh non-empty. The extractor is deterministic
-      // and won't yield a bogus name; preserving an old (possibly stale or
-      // mid-render-corrupted) name on top of fresh truth doesn't help.
-      if (info.name) existing.name = info.name;
-      refreshMetadata(existing, info);
-      applyActivityFields(existing, existing, info);
-    } else {
-      sentInvitations[profileUrl] = {
-        profileUrl,
-        name: info.name,
-        sentDateRelative: '',
-        firstSeenAt: now,
-        lastSeenAt: now,
-        notes: '',
-        tags: [],
-        addedFrom: 'profile',
-        ...metadataFromInfo(info),
-      };
-      applyActivityFields(sentInvitations[profileUrl], null, info);
-    }
-    applyContactInfo(sentInvitations[profileUrl], contactInfo, now);
-    sentChanged = true;
-  } else if (status === 'connected') {
-    // Promote from sentInvitations if present, else upsert into accepted.
-    // Either way, apply any fresh contact-info modal data so the popup
-    // sees email/phone/website without needing a separate write path.
-    if (sentInvitations[profileUrl]) {
-      const sentEntry = sentInvitations[profileUrl];
-      const existingAccepted = accepted[profileUrl];
-      accepted[profileUrl] = {
-        ...sentEntry,
-        ...(existingAccepted || {}),
-        ...metadataFromInfo(info),  // fresh metadata wins over carried-over old fields
-        profileUrl,
-        name: info.name || sentEntry.name,
-        acceptedAt: existingAccepted?.acceptedAt || now,
-        daysPending: Math.floor(((existingAccepted?.acceptedAt || now) - sentEntry.firstSeenAt) / DAY_MS),
-        marked: existingAccepted?.marked || false,
-        markedAt: existingAccepted?.markedAt || null,
-        verified: 'accepted',
-        verifiedAt: now,
-      };
-      // Activity: merge against whichever record had the longer history. Prefer
-      // existing-accepted (had been a connection before, then re-invited), else
-      // the sent-entry's stored activity (captured during pending phase).
-      applyActivityFields(accepted[profileUrl], existingAccepted || sentEntry, info);
-      delete sentInvitations[profileUrl];
-      sentChanged = true;
-      acceptedChanged = true;
-    } else if (accepted[profileUrl]) {
-      const entry = accepted[profileUrl];
-      if (entry.verified !== 'accepted') {
-        entry.verified = 'accepted';
-        entry.verifiedAt = now;
-        acceptedChanged = true;
-      }
-      if (refreshMetadata(entry, info)) acceptedChanged = true;
-      const prevActivityLA = entry.lastActivityAt;
-      const prevActivityList = entry.recentActivity;
-      applyActivityFields(entry, entry, info);
-      if (entry.lastActivityAt !== prevActivityLA || entry.recentActivity !== prevActivityList) {
-        acceptedChanged = true;
-      }
-    } else {
-      // Brand-new connection never in our tracking. Two real scenarios fall
-      // through here:
-      //   1. Pre-existing contact (was in your network before you installed
-      //      the extension) — you visit them once, we discover them.
-      //   2. Fresh acceptance whose pending phase we missed — you invited
-      //      via /mynetwork/ or /search/ without visiting the profile, OR
-      //      the pre-1.2.3 pending detector failed on this profile (class
-      //      names rotated → "Kimberly bug"). Person accepted, you now
-      //      visit their profile; we see "connected" with no history.
-      //
-      // We CANNOT reliably distinguish (1) from (2) from the DOM alone. The
-      // old behavior auto-marked all of these, which silently buried fresh
-      // acceptances in the Marked tab. Now we land them in Accepted with
-      // marked=false. Users with pre-1.x install state can tap "Mark all"
-      // once to clear the legacy backlog.
-      accepted[profileUrl] = {
-        profileUrl,
-        name: info.name,
-        acceptedAt: now,
-        daysPending: 0,
-        marked: false,
-        markedAt: null,
-        verified: 'accepted',
-        verifiedAt: now,
-        ...metadataFromInfo(info),
-      };
-      applyActivityFields(accepted[profileUrl], null, info);
-      acceptedChanged = true;
-    }
-    if (applyContactInfo(accepted[profileUrl], contactInfo, now)) acceptedChanged = true;
-  } else {
-    // status === 'not_connected' — should be in neither sentInvitations nor accepted.
-    if (sentInvitations[profileUrl]) {
-      delete sentInvitations[profileUrl];
-      sentChanged = true;
-    }
-    // Even when status is "not connected", an accepted record may still exist
-    // (the entry might be wrongly declined awaiting a re-verify; or the user
-    // is on a profile that previously accepted and got removed/declined).
-    // Either way, the contact-info modal data the user explicitly opened is
-    // valuable — apply it so the popup shows the copy buttons regardless of
-    // verified status.
-    if (accepted[profileUrl] && applyContactInfo(accepted[profileUrl], contactInfo, now)) {
-      acceptedChanged = true;
-    }
-    const entry = accepted[profileUrl];
-    if (entry && entry.verified !== 'declined') {
-      // CRITICAL: if entry carries `connectedOnText` it came from the /connections/
-      // scan — that page IS the canonical source of truth for "who is connected".
-      // A transient false-positive on the profile page (LinkedIn briefly rendering
-      // Follow/Connect before settling on Message for a slow load) must not be
-      // allowed to downgrade a canonically-confirmed entry. Real disconnections
-      // are detected by re-running the /connections/ scan, not by profile visits.
-      if (entry.connectedOnText) {
-        // No-op: preserve as-is. Stability check already gave us 1.5s, but for
-        // slow networks even that's sometimes insufficient and we'd rather
-        // err on the side of keeping a real connection's badge intact.
-      } else {
-        // No canonical proof — verified was upgraded by /sent/ disappearance or
-        // a prior profile.js detection (both heuristic). Mark declined; popup
-        // surfaces it under the collapsible "Didn't accept" block. We never
-        // auto-delete here — surprise removals erode trust more than a stale label.
-        entry.verified = 'declined';
-        entry.verifiedAt = now;
-        refreshMetadata(entry, info);
-        acceptedChanged = true;
-      }
-    }
+  // Avatar has the confirmed guard — go through refreshMetadata rather than
+  // the raw spread. metadataFromInfo already wrote fresh info.avatar; the
+  // refresh helper only fires if we should NOT overwrite (mid-render empty).
+  // Emulate refreshMetadata inline: if info.avatarConfirmed=false AND
+  // info.avatar=='' AND prev.avatar was non-empty, restore prev.avatar.
+  if (!info.avatarConfirmed && !info.avatar && prev.avatar) {
+    next.avatar = prev.avatar;
   }
 
-  return { contacts, accepted, sentInvitations, acceptedChanged, sentChanged };
+  // Activity fields — merge with prev history
+  applyActivityFields(next, prev, info);
+
+  // Contact-info modal — overwrites when the user has the overlay open
+  applyContactInfo(next, contactInfo, now);
+
+  contacts[profileUrl] = next;
+
+  // Change detection: has anything material changed vs prev?
+  const changed = didChange(prev, next) || Boolean(dupUrl);
+
+  return { contacts, changed };
+}
+
+// Decide the new `status` from the extracted profile status + prior state.
+// Preserves the connectedOnText anti-downgrade guard: an entry that was
+// canonically confirmed as connected via the /connections/ scan cannot be
+// downgraded by a transient profile-page read.
+function statusFromVisit(observed, prev) {
+  if (observed === 'pending')   return STATUS.PENDING;
+  if (observed === 'connected') return STATUS.ACCEPTED;
+  // observed === 'not_connected'
+  if (prev.connectedOnText) {
+    // Canonical proof — refuse to downgrade. Keep prior status.
+    return prev.status || STATUS.ACCEPTED;
+  }
+  if (prev.status === STATUS.ACCEPTED || prev.status === STATUS.PENDING) {
+    return STATUS.DECLINED;
+  }
+  return prev.status || STATUS.VISITED;
+}
+
+// Compute status-driven timing side-effects. Only mutates timestamps
+// when the status transition warrants it — e.g. acceptedAt is set the
+// first time a pending record moves to accepted (or on brand-new
+// accepted creation).
+function timingUpdates(newStatus, observed, prev, now) {
+  const out = {
+    acceptedAt:  prev.acceptedAt  || null,
+    declinedAt:  prev.declinedAt  || null,
+    verifiedAt:  prev.verifiedAt  || null,
+    daysPending: prev.daysPending || 0,
+  };
+  if (newStatus === STATUS.ACCEPTED) {
+    if (!out.acceptedAt) out.acceptedAt = now;
+    // verifiedAt bumps ONLY when the raw observation was 'connected'. A
+    // not_connected observation that was refused-to-downgrade via the
+    // connectedOnText guard must NOT touch verifiedAt — otherwise the
+    // guard would spuriously report "changed=true" every quiet tick.
+    if (observed === 'connected') out.verifiedAt = now;
+    if (prev.firstSeenAt) {
+      out.daysPending = Math.floor((out.acceptedAt - prev.firstSeenAt) / DAY_MS);
+    }
+    // If they were previously declined and are now accepted again, clear declined stamp.
+    if (prev.status === STATUS.DECLINED && observed === 'connected') out.declinedAt = null;
+  } else if (newStatus === STATUS.DECLINED) {
+    if (!out.declinedAt) out.declinedAt = now;
+    if (!out.verifiedAt) out.verifiedAt = now;
+  }
+  return out;
+}
+
+// Compare prev vs next for "anything user-visible or downstream-important
+// changed". Used by the caller to decide whether to persist.
+function didChange(prev, next) {
+  if (!prev || !next) return true;
+  const keys = [
+    'status', 'name', 'headline', 'avatar', 'location', 'country',
+    'marked', 'favorite', 'acceptedAt', 'declinedAt', 'verifiedAt',
+    'mutualsUrl', 'mutualsCount', 'lastActivityAt', 'lastPostAt',
+    ...CONTACT_FIELDS,
+  ];
+  for (const k of keys) {
+    if ((prev[k] ?? null) !== (next[k] ?? null)) return true;
+  }
+  // recentActivity urn-list changed?
+  const prevIds = (prev.recentActivity || []).map((c) => c.urnActivityId).join(',');
+  const nextIds = (next.recentActivity || []).map((c) => c.urnActivityId).join(',');
+  if (prevIds !== nextIds) return true;
+  return false;
 }
 
 const LITProfileState = {
@@ -407,6 +372,12 @@ const LITProfileState = {
   applyContactInfo,
   applyActivityFields,
   mergeRecentActivityInline,
+  refreshMetadata,
+  metadataFromInfo,
+  statusFromVisit,
+  timingUpdates,
+  didChange,
+  STATUS,
   CONTACT_FIELDS,
   DAY_MS,
 };

@@ -230,9 +230,9 @@ async function autoScrollAndCollect() {
 
 async function persistConnections(collected) {
   const snapshot = Array.from(collected.values());
-  const stored = await dbGet(['accepted', 'sentInvitations']);
+  const stored = await dbGet(['contacts', 'schemaVersion']);
   const result = LITMergeConnections.mergeConnections(snapshot, stored, Date.now());
-  await dbSet({ accepted: result.accepted, sentInvitations: result.sentInvitations });
+  await dbSet({ contacts: result.contacts });
   return result.touched;
 }
 

@@ -30,25 +30,20 @@ async function tick() {
   if (lastCommit.urn === urn && lastCommit.key === key) return;
   lastCommit = { urn, key };
 
-  const stored = await dbGet(['contacts', 'accepted', 'sentInvitations']);
-  const patch = {};
+  const { contacts = {} } = await dbGet('contacts');
   let ownersTouched = 0;
-  for (const storeName of ['contacts', 'accepted', 'sentInvitations']) {
-    const store = stored[storeName] || {};
-    let changed = false;
-    for (const rec of Object.values(store)) {
-      if (rec.mutualsUrl && rec.mutualsUrl.includes(urn)) {
-        rec.mutualsCollected = list;
-        rec.mutualsCollectedAt = Date.now();
-        changed = true;
-        ownersTouched += 1;
-      }
+  let changed = false;
+  for (const rec of Object.values(contacts)) {
+    if (rec.mutualsUrl && rec.mutualsUrl.includes(urn)) {
+      rec.mutualsCollected = list;
+      rec.mutualsCollectedAt = Date.now();
+      changed = true;
+      ownersTouched += 1;
     }
-    if (changed) patch[storeName] = store;
   }
 
-  if (Object.keys(patch).length > 0) {
-    await dbSet(patch);
+  if (changed) {
+    await dbSet({ contacts });
     console.log(`[LI Tracker] saved ${list.length} mutuals for URN ${urn} (touched ${ownersTouched} record(s))`);
   } else {
     console.log(`[LI Tracker] URN ${urn} on search page but no local record references it — not saving`);

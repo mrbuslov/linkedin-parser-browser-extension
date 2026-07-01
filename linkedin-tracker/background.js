@@ -1,7 +1,13 @@
 // Service worker. Owns the IndexedDB store and forwards all reads/writes
 // from other extension contexts. On every write, broadcasts a DB_CHANGED
 // message so the popup can live-rerender. Also refreshes the toolbar badge
-// when `accepted` changes and pops a notification when SCAN_DONE arrives.
+// when `contacts` changes and pops a notification when SCAN_DONE arrives.
+//
+// On startup, runs the v1 → v2 storage migration if needed (idempotent).
+// This ensures content scripts and the popup can always assume unified
+// `contacts` shape, regardless of who woke up first after an update.
+
+importScripts('core/schema-v2.js');
 
 const DB_NAME = 'linkedin-tracker';
 const DB_VERSION = 1;
@@ -86,13 +92,16 @@ async function dbClear() {
 function notifyChange(keys) {
   // Goes to popup and other extension pages. Content scripts don't subscribe.
   chrome.runtime.sendMessage({ type: 'DB_CHANGED', keys }).catch(() => {});
-  if (keys.includes('accepted') || keys.includes('*')) refreshBadge();
+  if (keys.includes('contacts') || keys.includes('*')) refreshBadge();
 }
 
 async function refreshBadge() {
-  const { accepted = {} } = await dbGet('accepted');
-  const unmarked = Object.values(accepted)
-    .filter((x) => !x.marked && !x.welcomeMessageSent && x.verified !== 'declined')
+  const { contacts = {} } = await dbGet('contacts');
+  // Badge counts UNMARKED accepted people who need a welcome message. In v2
+  // that's status='accepted' && !marked && !welcomeMessageSent. Declined
+  // (was verified='declined') is now status='declined' which is out of scope.
+  const unmarked = Object.values(contacts)
+    .filter((x) => x.status === 'accepted' && !x.marked && !x.welcomeMessageSent)
     .length;
   await chrome.action.setBadgeText({ text: unmarked > 0 ? String(unmarked) : '' });
   await chrome.action.setBadgeBackgroundColor({ color: '#0a66c2' });
@@ -140,5 +149,32 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 });
 
-chrome.runtime.onInstalled.addListener(() => refreshBadge());
-chrome.runtime.onStartup.addListener(() => refreshBadge());
+// One-time v1 → v2 storage migration. Idempotent: if storage is already
+// v2 (schemaVersion=2), migrateToV2 returns the input unchanged. Runs on
+// extension install/update and on browser startup so that whoever wakes
+// up first — service worker before any content script fires — always
+// leaves storage in v2 shape. Popup and content scripts still run their
+// own migration guard on load as belt-and-suspenders.
+async function runStorageMigration() {
+  try {
+    const stored = await dbGet(null);
+    if (LITSchema.isV2(stored)) return;
+    const migrated = LITSchema.migrateToV2(stored);
+    migrated._backup_v1._migratedAt = Date.now();
+    await dbSet(migrated);
+    console.log('[LI Tracker] migrated storage to v2 (contacts unified).');
+  } catch (err) {
+    console.error('[LI Tracker] storage migration failed:', err);
+  }
+}
+
+chrome.runtime.onInstalled.addListener(async () => {
+  await runStorageMigration();
+  refreshBadge();
+});
+chrome.runtime.onStartup.addListener(async () => {
+  await runStorageMigration();
+  refreshBadge();
+});
+// Also run on service-worker cold start (e.g., first message wakes it up).
+runStorageMigration();

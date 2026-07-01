@@ -31,6 +31,8 @@ export default [
         LITContactsModal: 'readonly',
         LITSearchResults: 'readonly',
         LITStripName: 'writable',
+        LITSchema: 'readonly',
+        importScripts: 'readonly',
         // db-client.js exposes these
         dbGet: 'readonly',
         dbSet: 'readonly',

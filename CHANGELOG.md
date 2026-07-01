@@ -10,6 +10,62 @@ In development for the next release. See [plan.md](plan.md) for the prioritized 
 
 ## [1.3.0] — 2026-07-01
 
+### Changed (BIG — unified `contacts` storage)
+- **Three legacy stores merged into one.** Pre-1.3.0 kept
+  `sentInvitations`, `accepted`, and `contacts` as three separate
+  top-level IDB keys with a strict "one-bucket-at-a-time" invariant
+  enforced across every write path. In 1.3.0 they collapse into a
+  single `contacts` dict where each entry carries a **`status`** field:
+  - `'pending'`  — invite sent, awaiting response
+  - `'accepted'` — 1st-degree connection
+  - `'declined'` — invite withdrawn/rejected OR post-connection
+    disconnect (canonical /connections/ proof still guards against
+    transient profile-page false positives)
+  - `'visited'` — profile we opened but never invited and isn't a
+    connection
+- **Dropped fields:** `connected` (derivable from `status === 'accepted'`),
+  `verified` (subsumed by `status`), `autoMarked` (mechanic killed in
+  1.2.5, field vestigial).
+- **Kept everything user-authored:** `marked`, `favorite`, `notes`,
+  `tags`, `withdrawnAt`, `connectedOnText` / `connectedOnDate` (anti-
+  downgrade guard for /connections/-verified entries), plus all
+  contact-info modal fields and activity/mutuals data.
+- **Automatic migration on load.** New `core/schema-v2.js` provides a
+  pure `migrateToV2(stored)` function. Runs on: (a) service-worker
+  startup + install, (b) popup load, (c) content-script writes as a
+  defensive backstop. Idempotent — a v2 storage passes through unchanged.
+  A `_backup_v1` snapshot of the pre-migration state is saved in IDB as
+  a disaster-recovery net (never touched again unless the user needs it).
+- **Backward-compat import.** A v1 JSON backup file (with
+  `version: 1` and `data.sentInvitations` / `data.accepted` top-level
+  keys) is auto-detected on import and migrated in-memory before writing
+  to storage. v2 backups (`version: 2`) restore directly.
+
+### Fixed as a side-effect of the refactor
+- Favorite toggle used to write to three stores in parallel (source of
+  cross-store rot); now one write.
+- CSV export used to inner-join the three stores by profileUrl to
+  surface contact-info on accepted rows; now one row per contact with
+  all fields inline. Adds `declinedAt`, `marked`, `favorite` columns.
+- Search-mutuals content script used to iterate three stores looking
+  for matching `mutualsUrl`; now one loop.
+- Toolbar badge count used to filter `accepted[]` with three predicates
+  (`!marked && !welcomeMessageSent && verified !== 'declined'`); now a
+  single `status === 'accepted' && !marked && !welcomeMessageSent`.
+
+### Tests
+- 45 new migration cases in `tests/schema-v2-migration.test.js`
+- All 41 `profile-state` regressions ported (Bernardo bug, Anastasia,
+  cross-URL memberId dedup, name-based dedup ban, avatar refresh policy,
+  activity fields merge, etc.)
+- `tests/diff-sent.test.js` and `tests/merge-connections.test.js`
+  rewritten against the unified shape (12 + 9 tests)
+- `tests/integration-v1-to-v2.test.js` — end-to-end regression test
+  that runs a real v1 backup through migration and then through
+  diff-sent + merge-connections + applyProfileVisit to catch "half-
+  migrated storage half-migrated code" failures
+- Grand total: **323 tests, all passing.**
+
 ### Added
 - **Per-tab Download button** next to the search bar (⬇ icon). Downloads
   exactly what the active tab shows: Pending → sentInvitations only,

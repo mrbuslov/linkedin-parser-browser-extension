@@ -211,7 +211,7 @@ function isMarked(item) {
 
 function renderAcceptedRow(item, { primaryAction, primaryLabel }) {
   const sinceAccepted = ageDays(item.acceptedAt);
-  const isDeclined = item.verified === 'declined';
+  const isDeclined = item.status === 'declined';
 
   const actions = [];
   if (!isDeclined) {
@@ -235,7 +235,7 @@ function renderAcceptedRow(item, { primaryAction, primaryLabel }) {
         nameNode,
         favoriteButton(item),
         infoButton(item),
-        statusBadge(item.verified),
+        statusBadge(item.status),
         contactButtons(item),
         mutualsChip(item),
       ]),
@@ -265,8 +265,8 @@ function renderAccepted(rawItems, connectionsScanState) {
   declinedList.innerHTML = '';
 
   const unmarked = items.filter((x) => !isMarked(x));
-  const active = unmarked.filter((x) => x.verified !== 'declined');
-  const declined = unmarked.filter((x) => x.verified === 'declined');
+  const active = unmarked.filter((x) => x.status !== 'declined');
+  const declined = unmarked.filter((x) => x.status === 'declined');
   const visible = active.filter(matchesSearch);
   const declinedVisible = declined.filter(matchesSearch);
 
@@ -327,45 +327,33 @@ function renderMarked(rawItems) {
 }
 
 // Favorites tab: aggregates `favorite: true` records from all three stores,
-// dedupes by profileUrl. When a person lives in both `accepted` and
-// `contacts` we prefer the accepted record (richer — has acceptedAt,
-// verified, etc); when they're in sentInvitations + contacts, sentInvitations
-// wins. Each row uses the same row-renderer as the source tab would, so the
-// UI is consistent (Mark/Unmark/Delete buttons all work).
-function renderFavorites(sentInvitations, accepted, contacts) {
+// v2: everything lives in one `contacts` dict; favorites is a filter on
+// `favorite === true`. Rendering choice per row: 'pending' status → Pending
+// row shape (age color + sentDateRelative); 'accepted'/'declined' → Accepted
+// row shape (Mark button); anything else → contacts-only row shape.
+function renderFavorites(contacts) {
   const list = $('favorites-list');
   list.innerHTML = '';
 
-  const byUrl = new Map();
-  // Order matters: later writes win for the same URL. accepted has the richest
-  // data; sentInvitations is next; contacts is the lowest-priority fallback.
-  for (const [src, store] of [['contact', contacts], ['pending', sentInvitations], ['accepted', accepted]]) {
-    for (const item of Object.values(store)) {
-      if (!item.favorite) continue;
-      byUrl.set(item.profileUrl, { ...item, _source: src });
-    }
-  }
-
-  const all = Array.from(byUrl.values()).map(viewItem);
-  const visible = all.filter(matchesSearch);
-  $('favorites-empty').hidden = all.length > 0;
-  $('favorites-summary').textContent = all.length === 0
+  const favs = Object.values(contacts).filter((r) => r.favorite).map(viewItem);
+  const visible = favs.filter(matchesSearch);
+  $('favorites-empty').hidden = favs.length > 0;
+  $('favorites-summary').textContent = favs.length === 0
     ? ''
     : searchQuery
-      ? `${visible.length} of ${all.length} match`
-      : `${all.length} favorited`;
+      ? `${visible.length} of ${favs.length} match`
+      : `${favs.length} favorited`;
 
   const sorted = visible.slice().sort((a, b) => (b.favoritedAt || 0) - (a.favoritedAt || 0));
   for (const item of sorted) {
-    if (item._source === 'accepted') {
+    if (item.status === 'accepted' || item.status === 'declined') {
       list.append(renderAcceptedRow(item, {
         primaryAction: (url) => setMarked(url, !isMarked(item)),
         primaryLabel: isMarked(item) ? 'Unmark' : 'Mark',
       }));
-    } else if (item._source === 'pending') {
+    } else if (item.status === 'pending') {
       list.append(renderPendingRow(item));
     } else {
-      // contacts-only entry — no Pending/Accepted bucket, render a simpler row.
       list.append(renderContactOnlyRow(item));
     }
   }
@@ -415,115 +403,83 @@ function renderContactOnlyRow(item) {
   ]);
 }
 
-// One-shot migration: walk every record across the three stores and undo
-// any name/headline swap. Runs once per popup open. Idempotent: if all
-// records are already clean, no write happens. We persist the corrected
-// data so downstream consumers (CSV export, /sent/ diff, /connections/
-// merge) all see the clean shape too.
-async function migrateSwappedNames() {
-  const { sentInvitations = {}, accepted = {}, contacts = {} } =
-    await dbGet(['sentInvitations', 'accepted', 'contacts']);
-  const patch = {};
-  for (const [storeName, store] of [
-    ['sentInvitations', sentInvitations],
-    ['accepted',        accepted],
-    ['contacts',        contacts],
-  ]) {
-    let changed = false;
-    for (const rec of Object.values(store)) {
-      const fixed = LITPopupLogic.fixSwappedNameHeadline(rec);
-      if (fixed.name !== rec.name || fixed.headline !== rec.headline) {
-        rec.name = fixed.name;
-        rec.headline = fixed.headline;
-        changed = true;
-      }
-    }
-    if (changed) patch[storeName] = store;
-  }
-  if (Object.keys(patch).length > 0) {
-    await dbSet(patch);
-    console.log(`[LI Tracker] migration cleaned name/headline swap in: ${Object.keys(patch).join(', ')}`);
-  }
+// One-shot v1 → v2 schema migration. Runs on every popup load; idempotent
+// (LITSchema.isV2 short-circuits when schemaVersion=2 already). The
+// service worker also runs this on startup — this is belt-and-suspenders.
+async function ensureSchemaV2() {
+  const stored = await dbGet(null);
+  if (LITSchema.isV2(stored)) return;
+  const migrated = LITSchema.migrateToV2(stored);
+  migrated._backup_v1._migratedAt = Date.now();
+  await dbSet(migrated);
+  console.log('[LI Tracker] popup migrated storage to v2.');
 }
 
-// One-shot cleanup of pre-1.2.5 auto-marked records. The brand-new accepted
-// branch used to set `marked: true, autoMarked: true` on any "first time we
-// see this connection" profile visit — including freshly accepted invites
-// whose pending phase we missed. Those entries got silently buried in the
-// Marked tab. Now they land in Accepted; this migration unsticks the
-// pre-existing legacy records so the user doesn't have to Unmark each by
-// hand. Idempotent: only flips records where BOTH `autoMarked === true`
-// AND `marked === true` (so a user who explicitly marked an entry that
-// happened to also be autoMarked is left alone).
-async function migrateAutoMarkedToUnmarked() {
-  const { accepted = {} } = await dbGet('accepted');
-  let changed = 0;
-  for (const rec of Object.values(accepted)) {
-    if (rec.autoMarked === true && rec.marked === true) {
-      rec.marked = false;
-      rec.markedAt = null;
-      // Clear autoMarked so this migration is permanently idempotent — a
-      // second pass finds nothing to do. If the user later re-marks the
-      // entry explicitly, it stays manually-marked (no autoMarked flag).
-      delete rec.autoMarked;
-      changed++;
+// One-shot migration: walk every record and undo any name/headline swap.
+// Idempotent: no write when nothing to fix.
+async function migrateSwappedNames() {
+  const { contacts = {} } = await dbGet('contacts');
+  let changed = false;
+  for (const rec of Object.values(contacts)) {
+    const fixed = LITPopupLogic.fixSwappedNameHeadline(rec);
+    if (fixed.name !== rec.name || fixed.headline !== rec.headline) {
+      rec.name = fixed.name;
+      rec.headline = fixed.headline;
+      changed = true;
     }
   }
-  if (changed > 0) {
-    await dbSet({ accepted });
-    console.log(`[LI Tracker] migration: unmarked ${changed} legacy auto-marked records`);
+  if (changed) {
+    await dbSet({ contacts });
+    console.log('[LI Tracker] migration cleaned name/headline swap in contacts.');
   }
 }
 
 async function loadData() {
+  await ensureSchemaV2();
   await migrateSwappedNames();
-  await migrateAutoMarkedToUnmarked();
 
-  const { sentInvitations = {}, accepted = {}, contacts = {}, scanHistory = [], scanState = {} } =
-    await dbGet(['sentInvitations', 'accepted', 'contacts', 'scanHistory', 'scanState']);
+  const { contacts = {}, scanHistory = [], scanState = {} } =
+    await dbGet(['contacts', 'scanHistory', 'scanState']);
 
-  renderPending(Object.values(sentInvitations));
-  renderAccepted(Object.values(accepted), scanState.connections);
-  renderMarked(Object.values(accepted));
-  renderFavorites(sentInvitations, accepted, contacts);
+  const pending  = Object.values(contacts).filter((r) => r.status === 'pending');
+  const accepted = Object.values(contacts).filter((r) => r.status === 'accepted' || r.status === 'declined');
+
+  renderPending(pending);
+  renderAccepted(accepted, scanState.connections);
+  renderMarked(accepted);
+  renderFavorites(contacts);
   renderScanInfo($('pending-scan-info'), scanState.sent);
   renderScanInfo($('accepted-scan-info'), scanState.connections);
 
   const lastScan = scanHistory[scanHistory.length - 1];
-  const stats = `pending: ${Object.keys(sentInvitations).length} · accepted: ${Object.keys(accepted).length} · scans: ${scanHistory.length}`;
+  const stats = `pending: ${pending.length} · accepted: ${accepted.filter((r) => r.status === 'accepted').length} · scans: ${scanHistory.length}`;
   $('stats-line').textContent = lastScan
     ? `${stats} · last scan ${new Date(lastScan.timestamp).toLocaleString()}`
     : stats;
 }
 
 async function setMarked(profileUrl, value) {
-  const { accepted = {} } = await dbGet('accepted');
-  if (!accepted[profileUrl]) return;
-  accepted[profileUrl].marked = value;
-  accepted[profileUrl].markedAt = value ? Date.now() : null;
-  if (!value) accepted[profileUrl].welcomeMessageSent = false;
-  await dbSet({ accepted });
+  const { contacts = {} } = await dbGet('contacts');
+  if (!contacts[profileUrl]) return;
+  contacts[profileUrl].marked = value;
+  contacts[profileUrl].markedAt = value ? Date.now() : null;
+  if (!value) contacts[profileUrl].welcomeMessageSent = false;
+  await dbSet({ contacts });
 }
 
-// Permanently remove an entry by its profileUrl across every store it lives
-// in (sentInvitations, accepted, contacts). Used by per-row Delete and the
-// cleanup flow for stale duplicates. Confirm dialog gates the action so a
-// stray click can't nuke a contact.
+// Permanently remove an entry by its profileUrl. One dict, one delete.
 async function deleteEntry(profileUrl, displayName) {
   const ok = window.confirm(
     `Delete "${displayName || profileUrl}" from the tracker?\n\n`
-    + 'Removes this entry from Pending / Accepted / Marked / Contacts. '
+    + 'Removes this entry from Pending / Accepted / Marked / Favorites. '
     + 'Cannot be undone. If LinkedIn still has the actual connection, a '
     + 'future /connections/ scan will re-add them.'
   );
   if (!ok) return;
-  const { sentInvitations = {}, accepted = {}, contacts = {} } =
-    await dbGet(['sentInvitations', 'accepted', 'contacts']);
-  const patch = {};
-  if (sentInvitations[profileUrl]) { delete sentInvitations[profileUrl]; patch.sentInvitations = sentInvitations; }
-  if (accepted[profileUrl])        { delete accepted[profileUrl];        patch.accepted        = accepted; }
-  if (contacts[profileUrl])        { delete contacts[profileUrl];        patch.contacts        = contacts; }
-  if (Object.keys(patch).length > 0) await dbSet(patch);
+  const { contacts = {} } = await dbGet('contacts');
+  if (!contacts[profileUrl]) return;
+  delete contacts[profileUrl];
+  await dbSet({ contacts });
   showToast('Deleted');
 }
 
@@ -571,28 +527,17 @@ function favoriteButton(item) {
 }
 
 async function toggleFavorite(profileUrl) {
-  const stored = await dbGet(['sentInvitations', 'accepted', 'contacts']);
-  const cur =
-       stored.sentInvitations?.[profileUrl]?.favorite
-    || stored.accepted?.[profileUrl]?.favorite
-    || stored.contacts?.[profileUrl]?.favorite
-    || false;
-  const next = !cur;
-  const now = Date.now();
-  const patch = {};
-  for (const storeName of ['sentInvitations', 'accepted', 'contacts']) {
-    const store = stored[storeName] || {};
-    if (!store[profileUrl]) continue;
-    store[profileUrl].favorite = next;
-    store[profileUrl].favoritedAt = next ? now : null;
-    patch[storeName] = store;
-  }
-  if (Object.keys(patch).length === 0) return;
-  await dbSet(patch);
+  const { contacts = {} } = await dbGet('contacts');
+  const rec = contacts[profileUrl];
+  if (!rec) return;
+  const next = !rec.favorite;
+  rec.favorite = next;
+  rec.favoritedAt = next ? Date.now() : null;
+  await dbSet({ contacts });
   // The list-panel re-render is triggered by the DB_CHANGED broadcast
-  // (loadData reads fresh stores). Detail panel is rendered once on
-  // open() and won't pick up the new favorite state unless we refresh it
-  // explicitly here.
+  // (loadData reads fresh contacts). Detail panel is rendered once on
+  // open() and won't pick up the new favorite state unless we refresh
+  // it explicitly here.
   await refreshDetailView();
 }
 
@@ -610,9 +555,8 @@ let currentDetailUrl = null;
 async function openDetailView(profileUrl) {
   detailReturnTab = activeTabName();
   currentDetailUrl = profileUrl;
-  const { sentInvitations = {}, accepted = {}, contacts = {} } =
-    await dbGet(['sentInvitations', 'accepted', 'contacts']);
-  const item = accepted[profileUrl] || sentInvitations[profileUrl] || contacts[profileUrl];
+  const { contacts = {} } = await dbGet('contacts');
+  const item = contacts[profileUrl];
   if (!item) return;
   renderDetail(item);
   for (const panel of document.querySelectorAll('.panel')) {
@@ -644,10 +588,8 @@ function closeDetailView() {
 // not currently showing.
 async function refreshDetailView() {
   if (!currentDetailUrl) return;
-  const { sentInvitations = {}, accepted = {}, contacts = {} } =
-    await dbGet(['sentInvitations', 'accepted', 'contacts']);
-  const url = currentDetailUrl;
-  const item = accepted[url] || sentInvitations[url] || contacts[url];
+  const { contacts = {} } = await dbGet('contacts');
+  const item = contacts[currentDetailUrl];
   if (!item) return;
   renderDetail(item);
 }
@@ -705,7 +647,7 @@ function renderDetail(item) {
           name || '(no name)',
           favoriteButton(item),
         ]),
-        item.verified ? statusBadge(item.verified) : null,
+        item.status ? statusBadge(item.status) : null,
       ]),
     ]),
   ]);
@@ -794,7 +736,7 @@ function renderDetail(item) {
   // CONNECTION section (status + dates)
   panel.append(el('div', { className: 'detail-section' }, [
     el('h4', {}, ['Connection']),
-    field('Status', item.verified || (item.connected ? 'connected' : null)),
+    field('Status', item.status),
     field('Accepted at', item.acceptedAt ? `${fmtDate(item.acceptedAt)} · ${relTime(item.acceptedAt)}` : null),
     field('Days pending before accept', item.daysPending != null ? item.daysPending : null),
     field('First seen', item.firstSeenAt ? `${fmtDate(item.firstSeenAt)} · ${relTime(item.firstSeenAt)}` : null),
@@ -826,18 +768,18 @@ function renderDetail(item) {
 }
 
 async function markAllAccepted() {
-  const { accepted = {} } = await dbGet('accepted');
+  const { contacts = {} } = await dbGet('contacts');
   const now = Date.now();
   let changed = 0;
-  for (const item of Object.values(accepted)) {
+  for (const item of Object.values(contacts)) {
+    if (item.status !== 'accepted') continue;
     if (isMarked(item)) continue;
-    if (item.verified === 'declined') continue;
     item.marked = true;
     item.markedAt = now;
     changed++;
   }
   if (changed === 0) return;
-  await dbSet({ accepted });
+  await dbSet({ contacts });
 }
 
 function csvEscape(value) {
@@ -856,45 +798,26 @@ function downloadBlob(blob, filename) {
 }
 
 async function exportCsv() {
-  const { sentInvitations = {}, accepted = {}, contacts = {} } =
-    await dbGet(['sentInvitations', 'accepted', 'contacts']);
+  const { contacts = {} } = await dbGet('contacts');
   const rows = [[
-    'status', 'verified', 'name', 'profileUrl', 'headline',
+    'status', 'name', 'profileUrl', 'headline',
     'location', 'country',
-    'firstSeenAt', 'acceptedAt', 'daysPending', 'welcomeSent',
+    'firstSeenAt', 'acceptedAt', 'declinedAt', 'daysPending', 'welcomeSent',
+    'marked', 'favorite',
     'email', 'phone', 'phoneLabel', 'website', 'address', 'birthday',
     'lastActivityAt', 'lastPostAt',
   ]];
-  // contacts holds the captured contact-info modal fields. We join them in
-  // by profileUrl so even accepted rows where the user opened the overlay
-  // get their email/phone exported alongside.
-  const contactOf = (url) => contacts[url] || {};
-  const pickActivity = (rec, c) => [
-    rec.lastActivityAt || c.lastActivityAt || '',
-    rec.lastPostAt     || c.lastPostAt     || '',
-  ];
-  const pickGeo = (rec, c) => [
-    rec.location || c.location || '',
-    rec.country  || c.country  || '',
-  ];
-  for (const x of Object.values(sentInvitations)) {
-    const c = contactOf(x.profileUrl);
-    rows.push(['pending', '', x.name, x.profileUrl, x.headline,
-      ...pickGeo(x, c),
-      new Date(x.firstSeenAt).toISOString(), '', '', '',
-      x.email || c.email || '', x.phone || c.phone || '', x.phoneLabel || c.phoneLabel || '',
-      x.website || c.website || '', x.address || c.address || '', x.birthday || c.birthday || '',
-      ...pickActivity(x, c)]);
-  }
-  for (const x of Object.values(accepted)) {
-    const c = contactOf(x.profileUrl);
-    rows.push(['accepted', x.verified || '', x.name, x.profileUrl, x.headline,
-      ...pickGeo(x, c),
-      new Date(x.firstSeenAt).toISOString(), new Date(x.acceptedAt).toISOString(),
-      x.daysPending, x.welcomeMessageSent,
-      x.email || c.email || '', x.phone || c.phone || '', x.phoneLabel || c.phoneLabel || '',
-      x.website || c.website || '', x.address || c.address || '', x.birthday || c.birthday || '',
-      ...pickActivity(x, c)]);
+  const iso = (ts) => (ts ? new Date(ts).toISOString() : '');
+  for (const r of Object.values(contacts)) {
+    rows.push([
+      r.status || '', r.name || '', r.profileUrl || '', r.headline || '',
+      r.location || '', r.country || '',
+      iso(r.firstSeenAt), iso(r.acceptedAt), iso(r.declinedAt), r.daysPending || 0, r.welcomeMessageSent || false,
+      r.marked || false, r.favorite || false,
+      r.email || '', r.phone || '', r.phoneLabel || '',
+      r.website || '', r.address || '', r.birthday || '',
+      r.lastActivityAt || '', r.lastPostAt || '',
+    ]);
   }
   const csv = rows.map((r) => r.map(csvEscape).join(',')).join('\n');
   downloadBlob(new Blob([csv], { type: 'text/csv' }), `linkedin-tracker-${new Date().toISOString().slice(0, 10)}.csv`);
@@ -902,47 +825,35 @@ async function exportCsv() {
 
 async function exportJson() {
   const data = await dbGet(null);
-  const payload = { exportedAt: new Date().toISOString(), version: 1, data };
+  // Payload version 2: unified `contacts` store shape. Importers ≥1.3.0
+  // handle both v1 (three-store) and v2 payloads via the migration path.
+  const payload = { exportedAt: new Date().toISOString(), version: 2, data };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   downloadBlob(blob, `linkedin-tracker-${new Date().toISOString().slice(0, 10)}.json`);
 }
 
 // Download only the CURRENT tab's list as JSON. Matches what the user
-// actually sees on screen — filter/sort rules of each renderXxx() function
-// are the source of truth. The Favorites tab aggregates across stores
-// so it needs its own path; the others are simple filters on their store.
+// actually sees on screen — one contacts dict, filtered by status.
 async function exportCurrentTab() {
   const tab = activeTabName();
-  const { sentInvitations = {}, accepted = {}, contacts = {} } =
-    await dbGet(['sentInvitations', 'accepted', 'contacts']);
+  const { contacts = {} } = await dbGet('contacts');
+  const all = Object.values(contacts);
 
   let items;
   switch (tab) {
     case 'pending':
-      items = Object.values(sentInvitations);
+      items = all.filter((r) => r.status === 'pending');
       break;
-    case 'accepted': {
-      // Accepted tab renders items that are NOT marked, splitting into
-      // active vs declined. The user's mental model of "this tab's data"
-      // is that whole set (both active and declined) — so we ship both.
-      items = Object.values(accepted).filter((x) => !isMarked(x));
+    case 'accepted':
+      // Accepted tab renders items that are NOT marked, both active + declined.
+      items = all.filter((r) => (r.status === 'accepted' || r.status === 'declined') && !isMarked(r));
       break;
-    }
     case 'marked':
-      items = Object.values(accepted).filter(isMarked);
+      items = all.filter((r) => isMarked(r));
       break;
-    case 'favorites': {
-      const seen = new Map();
-      // Precedence: contacts < pending < accepted (richer data wins on
-      // same profileUrl) — matches renderFavorites().
-      for (const store of [contacts, sentInvitations, accepted]) {
-        for (const rec of Object.values(store)) {
-          if (rec.favorite) seen.set(rec.profileUrl, rec);
-        }
-      }
-      items = Array.from(seen.values());
+    case 'favorites':
+      items = all.filter((r) => r.favorite);
       break;
-    }
     default:
       // Settings has no list. Give the user something graceful rather
       // than a zero-byte file: full backup, same as the Settings button.
@@ -951,7 +862,7 @@ async function exportCurrentTab() {
 
   const payload = {
     exportedAt: new Date().toISOString(),
-    version: 1,
+    version: 2,
     tab,
     count: items.length,
     items,
@@ -969,9 +880,18 @@ async function importJson(file) {
     const parsed = JSON.parse(text);
     const data = parsed?.data;
     if (!data || typeof data !== 'object') throw new Error('Missing `data` object — not a valid backup');
+    // Backup version detection: v1 payload wrappers carry legacy
+    // sentInvitations/accepted keys in `data` — migrate them to v2
+    // before writing so imports from any old backup land cleanly.
+    const isLegacy = LITSchema.isLegacyPayload(parsed);
+    const finalData = isLegacy ? LITSchema.migrateToV2(data) : data;
+    if (isLegacy) finalData._backup_v1._migratedAt = Date.now();
     await dbClear();
-    await dbSet(data);
-    status.textContent = `Imported ${Object.keys(data).length} keys.`;
+    await dbSet(finalData);
+    const contactCount = Object.keys(finalData.contacts || {}).length;
+    status.textContent = isLegacy
+      ? `Imported ${contactCount} contacts (auto-migrated from legacy v1 backup).`
+      : `Imported ${contactCount} contacts.`;
     loadData();
   } catch (e) {
     status.classList.add('error');
@@ -1056,7 +976,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   const keys = msg.keys || [];
   const all = keys.includes('*');
   if (all || keys.includes('scanInProgress')) updateScanButton();
-  if (all || keys.includes('sentInvitations') || keys.includes('accepted') || keys.includes('scanState')) loadData();
+  if (all || keys.includes('contacts') || keys.includes('scanState')) loadData();
 });
 
 document.querySelectorAll('.tab').forEach((tab) => {
@@ -1108,15 +1028,14 @@ async function forgetAllContactDetails() {
     + 'Names, headlines, profile URLs and accepted/marked status are NOT affected. This cannot be undone.'
   );
   if (!ok) return;
-  const { contacts = {}, accepted = {} } = await dbGet(['contacts', 'accepted']);
+  const { contacts = {} } = await dbGet('contacts');
   let touched = 0;
   for (const r of Object.values(contacts)) if (stripContactFields(r)) touched++;
-  for (const r of Object.values(accepted)) if (stripContactFields(r)) touched++;
   if (touched === 0) {
     status.textContent = 'No contact details were stored.';
     return;
   }
-  await dbSet({ contacts, accepted });
+  await dbSet({ contacts });
   status.textContent = `Cleared contact details from ${touched} record(s).`;
   loadData();
 }

@@ -27,6 +27,7 @@
       "matches": ["https://www.linkedin.com/mynetwork/invitation-manager/sent/*"],
       "js": [
         "db-client.js",
+        "core/schema-v2.js",
         "core/url.js",
         "core/diff-sent.js",
         "content.js"
@@ -37,6 +38,7 @@
       "matches": ["https://www.linkedin.com/in/*"],
       "js": [
         "db-client.js",
+        "core/schema-v2.js",
         "core/url.js",
         "core/rsc-parser.js",
         "core/detect.js",
@@ -52,6 +54,7 @@
       "matches": ["https://www.linkedin.com/mynetwork/invite-connect/connections/*"],
       "js": [
         "db-client.js",
+        "core/schema-v2.js",
         "core/url.js",
         "core/parseDate.js",
         "core/merge-connections.js",
@@ -63,6 +66,7 @@
       "matches": ["https://www.linkedin.com/search/results/people/*"],
       "js": [
         "db-client.js",
+        "core/schema-v2.js",
         "core/url.js",
         "core/search-results-parser.js",
         "search-mutuals.js"

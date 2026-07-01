@@ -115,12 +115,15 @@ function setupWithdrawListener() {
     if (!link) return;
     const profileUrl = LITUrl.normalizeProfileUrl(link.href);
 
-    const { sentInvitations = {} } = await dbGet('sentInvitations');
-    if (!sentInvitations[profileUrl]) return;
-    const name = sentInvitations[profileUrl].name;
-    delete sentInvitations[profileUrl];
-    await dbSet({ sentInvitations });
-    console.log(`[LI Tracker] withdrew & removed: ${name}`);
+    // v2 unified store: stamp withdrawnAt on the pending record so the
+    // next /sent/ scan's diff can classify a disappearance correctly
+    // (declined within 7 days; assumed accepted after 7).
+    const { contacts = {} } = await dbGet('contacts');
+    const rec = contacts[profileUrl];
+    if (!rec || rec.status !== 'pending') return;
+    rec.withdrawnAt = Date.now();
+    await dbSet({ contacts });
+    console.log(`[LI Tracker] withdraw stamped: ${rec.name}`);
   }, true);
 }
 
@@ -162,14 +165,27 @@ async function autoScroll() {
 }
 
 async function diffAndPersist(snapshot) {
-  const stored = await dbGet(['sentInvitations', 'accepted', 'scanHistory']);
+  // Defense-in-depth: if v1 storage still lingers (service worker didn't
+  // migrate yet, or migration failed), run it in-memory here so this scan
+  // doesn't misclassify every pending record as brand new.
+  const allStored = await dbGet(null);
+  const stored = LITSchema.isV2(allStored) ? allStored : LITSchema.migrateToV2(allStored);
   const result = LITDiffSent.diffSentInvitations(snapshot, stored, Date.now());
 
-  await dbSet({
-    sentInvitations: result.sentInvitations,
-    accepted: result.accepted,
-    scanHistory: result.scanHistory,
-  });
+  // If migration ran here (not via SW), persist the whole migrated stored
+  // so v1 keys are cleared and _backup_v1 is snapshotted. Otherwise write
+  // only the touched keys.
+  const migratedNow = !LITSchema.isV2(allStored);
+  if (migratedNow) {
+    stored.contacts = result.contacts;
+    stored.scanHistory = result.scanHistory;
+    await dbSet(stored);
+  } else {
+    await dbSet({
+      contacts: result.contacts,
+      scanHistory: result.scanHistory,
+    });
+  }
 
   if (result.partial) {
     console.warn(`[LI Tracker] partial scan detected — skipped missing→accepted diff to avoid false positives`);

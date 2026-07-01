@@ -188,10 +188,11 @@ async function persistVisit() {
   const status = LITDetect.detectConnectionStatus(root);
   if (!info || !status) return;
 
-  // Honor the opt-in capture toggle (P1.2). If the user disabled auto-save,
-  // we still record acceptance verifications (accepted/sentInvitations) but
-  // skip writing to the `contacts` store. The acceptance bookkeeping is data
-  // integrity; the contacts log is the recruiter-objected "auto-CRM" piece.
+  // Honor the opt-in capture toggle (P1.2). autoCaptureProfiles gates
+  // status='visited' writes (someone we visited but never invited); we
+  // ALWAYS write status='pending' / 'accepted' / 'declined' because
+  // those are bookkeeping (invite tracking is data integrity, not the
+  // recruiter-objected "auto-CRM" piece).
   const settings = await dbGet('settings');
   const autoCapture = settings.settings?.autoCaptureProfiles !== false;
 
@@ -200,14 +201,16 @@ async function persistVisit() {
   // fields as-is".
   const contactInfo = LITContactsModal.parseContactsModal(document);
 
-  const stored = await dbGet(['contacts', 'accepted', 'sentInvitations']);
+  const stored = await dbGet(['contacts', 'schemaVersion']);
   const result = LITProfileState.applyProfileVisit(stored, info, status, Date.now(), contactInfo);
 
-  const patch = {};
-  if (autoCapture) patch.contacts = result.contacts;
-  if (result.acceptedChanged) patch.accepted = result.accepted;
-  if (result.sentChanged) patch.sentInvitations = result.sentInvitations;
-  if (Object.keys(patch).length > 0) await dbSet(patch);
+  // If autoCapture is OFF and the ONLY new record we'd be writing is a
+  // 'visited' one (no invite tracking involved), skip the write.
+  const wroteRecord = result.contacts[info.profileUrl];
+  const isVisitedOnly = wroteRecord && wroteRecord.status === 'visited';
+  if (result.changed && (autoCapture || !isVisitedOnly)) {
+    await dbSet({ contacts: result.contacts });
+  }
 
   if (contactInfo) {
     showCaptureToast(contactInfo);
@@ -216,10 +219,8 @@ async function persistVisit() {
     nudgeCache = { url: null, hasContacts: null };
   }
 
-  const stored2 = await dbGet(['sentInvitations', 'accepted']);
-  const rec = stored2.sentInvitations?.[info.profileUrl]
-           || stored2.accepted?.[info.profileUrl]
-           || {};
+  const { contacts: stored2 = {} } = await dbGet('contacts');
+  const rec = stored2[info.profileUrl] || {};
   console.log(`[LI Tracker] visited ${info.name} (${status})`);
   console.log(`[LI Tracker]   fresh avatar : ${info.avatar?.slice(0, 90) || '(empty)'}`);
   console.log(`[LI Tracker]   stored avatar: ${rec.avatar?.slice(0, 90) || '(empty)'}`);
@@ -419,8 +420,8 @@ async function updateCRMNudge(profileUrl, status) {
   // Cache is invalidated by persistVisit() after a successful contact-info
   // save, so the tooltip is removed as soon as the parser captures data.
   if (nudgeCache.url !== profileUrl) {
-    const stored = await dbGet(['contacts', 'accepted']);
-    const rec = (stored.contacts || {})[profileUrl] || (stored.accepted || {})[profileUrl] || {};
+    const { contacts = {} } = await dbGet('contacts');
+    const rec = contacts[profileUrl] || {};
     nudgeCache = {
       url: profileUrl,
       hasContacts: Boolean(rec.email || rec.phone || rec.website),
