@@ -8,6 +8,33 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
+### Added (Phase A — pure logic only, NOT yet wired into extension runtime)
+Foundation for the Bulk Visit Queue feature. Three new `core/` modules with
+94 tests, all green. NOT loaded by manifest / background / popup yet — those
+integrations wait for morning review before touching runtime.
+
+- **`core/humanizer.js`** — pure humanization primitives (log-normal /
+  exponential dwell distributions, variable-velocity scroll planner,
+  time-of-day window gate, warmup factor, safety-zone classifier for
+  the popup counter). Fully seeded via mulberry32 PRNG → deterministic
+  replay. 42 tests.
+- **`core/visit-queue.js`** — pure state machine for the queue lifecycle
+  (build from URL blob, pre-skip evaluation for 1st-degree /
+  recently-visited, state transitions markRunning/markVisited/markFailed
+  /pause/resume/cancel, daily-cap enforcement with local-timezone date
+  keying, dry-run preview, history archive). 42 tests.
+- **`core/visit-runner.js`** — pure event planner (`plan(state, event)
+  → {newState, actions}`) that decides "given the current queue state
+  and this event, what actions must the service worker take". Handles
+  TICK / CAPTURE_DONE / CAPTURE_FAILED / PAUSE / RESUME / CANCEL /
+  HEALTH_ALARM / IDLE_DETECTED. The runner navigates DIRECTLY to
+  `/overlay/contact-info/` — one nav triggers BOTH profile.js and
+  LITContactsModal parsers, halving per-profile time. 20 tests.
+- **Integration test** `tests/visit-queue-integration.test.js` — 10 tests
+  exercising the full state machine end-to-end (batch break, feed break,
+  daily cap boundary, window boundary, warmup, cancel mid-flight, failed
+  items, deterministic replay).
+
 ## [1.3.0] — 2026-07-01
 
 ### Changed (BIG — unified `contacts` storage)
