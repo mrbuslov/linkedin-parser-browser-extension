@@ -192,7 +192,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return;
   }
   if (msg?.type === 'VISIT_CAPTURE_DONE') {
-    visitRunnerHandle({ type: 'CAPTURE_DONE', now: Date.now() });
+    // Include the URL as a safety check — if a late CAPTURE_DONE arrives
+    // after we've moved on to another item, plan() will see the URL
+    // mismatch and log-ignore it rather than mis-marking the wrong item.
+    visitRunnerHandle({ type: 'CAPTURE_DONE', now: Date.now(), url: msg.url });
     sendResponse(true);
     return;
   }

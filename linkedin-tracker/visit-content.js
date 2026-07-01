@@ -85,7 +85,7 @@
   // Final check before signaling done.
   if (await isQueueStillRunning() === false) return;
 
-  chrome.runtime.sendMessage({ type: 'VISIT_CAPTURE_DONE' }).catch(() => {});
+  chrome.runtime.sendMessage({ type: 'VISIT_CAPTURE_DONE', url: running.url }).catch(() => {});
 })();
 
 async function isQueueStillRunning() {

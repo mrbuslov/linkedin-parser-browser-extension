@@ -99,6 +99,30 @@ describe('plan — CAPTURE_DONE flow', () => {
     expect(done.newState.queue.stats.visitsSinceBreak).toBe(0);
   });
 
+  it('CAPTURE_DONE with mismatched URL is silently dropped (late signal guard)', () => {
+    let state = buildState({ urls: ['a', 'b'] });
+    state = R.plan(state, { type: 'TICK', now: NOW }, deps).newState;
+    const running = state.queue.items[0];
+    // Simulate a stale CAPTURE_DONE from a previous item that arrives late
+    const late = R.plan(state, {
+      type: 'CAPTURE_DONE', now: NOW + 30_000,
+      url: 'https://www.linkedin.com/in/someone-else/',
+    }, deps);
+    // Running item NOT marked visited
+    expect(late.newState.queue.items[0].status).toBe('running');
+    expect(running.status).toBe('running');
+  });
+
+  it('CAPTURE_DONE with matching URL marks item visited', () => {
+    let state = buildState({ urls: ['a', 'b'] });
+    state = R.plan(state, { type: 'TICK', now: NOW }, deps).newState;
+    const runningUrl = state.queue.items[0].url;
+    const done = R.plan(state, {
+      type: 'CAPTURE_DONE', now: NOW + 30_000, url: runningUrl,
+    }, deps);
+    expect(done.newState.queue.items[0].status).toBe('visited');
+  });
+
   it('late CAPTURE_DONE when queue paused is ignored', () => {
     let state = buildState({ urls: ['a'] });
     state = R.plan(state, { type: 'TICK', now: NOW }, deps).newState;

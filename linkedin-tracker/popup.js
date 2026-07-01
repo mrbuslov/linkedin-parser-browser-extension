@@ -1134,12 +1134,12 @@ function renderVisitsQueue(queue) {
   }
 
   block.hidden = false;
-  const isTerminal = queue.status === 'completed';
-  inputBlock.hidden = !isTerminal;
+  const isActive = queue.status === 'running' || queue.status === 'paused';
+  inputBlock.hidden = isActive; // active queue → can't start a new one until cleared
   pauseBtn.hidden = queue.status !== 'running';
   resumeBtn.hidden = queue.status !== 'paused';
   cancelBtn.hidden = queue.status === 'completed';
-  clearHistoryBtn.hidden = !isTerminal;
+  clearHistoryBtn.hidden = queue.status !== 'completed';
 
   const visited = queue.items.filter((i) => i.status === 'visited').length;
   const skipped = queue.items.filter((i) => i.status === 'skipped').length;

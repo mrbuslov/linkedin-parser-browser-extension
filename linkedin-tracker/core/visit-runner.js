@@ -135,6 +135,15 @@ function _handleCaptureDone(state, event, deps) {
   if (runningIdx === -1) {
     return { newState: state, actions: [{ type: ACTION.LOG, message: 'CAPTURE_DONE with no running item' }] };
   }
+  // Late-signal guard: if a URL was included and it doesn't match the
+  // currently running item, silently drop it — a previous visit's
+  // content script fired after we already advanced.
+  if (event.url && event.url !== state.queue.items[runningIdx].url) {
+    return {
+      newState: state,
+      actions: [{ type: ACTION.LOG, message: `CAPTURE_DONE URL mismatch (got ${event.url}, running ${state.queue.items[runningIdx].url}); ignored` }],
+    };
+  }
   let q = visitQueue.markVisited(state.queue, runningIdx, event.now);
   const actions = [{ type: ACTION.PERSIST }];
 
