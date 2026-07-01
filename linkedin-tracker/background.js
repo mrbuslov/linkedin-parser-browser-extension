@@ -7,7 +7,12 @@
 // This ensures content scripts and the popup can always assume unified
 // `contacts` shape, regardless of who woke up first after an update.
 
-importScripts('core/schema-v2.js');
+importScripts(
+  'core/schema-v2.js',
+  'core/humanizer.js',
+  'core/visit-queue.js',
+  'core/visit-runner.js',
+);
 
 const DB_NAME = 'linkedin-tracker';
 const DB_VERSION = 1;
@@ -165,6 +170,42 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     refreshBadge();
     return;
   }
+  // Bulk Visit Queue events forwarded to the runner state machine
+  if (msg?.type === 'VISIT_QUEUE_START') {
+    visitRunnerHandle({ type: 'TICK', now: Date.now() });
+    sendResponse(true);
+    return;
+  }
+  if (msg?.type === 'VISIT_QUEUE_PAUSE') {
+    visitRunnerHandle({ type: 'PAUSE', now: Date.now() });
+    sendResponse(true);
+    return;
+  }
+  if (msg?.type === 'VISIT_QUEUE_RESUME') {
+    visitRunnerHandle({ type: 'RESUME', now: Date.now() });
+    sendResponse(true);
+    return;
+  }
+  if (msg?.type === 'VISIT_QUEUE_CANCEL') {
+    visitRunnerHandle({ type: 'CANCEL', now: Date.now() });
+    sendResponse(true);
+    return;
+  }
+  if (msg?.type === 'VISIT_CAPTURE_DONE') {
+    visitRunnerHandle({ type: 'CAPTURE_DONE', now: Date.now() });
+    sendResponse(true);
+    return;
+  }
+  if (msg?.type === 'VISIT_CAPTURE_FAILED') {
+    visitRunnerHandle({ type: 'CAPTURE_FAILED', now: Date.now(), reason: msg.reason || 'unknown' });
+    sendResponse(true);
+    return;
+  }
+  if (msg?.type === 'VISIT_HEALTH_ALARM') {
+    visitRunnerHandle({ type: 'HEALTH_ALARM', now: Date.now(), signal: msg.signal });
+    sendResponse(true);
+    return;
+  }
 });
 
 // One-time v1 → v2 storage migration. Idempotent: if storage is already
@@ -209,3 +250,157 @@ chrome.runtime.onStartup.addListener(async () => {
 });
 // Also run on service-worker cold start (e.g., first message wakes it up).
 runStorageMigration();
+
+// ===========================================================================
+// Bulk Visit Queue — service-worker glue.
+// ===========================================================================
+// Thin adapter between the pure LITVisitRunner.plan() and Chrome APIs.
+// Every message from popup / content script becomes an event fed into
+// plan(); the returned action list is applied here. The runner owns
+// zero state directly — everything lives in storage under `visitQueue`
+// (and gets persisted on every action list that includes PERSIST).
+//
+// One dedicated tab handles all visits — created on first UPDATE_TAB
+// action, reused for every subsequent visit, closed on CLOSE_TAB.
+// tabId is kept in memory (visitTabId); after SW restart we look it
+// up from the running queue's stored tabId or open a fresh tab.
+
+const VISIT_ALARM = 'lit-visit-tick';
+let visitTabId = null;
+
+async function getVisitQueueState() {
+  const { visitQueue } = await dbGet('visitQueue');
+  return visitQueue ? { queue: visitQueue } : null;
+}
+
+async function persistQueueState(state) {
+  await dbSet({ visitQueue: state.queue });
+}
+
+async function applyAction(action, state) {
+  switch (action.type) {
+    case 'OPEN_TAB':
+    case 'UPDATE_TAB': {
+      const url = action.url;
+      if (visitTabId != null) {
+        try {
+          await chrome.tabs.update(visitTabId, { url, active: true });
+          break;
+        } catch {
+          visitTabId = null; // tab was closed by user
+        }
+      }
+      const tab = await chrome.tabs.create({ url, active: true });
+      visitTabId = tab.id;
+      break;
+    }
+    case 'CLOSE_TAB':
+      if (visitTabId != null) {
+        try { await chrome.tabs.remove(visitTabId); } catch { /* already closed */ }
+        visitTabId = null;
+      }
+      break;
+    case 'SCHEDULE_TICK': {
+      const when = Date.now() + Math.max(1000, action.delayMs);
+      chrome.alarms.create(VISIT_ALARM, { when });
+      break;
+    }
+    case 'PERSIST':
+      await persistQueueState(state);
+      break;
+    case 'ARCHIVE': {
+      const { visitQueueHistory = [] } = await dbGet('visitQueueHistory');
+      const nextHistory = LITVisitQueue.archiveToHistory(visitQueueHistory, action.queue, Date.now());
+      await dbSet({ visitQueueHistory: nextHistory });
+      break;
+    }
+    case 'NOTIFY_USER':
+      chrome.notifications.create({
+        type: 'basic',
+        iconUrl: chrome.runtime.getURL('icons/icon128.png'),
+        title: action.title,
+        message: action.body,
+        priority: 2,
+      });
+      break;
+    case 'LOG':
+      console.log(`[LI Tracker/visit] ${action.message}`);
+      break;
+    default:
+      console.warn(`[LI Tracker/visit] unknown action ${action.type}`);
+  }
+}
+
+let visitHandleLock = Promise.resolve();
+async function visitRunnerHandle(event) {
+  // Serialize event processing — plan() is pure but action application
+  // includes async chrome API calls and IDB writes. Racing two events
+  // could double-open tabs or race state writes.
+  visitHandleLock = visitHandleLock.then(async () => {
+    const state = await getVisitQueueState();
+    if (!state) {
+      console.warn('[LI Tracker/visit] event received but no queue exists', event.type);
+      return;
+    }
+    const deps = {
+      humanizer:  LITHumanizer,
+      visitQueue: LITVisitQueue,
+    };
+    const { newState, actions } = LITVisitRunner.plan(state, event, deps);
+    for (const action of actions) {
+      await applyAction(action, newState);
+    }
+    // Emit change so popup live-rerenders
+    chrome.runtime.sendMessage({ type: 'VISIT_QUEUE_CHANGED' }).catch(() => {});
+  }).catch((e) => {
+    console.error('[LI Tracker/visit] handler crashed:', e);
+  });
+  return visitHandleLock;
+}
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === VISIT_ALARM) {
+    visitRunnerHandle({ type: 'TICK', now: Date.now() });
+  }
+});
+
+// User activity detection — chrome.idle fires 'active' when user returns.
+// If queue is running, defer next visit by IDLE_PAUSE_MS.
+if (chrome.idle && chrome.idle.setDetectionInterval) {
+  chrome.idle.setDetectionInterval(60); // 60s minimum
+  chrome.idle.onStateChanged.addListener(async (newState) => {
+    if (newState !== 'active') return;
+    const state = await getVisitQueueState();
+    if (!state || state.queue.status !== 'running') return;
+    visitRunnerHandle({ type: 'IDLE_DETECTED', now: Date.now() });
+  });
+}
+
+// Health-signal watcher — detect LinkedIn's /checkpoint/ or /uas/
+// redirect on the visit tab specifically. On seeing one, pipe a
+// HEALTH_ALARM event.
+chrome.webNavigation.onBeforeNavigate.addListener((details) => {
+  if (details.frameId !== 0) return;
+  if (visitTabId == null || details.tabId !== visitTabId) return;
+  const url = details.url || '';
+  if (/\/checkpoint\/|\/uas\/|\/error\//i.test(url)) {
+    visitRunnerHandle({
+      type: 'HEALTH_ALARM',
+      now: Date.now(),
+      signal: new URL(url).pathname,
+    });
+  }
+});
+
+// On SW cold start, if a queue is running, resume ticking. Chrome
+// alarms survive SW restarts, but if the alarm fired while we were
+// dead we need to catch up.
+async function resumeVisitQueueIfNeeded() {
+  const state = await getVisitQueueState();
+  if (!state) return;
+  if (state.queue.status === 'running') {
+    chrome.alarms.create(VISIT_ALARM, { when: Date.now() + 5000 });
+    console.log('[LI Tracker/visit] resumed running queue after SW restart');
+  }
+}
+resumeVisitQueueIfNeeded();

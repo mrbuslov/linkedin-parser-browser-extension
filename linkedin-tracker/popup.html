@@ -12,6 +12,7 @@
       <button class="tab" data-tab="accepted">Accepted</button>
       <button class="tab" data-tab="marked">Marked</button>
       <button class="tab" data-tab="favorites" title="Favorites">★</button>
+      <button class="tab" data-tab="visits" title="Bulk visit queue">🤖</button>
       <button class="tab" data-tab="settings">Settings</button>
     </div>
     <div class="actions">
@@ -86,6 +87,84 @@
 
     <section id="detail-panel" class="panel" hidden></section>
 
+    <section id="visits-panel" class="panel">
+      <div class="visits-header">
+        <div class="visits-zone" id="visits-zone">
+          <span class="visits-zone-emoji" id="visits-zone-emoji">🟢</span>
+          <span class="visits-zone-label" id="visits-zone-label">Safe</span>
+          <span class="visits-zone-count" id="visits-zone-count">0 / 30 today</span>
+        </div>
+        <div class="visits-status" id="visits-status">Idle</div>
+      </div>
+
+      <div class="visits-panic" id="visits-panic" hidden>
+        <span class="visits-panic-title">⚠ Queue running</span>
+        <button class="visits-panic-btn" id="visits-panic-stop">STOP EVERYTHING</button>
+      </div>
+
+      <div class="visits-block" id="visits-input-block">
+        <h3>Add profiles</h3>
+        <p class="hint">Paste LinkedIn profile URLs — one per line OR comma-separated. Only <code>linkedin.com/in/…</code> URLs are accepted.</p>
+        <textarea id="visits-textarea" placeholder="https://www.linkedin.com/in/alice/&#10;https://www.linkedin.com/in/bob/&#10;…" rows="5"></textarea>
+        <div class="visits-preview" id="visits-preview"></div>
+        <div class="visits-actions">
+          <button class="cta" id="visits-preview-btn">Preview</button>
+          <button class="cta" id="visits-start-btn" hidden>Start queue</button>
+          <button id="visits-clear-btn">Clear input</button>
+        </div>
+      </div>
+
+      <div class="visits-block" id="visits-settings-block">
+        <h3>Settings</h3>
+        <div class="visits-settings">
+          <label>Window from
+            <input type="time" id="visits-window-start" value="09:00">
+          </label>
+          <label>to
+            <input type="time" id="visits-window-end" value="21:00">
+          </label>
+          <label>Daily cap
+            <input type="number" id="visits-daily-cap" value="20" min="1" max="50">
+          </label>
+          <label>Skip if visited within (days)
+            <input type="number" id="visits-skip-days" value="30" min="0" max="365">
+          </label>
+          <label class="visits-checkbox">
+            <input type="checkbox" id="visits-skip-1st" checked>
+            Skip 1st-degree connections
+          </label>
+          <label>Warmup (days at 30% cap)
+            <input type="number" id="visits-warmup" value="7" min="0" max="30">
+          </label>
+        </div>
+      </div>
+
+      <div class="visits-block" id="visits-queue-block" hidden>
+        <h3>Queue</h3>
+        <div class="visits-progress" id="visits-progress"></div>
+        <ul class="visits-list" id="visits-list"></ul>
+        <div class="visits-actions">
+          <button id="visits-pause-btn" hidden>Pause</button>
+          <button id="visits-resume-btn" hidden>Resume</button>
+          <button id="visits-cancel-btn" hidden>Cancel queue</button>
+          <button id="visits-clear-history-btn" hidden>Clear completed</button>
+        </div>
+      </div>
+
+      <div class="visits-block">
+        <h3>Warning</h3>
+        <p class="hint">
+          LinkedIn actively detects bulk profile visits. This feature runs
+          slowly (max 20 profiles/day by default, humanized scroll and
+          pauses) but <b>cannot guarantee your account won't get
+          restricted</b>. Recommended for warm accounts with regular
+          activity, not new / burner accounts. If LinkedIn asks for
+          verification, queue auto-pauses — complete the check manually
+          and resume.
+        </p>
+      </div>
+    </section>
+
     <section id="settings-panel" class="panel">
       <div class="settings-block">
         <h3>Backup</h3>
@@ -128,6 +207,8 @@
 </body>
 <script src="db-client.js"></script>
 <script src="core/schema-v2.js"></script>
+<script src="core/humanizer.js"></script>
+<script src="core/visit-queue.js"></script>
 <script src="core/popup-logic.js"></script>
 <script src="popup.js"></script>
 </html>

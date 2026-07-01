@@ -1057,3 +1057,225 @@ $('import-file').addEventListener('change', (e) => {
 
 loadData();
 updateScanButton();
+
+// ===========================================================================
+// Bulk Visit Queue tab
+// ===========================================================================
+const VISITS_DEFAULT_SETTINGS = () => ({
+  windowStart: $('visits-window-start').value || '09:00',
+  windowEnd:   $('visits-window-end').value   || '21:00',
+  tzOffsetMin: -new Date().getTimezoneOffset(),
+  dailyCap:    Math.max(1, Math.min(50, Number($('visits-daily-cap').value) || 20)),
+  skipRecentDays:  Math.max(0, Number($('visits-skip-days').value) || 0),
+  skipFirstDegree: $('visits-skip-1st').checked,
+  batchSize:       3,
+  betweenMeanSec:  90,
+  warmupDays:      Math.max(0, Number($('visits-warmup').value) || 0),
+});
+
+function visitsRandSeed() {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return buf[0] | 0;
+}
+
+async function visitsCurrentContacts() {
+  const { contacts = {} } = await dbGet('contacts');
+  return contacts;
+}
+
+function renderVisitsZone(queue) {
+  const emoji = $('visits-zone-emoji');
+  const label = $('visits-zone-label');
+  const count = $('visits-zone-count');
+  if (!queue) {
+    emoji.textContent = '🟢';
+    label.textContent = 'Safe';
+    count.textContent = 'no active queue';
+    return;
+  }
+  const now = Date.now();
+  const cap = LITVisitQueue.effectiveDailyCap(queue, now, LITHumanizer);
+  const visited = LITVisitQueue.todayVisited(queue, now);
+  const zone = LITHumanizer.safetyZone({ todayVisited: visited, dailyCap: cap });
+  emoji.textContent = zone.emoji;
+  label.textContent = zone.label;
+  count.textContent = `${visited} / ${cap} today · ${zone.remaining} left`;
+}
+
+function renderVisitsStatus(queue) {
+  const st = $('visits-status');
+  const panic = $('visits-panic');
+  if (!queue) {
+    st.textContent = 'Idle';
+    st.className = 'visits-status';
+    panic.hidden = true;
+    return;
+  }
+  st.textContent = queue.status;
+  st.className = `visits-status ${queue.status}`;
+  panic.hidden = queue.status !== 'running';
+}
+
+function renderVisitsQueue(queue) {
+  const block = $('visits-queue-block');
+  const list = $('visits-list');
+  const progress = $('visits-progress');
+  const inputBlock = $('visits-input-block');
+  const pauseBtn = $('visits-pause-btn');
+  const resumeBtn = $('visits-resume-btn');
+  const cancelBtn = $('visits-cancel-btn');
+  const clearHistoryBtn = $('visits-clear-history-btn');
+
+  if (!queue) {
+    block.hidden = true;
+    inputBlock.hidden = false;
+    return;
+  }
+
+  block.hidden = false;
+  const isTerminal = queue.status === 'completed';
+  inputBlock.hidden = !isTerminal;
+  pauseBtn.hidden = queue.status !== 'running';
+  resumeBtn.hidden = queue.status !== 'paused';
+  cancelBtn.hidden = queue.status === 'completed';
+  clearHistoryBtn.hidden = !isTerminal;
+
+  const visited = queue.items.filter((i) => i.status === 'visited').length;
+  const skipped = queue.items.filter((i) => i.status === 'skipped').length;
+  const failed  = queue.items.filter((i) => i.status === 'failed').length;
+  const total = queue.items.length;
+  progress.textContent = `${visited} visited · ${skipped} skipped · ${failed} failed · ${total} total`;
+
+  list.innerHTML = '';
+  const ICON = {
+    queued:   '○', running: '●', visited: '✓',
+    skipped:  '⊘', failed:  '✕',
+  };
+  for (const item of queue.items) {
+    const li = el('li', { className: item.status === 'visited' ? 'done' : item.status });
+    li.appendChild(el('span', { className: 'visits-list-icon' }, [ICON[item.status] || '?']));
+    const short = item.url.replace('https://www.linkedin.com/in/', '');
+    li.appendChild(el('span', { className: 'visits-list-url' }, [short]));
+    if (item.skipReason) {
+      li.appendChild(el('span', { className: 'visits-list-reason' }, [item.skipReason]));
+    } else if (item.error) {
+      li.appendChild(el('span', { className: 'visits-list-reason' }, [item.error]));
+    }
+    list.appendChild(li);
+  }
+}
+
+async function renderVisitsPanel() {
+  const { visitQueue } = await dbGet('visitQueue');
+  renderVisitsZone(visitQueue);
+  renderVisitsStatus(visitQueue);
+  renderVisitsQueue(visitQueue);
+}
+
+async function visitsPreview() {
+  const raw = $('visits-textarea').value;
+  const preview = $('visits-preview');
+  preview.classList.remove('error');
+  if (!raw.trim()) {
+    preview.textContent = 'Paste some URLs first.';
+    preview.classList.add('error');
+    return;
+  }
+  let parsed;
+  try {
+    parsed = LITVisitQueue.parseUrlBlob(raw);
+  } catch (e) {
+    preview.textContent = `Parse error: ${e.message}`;
+    preview.classList.add('error');
+    return;
+  }
+  const contacts = await visitsCurrentContacts();
+  const settings = VISITS_DEFAULT_SETTINGS();
+  let tempQueue;
+  try {
+    tempQueue = LITVisitQueue.buildQueue({
+      rawInput: raw, contacts, settings, now: Date.now(), seed: 1,
+    });
+  } catch (e) {
+    preview.textContent = e.message;
+    preview.classList.add('error');
+    return;
+  }
+  const dry = LITVisitQueue.dryRunPreview({
+    queue: tempQueue, now: Date.now(), humanizer: LITHumanizer,
+  });
+  const skips = Object.entries(dry.alreadySkipped)
+    .map(([r, n]) => `<li>${n} × ${r}</li>`).join('');
+  preview.innerHTML = `
+    <b>${dry.willVisit} will be visited</b> · ${dry.totalItems} total
+    ${skips ? `<ul>${skips}</ul>` : ''}
+    <div style="margin-top:6px">
+      Approx. ${dry.estimatedMinutes} min of active work,
+      spread across ${dry.daysNeeded} day(s) at ${dry.perDayCap}/day cap.
+      ${dry.warmupActive ? '<br><b>Warmup active</b> — first 7 days at 30% cap.' : ''}
+    </div>
+    ${parsed.invalid.length ? `<div style="margin-top:6px;color:#a01d15">Invalid: ${parsed.invalid.length} entries ignored (${parsed.invalid.slice(0,3).join(', ')}…)</div>` : ''}
+  `;
+  $('visits-start-btn').hidden = dry.willVisit === 0;
+}
+
+async function visitsStart() {
+  const raw = $('visits-textarea').value;
+  if (!raw.trim()) return;
+  const contacts = await visitsCurrentContacts();
+  const settings = VISITS_DEFAULT_SETTINGS();
+  const seed = visitsRandSeed();
+  let queue;
+  try {
+    queue = LITVisitQueue.buildQueue({
+      rawInput: raw, contacts, settings, now: Date.now(), seed,
+    });
+  } catch (e) {
+    $('visits-preview').textContent = e.message;
+    $('visits-preview').classList.add('error');
+    return;
+  }
+  queue.status = 'running'; // flip from idle → running
+  await dbSet({ visitQueue: queue });
+  await chrome.runtime.sendMessage({ type: 'VISIT_QUEUE_START' });
+  $('visits-textarea').value = '';
+  $('visits-preview').innerHTML = '';
+  $('visits-start-btn').hidden = true;
+  renderVisitsPanel();
+}
+
+async function visitsPause()  { await chrome.runtime.sendMessage({ type: 'VISIT_QUEUE_PAUSE' });  renderVisitsPanel(); }
+async function visitsResume() { await chrome.runtime.sendMessage({ type: 'VISIT_QUEUE_RESUME' }); renderVisitsPanel(); }
+async function visitsCancel() {
+  if (!confirm('Cancel the queue? Remaining items will be marked as skipped.')) return;
+  await chrome.runtime.sendMessage({ type: 'VISIT_QUEUE_CANCEL' });
+  renderVisitsPanel();
+}
+async function visitsClearHistory() {
+  await dbDelete(['visitQueue']);
+  renderVisitsPanel();
+}
+
+$('visits-preview-btn').addEventListener('click', visitsPreview);
+$('visits-start-btn').addEventListener('click', visitsStart);
+$('visits-clear-btn').addEventListener('click', () => {
+  $('visits-textarea').value = '';
+  $('visits-preview').innerHTML = '';
+  $('visits-start-btn').hidden = true;
+});
+$('visits-pause-btn').addEventListener('click', visitsPause);
+$('visits-resume-btn').addEventListener('click', visitsResume);
+$('visits-cancel-btn').addEventListener('click', visitsCancel);
+$('visits-panic-stop').addEventListener('click', visitsCancel);
+$('visits-clear-history-btn').addEventListener('click', visitsClearHistory);
+
+// Live re-render when the SW pushes a queue change
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg?.type === 'VISIT_QUEUE_CHANGED') renderVisitsPanel();
+  if (msg?.type === 'DB_CHANGED' && (msg.keys || []).includes('visitQueue')) renderVisitsPanel();
+});
+
+// First render + rerender whenever the Visits tab is opened
+renderVisitsPanel();
+document.querySelector('.tab[data-tab="visits"]').addEventListener('click', renderVisitsPanel);

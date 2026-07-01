@@ -32,6 +32,9 @@ export default [
         LITSearchResults: 'readonly',
         LITStripName: 'writable',
         LITSchema: 'readonly',
+        LITHumanizer: 'readonly',
+        LITVisitQueue: 'readonly',
+        LITVisitRunner: 'readonly',
         importScripts: 'readonly',
         // db-client.js exposes these
         dbGet: 'readonly',

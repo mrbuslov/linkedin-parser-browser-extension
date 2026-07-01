@@ -8,32 +8,67 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
-### Added (Phase A — pure logic only, NOT yet wired into extension runtime)
-Foundation for the Bulk Visit Queue feature. Three new `core/` modules with
-94 tests, all green. NOT loaded by manifest / background / popup yet — those
-integrations wait for morning review before touching runtime.
+### Added — Bulk Visit Queue (🤖 tab in popup)
 
-- **`core/humanizer.js`** — pure humanization primitives (log-normal /
-  exponential dwell distributions, variable-velocity scroll planner,
-  time-of-day window gate, warmup factor, safety-zone classifier for
-  the popup counter). Fully seeded via mulberry32 PRNG → deterministic
-  replay. 42 tests.
-- **`core/visit-queue.js`** — pure state machine for the queue lifecycle
-  (build from URL blob, pre-skip evaluation for 1st-degree /
-  recently-visited, state transitions markRunning/markVisited/markFailed
-  /pause/resume/cancel, daily-cap enforcement with local-timezone date
-  keying, dry-run preview, history archive). 42 tests.
-- **`core/visit-runner.js`** — pure event planner (`plan(state, event)
-  → {newState, actions}`) that decides "given the current queue state
-  and this event, what actions must the service worker take". Handles
-  TICK / CAPTURE_DONE / CAPTURE_FAILED / PAUSE / RESUME / CANCEL /
-  HEALTH_ALARM / IDLE_DETECTED. The runner navigates DIRECTLY to
-  `/overlay/contact-info/` — one nav triggers BOTH profile.js and
-  LITContactsModal parsers, halving per-profile time. 20 tests.
-- **Integration test** `tests/visit-queue-integration.test.js` — 10 tests
-  exercising the full state machine end-to-end (batch break, feed break,
-  daily cap boundary, window boundary, warmup, cancel mid-flight, failed
-  items, deterministic replay).
+Automated, humanized bulk profile visiting. Paste a list of LinkedIn URLs,
+extension opens them one by one in a dedicated tab, scrolls, dwells, then
+moves on. Same `contacts` dict as manual visits — data lands via the
+existing `profile.js` + `LITContactsModal` parsers, no new storage schema
+for the visit results themselves.
+
+Key safety rails:
+- **Direct `/overlay/contact-info/` navigation.** One tab load fires BOTH
+  parsers — profile top-card + contact modal — halving time per profile.
+- **Real scrolls, not synthetic events.** `window.scrollBy()` triggers
+  browser-native scroll events with `isTrusted=true`. No `MouseEvent`
+  faking, no `chrome.debugger` API, no debugger banner.
+- **Log-normal distributions, not uniform.** Dwell time is log-normal
+  scaled by content volume (short profile ≈ 30s, long ≈ 3-4 min).
+  Between-visit pause is exponential. Occasional backward scroll
+  ("re-read"), occasional pause ("distracted"). Everything seeded via
+  `mulberry32` PRNG so behaviour is deterministic per queue seed —
+  same session can be replayed for post-mortem debugging.
+- **Time-of-day gate.** Default window 09:00-21:00 local. Queue sleeps
+  outside the window and resumes when it reopens. Ночью не работает.
+- **Daily cap with local-timezone date keying.** Default 20/day,
+  configurable up to 50. Visit at 23:59 local counts against local day.
+- **Warmup mode.** First 7 days at 30% of configured cap. Prevents
+  a sudden "0→30 profiles/day" spike from tripping LinkedIn's behavioral
+  baseline model.
+- **Batch breaks.** After 3 visits → 15-45 min break. After 5-12 →
+  30-50s "feed break" opens `/feed/` briefly (genuine social signal).
+- **Idle detection.** `chrome.idle.onStateChanged` — when user returns
+  to the browser, queue defers next visit by 5 min.
+- **Health-signal auto-pause.** `chrome.webNavigation.onBeforeNavigate`
+  watches the visit tab for `/checkpoint/`, `/uas/`, `/error/`. On hit:
+  queue pauses, tab closes, user gets a notification.
+- **Panic button.** Big red STOP EVERYTHING in the popup whenever
+  status='running'.
+- **Pre-skip.** URLs already in `contacts` with `status='accepted'`
+  (skipFirstDegree) or `visitedAt` within N days (skipRecentDays) are
+  automatically marked skipped before the queue starts.
+- **Dry-run preview.** Preview button shows: how many will visit,
+  how many pre-skipped and why, estimated minutes, days-needed at
+  the effective cap, warmup indicator.
+- **Safety-zone badge.** 🟢 Safe (0-33%) 🟡 Moderate (33-66%)
+  🟠 Warning (66-85%) 🔴 At-limit (85-100%) 🛑 Blocked (100%+).
+- **No auto-connect. Ever.** Only passive data capture. Sending Connect
+  requests programmatically is what actually gets accounts restricted —
+  we explicitly do not do it.
+
+Architecture:
+- Pure planner `LITVisitRunner.plan(state, event, deps) → {newState, actions}`.
+  Zero Chrome API dependencies. All side effects declared as action list.
+- SW glue in `background.js` — thin adapter mapping actions to
+  `chrome.tabs.update` / `chrome.alarms.create` / `chrome.notifications.create`.
+  Event queue serialized via a promise lock (no double-tab races).
+- Content script `visit-content.js` — activates only when there's a
+  running queue whose current URL matches this tab. Runs seeded scroll
+  plan + dwell, signals CAPTURE_DONE. Bails out mid-scroll if queue is
+  paused via popup.
+- 437 tests total. New coverage: 42 humanizer, 42 visit-queue, 20
+  visit-runner, 10 end-to-end state-machine integration.
+
 
 ## [1.3.0] — 2026-07-01
 
