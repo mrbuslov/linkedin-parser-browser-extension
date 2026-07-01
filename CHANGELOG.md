@@ -8,6 +8,31 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
+## [1.3.0] — 2026-07-01
+
+### Added
+- **Per-tab Download button** next to the search bar (⬇ icon). Downloads
+  exactly what the active tab shows: Pending → sentInvitations only,
+  Accepted → non-marked accepted (both active + declined), Marked →
+  marked entries only, Favorites → aggregated favorite=true across all
+  three stores (deduped by profileUrl with accepted > pending > contacts
+  precedence, same as the tab's own render). File name embeds the tab
+  and date: `linkedin-tracker-<tab>-YYYY-MM-DD.json`. Payload wraps
+  items with `{exportedAt, version, tab, count, items}`. Button is
+  hidden on the Settings tab and while the detail view is open.
+- **CSV export now includes `location` and `country`** columns. Both
+  fields have been captured on every profile visit since 1.2.x (via
+  `parseCountry(location)`) and stored in sentInvitations, accepted,
+  and contacts — they just weren't surfaced in the CSV. Uses the same
+  join-by-profileUrl fallback the contact-info columns use, so the
+  country is present regardless of which store the row came from.
+
+### Changed
+- **Settings buttons aligned**. Export CSV, Import JSON, Forget contact
+  details, and Contact support now share the same 8px 14px padding and
+  8px vertical margin as Download JSON — heights match, they no longer
+  sit at visibly different sizes in the same row.
+
 ## [1.2.7] — 2026-06-15
 
 ### Fixed

@@ -26,8 +26,14 @@ header {
 
 .tabs { display: flex; gap: 4px; }
 
+.search-row {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
 #search {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: 6px 10px;
   border: 1px solid #ccc;
   border-radius: 6px;
@@ -40,6 +46,25 @@ header {
   outline: none;
   border-color: #0a66c2;
   box-shadow: 0 0 0 2px rgba(10, 102, 194, 0.15);
+}
+.tab-download-btn {
+  flex-shrink: 0;
+  padding: 0 10px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 14px;
+  color: #444;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.tab-download-btn:hover {
+  background: #0a66c2;
+  color: #fff;
+  border-color: #0a66c2;
 }
 
 .scan-hint {
@@ -434,7 +459,7 @@ main {
 }
 
 body.showing-detail .tabs,
-body.showing-detail #search,
+body.showing-detail .search-row,
 body.showing-detail .actions,
 body.showing-detail .scan-hint { display: none; }
 
@@ -781,14 +806,20 @@ body.is-on-sent .empty-off-sent { display: none; }
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+  align-items: stretch;
 }
+/* Match `.cta` height (padding 8px 14px) so Export CSV, Import JSON, and
+ * Forget contacts sit at the same height as Download JSON — the previous
+ * 6px 12px padding made non-cta buttons visibly shorter. */
 .settings-actions button {
   background: #fff;
   border: 1px solid #ccc;
   border-radius: 6px;
-  padding: 6px 12px;
+  padding: 8px 14px;
   cursor: pointer;
   font-size: 12px;
+  font-weight: 600;
+  margin: 8px 0;
 }
 .settings-actions button.cta {
   background: #0a66c2;

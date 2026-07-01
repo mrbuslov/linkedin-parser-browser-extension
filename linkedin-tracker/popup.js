@@ -860,6 +860,7 @@ async function exportCsv() {
     await dbGet(['sentInvitations', 'accepted', 'contacts']);
   const rows = [[
     'status', 'verified', 'name', 'profileUrl', 'headline',
+    'location', 'country',
     'firstSeenAt', 'acceptedAt', 'daysPending', 'welcomeSent',
     'email', 'phone', 'phoneLabel', 'website', 'address', 'birthday',
     'lastActivityAt', 'lastPostAt',
@@ -872,9 +873,14 @@ async function exportCsv() {
     rec.lastActivityAt || c.lastActivityAt || '',
     rec.lastPostAt     || c.lastPostAt     || '',
   ];
+  const pickGeo = (rec, c) => [
+    rec.location || c.location || '',
+    rec.country  || c.country  || '',
+  ];
   for (const x of Object.values(sentInvitations)) {
     const c = contactOf(x.profileUrl);
     rows.push(['pending', '', x.name, x.profileUrl, x.headline,
+      ...pickGeo(x, c),
       new Date(x.firstSeenAt).toISOString(), '', '', '',
       x.email || c.email || '', x.phone || c.phone || '', x.phoneLabel || c.phoneLabel || '',
       x.website || c.website || '', x.address || c.address || '', x.birthday || c.birthday || '',
@@ -883,6 +889,7 @@ async function exportCsv() {
   for (const x of Object.values(accepted)) {
     const c = contactOf(x.profileUrl);
     rows.push(['accepted', x.verified || '', x.name, x.profileUrl, x.headline,
+      ...pickGeo(x, c),
       new Date(x.firstSeenAt).toISOString(), new Date(x.acceptedAt).toISOString(),
       x.daysPending, x.welcomeMessageSent,
       x.email || c.email || '', x.phone || c.phone || '', x.phoneLabel || c.phoneLabel || '',
@@ -898,6 +905,60 @@ async function exportJson() {
   const payload = { exportedAt: new Date().toISOString(), version: 1, data };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   downloadBlob(blob, `linkedin-tracker-${new Date().toISOString().slice(0, 10)}.json`);
+}
+
+// Download only the CURRENT tab's list as JSON. Matches what the user
+// actually sees on screen — filter/sort rules of each renderXxx() function
+// are the source of truth. The Favorites tab aggregates across stores
+// so it needs its own path; the others are simple filters on their store.
+async function exportCurrentTab() {
+  const tab = activeTabName();
+  const { sentInvitations = {}, accepted = {}, contacts = {} } =
+    await dbGet(['sentInvitations', 'accepted', 'contacts']);
+
+  let items;
+  switch (tab) {
+    case 'pending':
+      items = Object.values(sentInvitations);
+      break;
+    case 'accepted': {
+      // Accepted tab renders items that are NOT marked, splitting into
+      // active vs declined. The user's mental model of "this tab's data"
+      // is that whole set (both active and declined) — so we ship both.
+      items = Object.values(accepted).filter((x) => !isMarked(x));
+      break;
+    }
+    case 'marked':
+      items = Object.values(accepted).filter(isMarked);
+      break;
+    case 'favorites': {
+      const seen = new Map();
+      // Precedence: contacts < pending < accepted (richer data wins on
+      // same profileUrl) — matches renderFavorites().
+      for (const store of [contacts, sentInvitations, accepted]) {
+        for (const rec of Object.values(store)) {
+          if (rec.favorite) seen.set(rec.profileUrl, rec);
+        }
+      }
+      items = Array.from(seen.values());
+      break;
+    }
+    default:
+      // Settings has no list. Give the user something graceful rather
+      // than a zero-byte file: full backup, same as the Settings button.
+      return exportJson();
+  }
+
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    version: 1,
+    tab,
+    count: items.length,
+    items,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const date = new Date().toISOString().slice(0, 10);
+  downloadBlob(blob, `linkedin-tracker-${tab}-${date}.json`);
 }
 
 async function importJson(file) {
@@ -925,6 +986,10 @@ function switchTab(name) {
   for (const panel of document.querySelectorAll('.panel')) {
     panel.classList.toggle('active', panel.id === `${name}-panel`);
   }
+  // The per-tab Download button only makes sense on list tabs. Settings
+  // has no list; the full-backup button in that panel serves that need.
+  const btn = $('tab-download');
+  if (btn) btn.hidden = name === 'settings';
 }
 
 // Maps each popup tab to the LinkedIn page it scans. Marked and Settings have
@@ -1063,6 +1128,7 @@ $('search').addEventListener('input', (e) => {
 });
 $('export-csv').addEventListener('click', exportCsv);
 $('export-json').addEventListener('click', exportJson);
+$('tab-download').addEventListener('click', exportCurrentTab);
 $('import-json').addEventListener('click', () => $('import-file').click());
 $('import-file').addEventListener('change', (e) => {
   const file = e.target.files?.[0];
