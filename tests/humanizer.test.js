@@ -111,29 +111,67 @@ describe('batchBreak', () => {
   });
 });
 
-describe('scrollPlan', () => {
-  it('sum of forward deltas covers most of pageHeight', () => {
+describe('scrollPlan — round trip', () => {
+  it('descends to about page-height (85-100% target)', () => {
     const steps = H.scrollPlan({ pageHeight: 5000, rand: H.mulberry32(1) });
-    const forwardTotal = steps.filter((s) => s.delta > 0).reduce((a, s) => a + s.delta, 0);
+    // Sum only the DESCENT phase (before the first bottom dwell)
+    // — that phase's forward deltas should exceed ~70% of pageHeight.
+    const firstLongPause = steps.findIndex((s) => s.delta === 0 && s.ms >= 3000);
+    const descentSteps = firstLongPause >= 0 ? steps.slice(0, firstLongPause) : steps;
+    const forwardTotal = descentSteps
+      .filter((s) => s.delta > 0)
+      .reduce((a, s) => a + s.delta, 0);
     expect(forwardTotal).toBeGreaterThan(5000 * 0.7);
   });
 
-  it('some plans include backward steps (over enough seeds)', () => {
-    let sawBackward = false;
-    for (let s = 1; s < 100 && !sawBackward; s++) {
+  it('EVERY plan includes an explicit return-trip (net negative deltas after bottom dwell)', () => {
+    for (let s = 1; s <= 50; s++) {
       const steps = H.scrollPlan({ pageHeight: 4000, rand: H.mulberry32(s) });
-      if (steps.some((x) => x.delta < 0)) sawBackward = true;
+      // Find the bottom-dwell marker (first 0-delta with ms >= 3000)
+      const bottomIdx = steps.findIndex((x) => x.delta === 0 && x.ms >= 3000);
+      expect(bottomIdx).toBeGreaterThan(0);
+      const afterBottom = steps.slice(bottomIdx + 1);
+      const returnDelta = afterBottom.reduce((a, s2) => a + s2.delta, 0);
+      // Post-bottom, net motion is UPward (negative)
+      expect(returnDelta).toBeLessThan(-1000);
     }
-    expect(sawBackward).toBe(true);
   });
 
-  it('some plans include pause steps (delta=0, ms>0)', () => {
-    let sawPause = false;
-    for (let s = 1; s < 100 && !sawPause; s++) {
-      const steps = H.scrollPlan({ pageHeight: 4000, rand: H.mulberry32(s) });
-      if (steps.some((x) => x.delta === 0 && x.ms > 0)) sawPause = true;
+  it('return trip is faster than descent (bigger chunks, shorter times)', () => {
+    // Sample many seeds — up-chunks should on average have larger
+    // |delta| than down-chunks.
+    let downMag = 0, upMag = 0, downN = 0, upN = 0;
+    for (let s = 1; s <= 30; s++) {
+      const steps = H.scrollPlan({ pageHeight: 5000, rand: H.mulberry32(s) });
+      const bottomIdx = steps.findIndex((x) => x.delta === 0 && x.ms >= 3000);
+      for (let i = 0; i < steps.length; i++) {
+        if (steps[i].delta === 0) continue;
+        if (i < bottomIdx && steps[i].delta > 0) { downMag += steps[i].delta; downN++; }
+        if (i > bottomIdx && steps[i].delta < 0) { upMag += -steps[i].delta; upN++; }
+      }
     }
-    expect(sawPause).toBe(true);
+    expect(upMag / upN).toBeGreaterThan(downMag / downN);
+  });
+
+  it('ends with a top-dwell (0 delta, 1-3s pause)', () => {
+    for (let s = 1; s <= 20; s++) {
+      const steps = H.scrollPlan({ pageHeight: 4000, rand: H.mulberry32(s) });
+      const last = steps[steps.length - 1];
+      expect(last.delta).toBe(0);
+      expect(last.ms).toBeGreaterThanOrEqual(1000);
+      expect(last.ms).toBeLessThanOrEqual(3000);
+    }
+  });
+
+  it('descent contains occasional pauses (0-delta with short ms)', () => {
+    let sawShortPause = false;
+    for (let s = 1; s < 100 && !sawShortPause; s++) {
+      const steps = H.scrollPlan({ pageHeight: 4000, rand: H.mulberry32(s) });
+      const bottomIdx = steps.findIndex((x) => x.delta === 0 && x.ms >= 3000);
+      const descent = steps.slice(0, bottomIdx);
+      if (descent.some((x) => x.delta === 0 && x.ms > 0 && x.ms < 2000)) sawShortPause = true;
+    }
+    expect(sawShortPause).toBe(true);
   });
 
   it('respects maxSteps cap', () => {

@@ -97,37 +97,66 @@ function batchBreak({ rand, medianMin = 25, minMin = 15, maxMin = 60 }) {
   return Math.max(minMin * MIN, Math.min(maxMin * MIN, Math.round(jittered)));
 }
 
-// Scroll plan: series of {delta, ms} steps whose deltas sum to roughly
-// pageHeight (80-110%). Mostly forward, occasional backward "re-read"
-// and pause "distracted". Each step's ms is proportional to |delta| with
-// variable "velocity" — so a 300px chunk might take 600ms or 1500ms.
+// Scroll plan — full round trip like a real profile viewer:
+//   1) Scroll DOWN to bottom with variable velocity + occasional
+//      short backward jitter ("re-read") + occasional pauses
+//      ("distracted, reading a specific section")
+//   2) Long dwell at the bottom (3-10s — "took in the last section")
+//   3) Scroll UP back to top, faster and in bigger chunks than the
+//      way down (people flick back up rather than crawl), with an
+//      occasional stop halfway ("wanted to re-check something")
+//   4) Short dwell at the top
+//
+// Each step is `{delta, ms}`. Positive delta = down, negative = up,
+// zero delta with ms > 0 = pause. Duration is proportional to |delta|
+// with variable "velocity" — a 300px chunk might take 600ms or 1500ms.
 function scrollPlan({
   pageHeight,
   rand,
-  backwardChance = 0.15,
+  backwardChance = 0.12,
   pauseChance = 0.20,
-  maxSteps = 60,
+  maxSteps = 80,
 }) {
   requireRand(rand, 'scrollPlan');
   if (typeof pageHeight !== 'number' || pageHeight <= 0) {
     throw new RangeError(`scrollPlan: pageHeight must be > 0, got ${pageHeight}`);
   }
   const steps = [];
+  // ── Phase 1: DOWN — variable-velocity descent to ~85-100% of page.
   let scrolled = 0;
-  const target = pageHeight * (0.8 + 0.3 * rand());
-  while (scrolled < target && steps.length < maxSteps) {
+  const downTarget = pageHeight * (0.85 + 0.15 * rand());
+  while (scrolled < downTarget && steps.length < maxSteps - 10) {
     if (steps.length > 0 && rand() < pauseChance) {
       steps.push({ delta: 0, ms: 300 + Math.round(rand() * 1500) });
     }
     const back = rand() < backwardChance && scrolled > 400;
     const delta = back
       ? -(80 + Math.round(rand() * 200))
-      :  (120 + Math.round(rand() * 380));
+      :  (150 + Math.round(rand() * 400));
     const ms = Math.round(Math.abs(delta) * (2 + 3 * rand()));
     steps.push({ delta, ms });
     scrolled += delta;
     if (scrolled < 0) scrolled = 0;
   }
+  // ── Phase 2: BOTTOM dwell (3-10s reading the final section).
+  steps.push({ delta: 0, ms: 3000 + Math.round(rand() * 7000) });
+
+  // ── Phase 3: UP — return to top. Bigger chunks than descent
+  // (people flick back up faster), with occasional pauses.
+  let returned = 0;
+  const upTarget = scrolled * 0.95; // most of the way back
+  while (returned < upTarget && steps.length < maxSteps - 2) {
+    // Occasional pause on the way up
+    if (steps.length > 0 && rand() < 0.15) {
+      steps.push({ delta: 0, ms: 400 + Math.round(rand() * 2000) });
+    }
+    const delta = -(250 + Math.round(rand() * 550)); // 250-800px flick up
+    const ms = Math.round(Math.abs(delta) * (1 + 2 * rand())); // faster than down
+    steps.push({ delta, ms });
+    returned += Math.abs(delta);
+  }
+  // ── Phase 4: TOP dwell (1-3s "back at the beginning").
+  steps.push({ delta: 0, ms: 1000 + Math.round(rand() * 2000) });
   return steps;
 }
 

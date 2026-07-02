@@ -156,13 +156,13 @@
         <div class="visits-howto-body">
           <p><b>What it does.</b> Paste a list of LinkedIn profile URLs, extension opens each one in a dedicated browser tab, waits for LinkedIn to render the page, humanized-scrolls, waits (reading dwell), then moves on. All captured data (headline, location, company, contact info if present, mutuals) goes into your local <code>contacts</code> store — same as if you'd visited manually.</p>
 
-          <p><b>Direct <code>/overlay/contact-info/</code> navigation.</b> Instead of opening a profile then clicking "Contact info", we go straight to the overlay URL. LinkedIn renders both the profile page (behind) and the contact modal (on top) in ONE tab load. Halves the time per profile without any extra requests.</p>
+          <p><b>Plain profile URL only.</b> We navigate to <code>/in/{vanity}/</code> — nothing else. Earlier version tried the <code>/overlay/contact-info/</code> path to also grab email/phone in one load; LinkedIn briefly rendered the modal then closed it, and the contact modal is only readable for 1st-degree connections anyway (and those are usually skipped by the "Skip 1st-degree" toggle). Result: profile data (headline, location, company, mutuals, activity) is captured; contact info is not — for that you'd open the profile manually.</p>
 
           <p><b>Why "humanized" matters.</b> LinkedIn's ML detector doesn't just look at request rates — it looks at behaviour: mouse movement, scroll velocity, tab focus patterns, session flow. Naive bots use <code>setTimeout(url_next, 60000)</code> and get restricted in days. Here every timing decision uses distributions that model real reading behaviour:</p>
           <ul>
             <li><b>Between-visit pause</b> — exponential distribution, mean 90s. Mostly short, occasionally very long ("stopped to reply to a message").</li>
             <li><b>Reading dwell</b> — log-normal, scaled by content volume. Short profile ≈ 30-60s, dense profile ≈ 2-4 min.</li>
-            <li><b>Scroll plan</b> — variable-velocity <code>scrollBy</code> chunks. Some steps fast, some slow, occasional backward step ("re-read"), occasional pause ("distracted"). Real scroll events, isTrusted=true — LinkedIn sees it as human scrolling.</li>
+            <li><b>Scroll plan — full round trip.</b> Real people don't just crawl down. We scroll DOWN through the profile with variable velocity + occasional pauses + occasional short backward steps ("re-read this bit"), then DWELL at the bottom (3-10s reading the last section), then FLICK BACK UP in bigger chunks (people snap back faster than they descend), with occasional stops halfway, and finish with a small top dwell. Real <code>window.scrollBy</code> events, isTrusted=true — LinkedIn sees it as a human viewing.</li>
             <li><b>Batch break</b> — after 3 visits, 15-45 min pause. Mimics coffee/lunch break.</li>
             <li><b>Feed break</b> — every 5-12 visits, opens <code>/feed/</code> briefly and scrolls a couple of posts. Real users mix feed browsing into profile viewing; queue-with-zero-feed-visits is a stronger bot signal than any single visit.</li>
           </ul>

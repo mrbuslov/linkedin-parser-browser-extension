@@ -24,12 +24,12 @@ function findAction(actions, type) {
 }
 
 describe('plan — TICK starts next visit', () => {
-  it('opens contact-info overlay URL, not plain profile URL', () => {
+  it('opens plain profile URL (not overlay — LinkedIn redirects the overlay path for non-1st-degree profiles, which caused a UX flicker + no contact modal for the majority use case)', () => {
     const state = buildState({ urls: ['alice'] });
     const { newState, actions } = R.plan(state, { type: 'TICK', now: NOW + 1000 }, deps);
     const update = findAction(actions, 'UPDATE_TAB');
     expect(update).toBeDefined();
-    expect(update.url).toBe('https://www.linkedin.com/in/alice/overlay/contact-info/');
+    expect(update.url).toBe('https://www.linkedin.com/in/alice/');
     expect(newState.queue.items[0].status).toBe('running');
   });
 

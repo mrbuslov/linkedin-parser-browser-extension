@@ -274,14 +274,18 @@ function _handleTick(state, event, deps) {
     return { newState: state, actions: [{ type: ACTION.LOG, message: 'nothing runnable and not completed — unusual' }] };
   }
 
-  // Start next visit
+  // Start next visit — navigate to the plain profile URL, NOT the
+  // /overlay/contact-info/ URL. LinkedIn detects direct navigation to
+  // the overlay path and briefly renders the modal before redirecting
+  // back to the profile — the flicker looks like a bug to the user, and
+  // for non-1st-degree profiles the contact modal wouldn't have opened
+  // anyway. Profile-only nav = clean UX + reliable profile.js capture.
   const item = state.queue.items[idx];
-  const overlayUrl = item.url + 'overlay/contact-info/';
   const nextQueue = visitQueue.markRunning(state.queue, idx, event.now);
   return {
     newState: { ...state, queue: nextQueue },
     actions: [
-      { type: ACTION.UPDATE_TAB, url: overlayUrl, itemIndex: idx },
+      { type: ACTION.UPDATE_TAB, url: item.url, itemIndex: idx },
       { type: ACTION.SCHEDULE_TICK, delayMs: CAPTURE_TIMEOUT_MS + 5000 }, // safety net
       { type: ACTION.PERSIST },
       { type: ACTION.LOG, message: `starting visit ${idx}: ${item.url}` },
