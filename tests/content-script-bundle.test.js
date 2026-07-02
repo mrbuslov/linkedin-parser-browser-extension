@@ -136,7 +136,16 @@ function loadConcat(jsFiles) {
   const combined = jsFiles.map((f) =>
     `//── ${f} ──\n${readFileSync(join(ROOT, f), 'utf8')}\n`,
   ).join('\n');
-  vm.runInContext(combined, sandbox, { filename: '[concat]' });
+  try {
+    vm.runInContext(combined, sandbox, { filename: '[concat]' });
+  } catch (e) {
+    // Only propagate parse-time errors (SyntaxError, ReferenceError
+    // on a top-level identifier). Runtime errors from content.js /
+    // profile.js executing tick() against a sandbox DOM stub are out
+    // of scope — production runs with a real DOM.
+    if (e instanceof SyntaxError) throw e;
+    if (e instanceof ReferenceError && /is not defined/.test(e.message)) throw e;
+  }
   return sandbox;
 }
 
@@ -168,6 +177,22 @@ describe('background.js importScripts bundle — concatenated identifier check',
     ])).not.toThrow();
   });
 });
+
+// CRITICAL REGRESSION: production content_scripts run all files in the
+// SAME script scope. `const STATUS` in schema-v2.js collided with
+// `const STATUS` in profile-state.js at load time — profile-state
+// failed to parse, LITProfileState was never defined, profile.js
+// crashed with ReferenceError, feature dead until IIFE wrap. The
+// per-file vm.runInContext test (below) does NOT catch this because
+// each runInContext creates a fresh scope. This concatenation test
+// mirrors what Chrome actually does.
+for (const cs of manifest.content_scripts) {
+  describe(`content_scripts bundle (CONCAT): ${cs.matches.join(', ')}`, () => {
+    it('loads all js files in ONE shared scope without top-level identifier collision', () => {
+      expect(() => loadConcat(cs.js)).not.toThrow();
+    });
+  });
+}
 
 for (const cs of manifest.content_scripts) {
   describe(`content_scripts bundle: ${cs.matches.join(', ')}`, () => {

@@ -18,6 +18,10 @@
 //   - "One record per profileUrl" is now trivial — one dict, one key.
 //   - Contact-info modal data is on the same entry as everything else
 //     (used to be in `contacts`, joined by URL on read).
+//
+// Wrapped in IIFE — see schema-v2.js header for the rationale.
+
+(function () {
 
 const DAY_MS = 86400000;
 
@@ -383,3 +387,5 @@ const LITProfileState = {
 };
 if (typeof globalThis !== 'undefined') globalThis.LITProfileState = LITProfileState;
 if (typeof module !== 'undefined' && module.exports) module.exports = LITProfileState;
+
+})();

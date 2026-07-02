@@ -26,6 +26,15 @@
 // legacy top-level keys (`sentInvitations` / `accepted`) or explicit
 // `version === 1` on the wrapper, runs the same migration in-memory, and
 // writes the resulting v2 shape.
+//
+// Wrapped in IIFE — content_scripts, popup <script> tags, AND SW
+// importScripts ALL share the same script scope within their context.
+// Multiple core/* files with the same top-level `const STATUS` will
+// collide with "Identifier already declared" and take the whole bundle
+// down. IIFE keeps STATUS local to this file; the public API is only
+// exposed via the LITSchema global at the end.
+
+(function () {
 
 const STATUS = Object.freeze({
   PENDING:  'pending',
@@ -281,3 +290,5 @@ const LITSchema = {
 };
 if (typeof globalThis !== 'undefined') globalThis.LITSchema = LITSchema;
 if (typeof module !== 'undefined' && module.exports) module.exports = LITSchema;
+
+})();

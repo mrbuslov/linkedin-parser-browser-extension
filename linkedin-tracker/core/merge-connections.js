@@ -9,6 +9,10 @@
 // connections scan are NOT auto-marked anymore. They land in Accepted
 // (marked=false) so the user sees them; the "Mark all" button covers
 // the pre-install backlog case.
+//
+// Wrapped in IIFE — see schema-v2.js header for the rationale.
+
+(function () {
 
 const DAY_MS = 86400000;
 
@@ -57,3 +61,5 @@ function mergeConnections(snapshot, stored, now) {
 const LITMergeConnections = { mergeConnections, DAY_MS };
 if (typeof globalThis !== 'undefined') globalThis.LITMergeConnections = LITMergeConnections;
 if (typeof module !== 'undefined' && module.exports) module.exports = LITMergeConnections;
+
+})();

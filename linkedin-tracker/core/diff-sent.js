@@ -16,6 +16,10 @@
 // Sanity check: if we used to track many invites and this scan saw far
 // fewer, it's almost certainly a partial scroll, not 100+ people accepting
 // at once. Skip the "missing = accepted" move in that case.
+//
+// Wrapped in IIFE — see schema-v2.js header for the rationale.
+
+(function () {
 
 const DAY_MS = 86400000;
 const SANITY_SHRINK_RATIO = 0.5;
@@ -120,3 +124,5 @@ function diffSentInvitations(snapshot, stored, now) {
 const LITDiffSent = { diffSentInvitations, DAY_MS, SANITY_SHRINK_RATIO };
 if (typeof globalThis !== 'undefined') globalThis.LITDiffSent = LITDiffSent;
 if (typeof module !== 'undefined' && module.exports) module.exports = LITDiffSent;
+
+})();
