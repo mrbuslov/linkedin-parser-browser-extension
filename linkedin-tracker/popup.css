@@ -32,7 +32,7 @@ header {
   flex-shrink: 0;
 }
 
-.tabs { display: flex; gap: 4px; }
+.tabs { display: flex; gap: 2px; }
 
 .search-row {
   display: flex;
@@ -87,13 +87,24 @@ header {
 .tab {
   background: transparent;
   border: 0;
-  padding: 6px 10px;
+  padding: 6px 7px;
   border-radius: 6px;
   cursor: pointer;
   color: #555;
   font-weight: 500;
+  font-size: 12px;
 }
 .tab.active { background: #0a66c2; color: #fff; }
+/* Emoji tabs — single glyph, need less horizontal padding to fit all
+ * 7 tabs into the 380px popup. Slightly larger font so the emoji reads
+ * clearly at the tighter padding. */
+.tab[data-tab="favorites"],
+.tab[data-tab="viewed"],
+.tab[data-tab="visits"],
+.tab[data-tab="settings"] {
+  padding: 5px 8px;
+  font-size: 15px;
+}
 
 .actions { display: flex; gap: 4px; }
 .actions #open-sent {
@@ -452,11 +463,9 @@ main {
 .fav-btn.favorited { color: #f5a623; }
 .fav-btn.favorited:hover { color: #c98410; }
 
-/* Star tab — visual emphasis (same yellow as the favorited star). */
-.tab[data-tab="favorites"] {
-  font-size: 14px;
-  color: #b0b6bc;
-}
+/* Star tab — visual emphasis (same yellow as the favorited star).
+ * Font-size handled by the shared emoji-tab rule; only colour here. */
+.tab[data-tab="favorites"] { color: #b0b6bc; }
 .tab[data-tab="favorites"].active { color: #f5a623; }
 .tab[data-tab="favorites"]:not(.active):hover { color: #f5a623; }
 
@@ -1168,7 +1177,5 @@ body.is-on-sent .empty-off-sent { display: none; }
 .visits-experimental small { color: #999; }
 .visits-experimental code { background: #f0f0f0; padding: 1px 4px; border-radius: 3px; font-size: 10px; }
 
-/* Viewed tab — reuse existing list styles; only the emoji tab needs
- * a slight nudge to sit nicely at 380px popup width. */
-.tab[data-tab="viewed"] { font-size: 14px; }
+/* Viewed tab — font-size handled by shared emoji-tab rule. */
 .tab[data-tab="viewed"]:hover { color: #0a66c2; }
