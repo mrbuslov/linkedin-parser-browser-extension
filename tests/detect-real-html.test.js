@@ -78,3 +78,22 @@ describe('detectConnectionStatus — Wendy Pease 1st-degree (full-page fixture)'
     expect(detectConnectionStatus(document.body)).toBe('connected');
   });
 });
+
+describe('detectConnectionStatus — Emirhan Karahasan pending 2nd-degree (fixture)', () => {
+  it('returns "pending" — 2nd-degree profile with a real "Pending, click to withdraw..." button in the top-card', () => {
+    const html = readFileSync(
+      join(__dirname, 'fixtures/emirhan-karahasan.html'), 'utf8',
+    );
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    document.body.innerHTML = doc.body.innerHTML;
+
+    // Sanity: the Pending button IS in the DOM
+    const pendingBtn = Array.from(document.querySelectorAll('[aria-label]'))
+      .find((n) => /Pending.*withdraw invitation/i.test(n.getAttribute('aria-label') || ''));
+    expect(pendingBtn, 'expected a Pending withdraw button in fixture').toBeDefined();
+
+    expect(detectConnectionStatus(document.body)).toBe('pending');
+  });
+
+});
