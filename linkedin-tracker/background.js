@@ -7,12 +7,16 @@
 // This ensures content scripts and the popup can always assume unified
 // `contacts` shape, regardless of who woke up first after an update.
 
-importScripts(
-  'core/schema-v2.js',
-  'core/humanizer.js',
-  'core/visit-queue.js',
-  'core/visit-runner.js',
-);
+importScripts('core/schema-v2.js');
+
+// Bulk Visit Queue disabled for the 1.3.0 Chrome Web Store submission —
+// the tabs/alarms/idle/webNavigation permissions triggered a
+// justification round we're not ready to defend yet. The pure-logic
+// modules (core/humanizer.js, core/visit-queue.js, core/visit-runner.js)
+// and content scripts (visit-content.js, visit-feed.js) remain in the
+// repo so 1.3.1 can re-enable the feature without a re-implementation.
+// The service-worker glue that wired them into chrome.tabs / alarms /
+// idle / webNavigation is commented out below.
 
 const DB_NAME = 'linkedin-tracker';
 const DB_VERSION = 1;
@@ -170,45 +174,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     refreshBadge();
     return;
   }
-  // Bulk Visit Queue events forwarded to the runner state machine
-  if (msg?.type === 'VISIT_QUEUE_START') {
-    visitRunnerHandle({ type: 'TICK', now: Date.now() });
-    sendResponse(true);
-    return;
-  }
-  if (msg?.type === 'VISIT_QUEUE_PAUSE') {
-    visitRunnerHandle({ type: 'PAUSE', now: Date.now() });
-    sendResponse(true);
-    return;
-  }
-  if (msg?.type === 'VISIT_QUEUE_RESUME') {
-    visitRunnerHandle({ type: 'RESUME', now: Date.now() });
-    sendResponse(true);
-    return;
-  }
-  if (msg?.type === 'VISIT_QUEUE_CANCEL') {
-    visitRunnerHandle({ type: 'CANCEL', now: Date.now() });
-    sendResponse(true);
-    return;
-  }
-  if (msg?.type === 'VISIT_CAPTURE_DONE') {
-    // Include the URL as a safety check — if a late CAPTURE_DONE arrives
-    // after we've moved on to another item, plan() will see the URL
-    // mismatch and log-ignore it rather than mis-marking the wrong item.
-    visitRunnerHandle({ type: 'CAPTURE_DONE', now: Date.now(), url: msg.url });
-    sendResponse(true);
-    return;
-  }
-  if (msg?.type === 'VISIT_CAPTURE_FAILED') {
-    visitRunnerHandle({ type: 'CAPTURE_FAILED', now: Date.now(), reason: msg.reason || 'unknown' });
-    sendResponse(true);
-    return;
-  }
-  if (msg?.type === 'VISIT_HEALTH_ALARM') {
-    visitRunnerHandle({ type: 'HEALTH_ALARM', now: Date.now(), signal: msg.signal });
-    sendResponse(true);
-    return;
-  }
+  // Bulk Visit Queue message handlers — disabled with the rest of the
+  // feature for 1.3.0. See the note near importScripts at the top.
 });
 
 // One-time v1 → v2 storage migration. Idempotent: if storage is already
@@ -255,8 +222,18 @@ chrome.runtime.onStartup.addListener(async () => {
 runStorageMigration();
 
 // ===========================================================================
-// Bulk Visit Queue — service-worker glue.
+// Bulk Visit Queue — service-worker glue. DISABLED for 1.3.0.
 // ===========================================================================
+// The entire section is dead-code-eliminated via `if (false) { ... }`.
+// Re-enable in 1.3.1 by (1) restoring the tabs/alarms/idle/webNavigation
+// permissions in manifest.json, (2) re-adding importScripts of
+// humanizer/visit-queue/visit-runner, (3) removing the `if (false)`
+// wrapper below, (4) restoring the VISIT_QUEUE_* message handlers in
+// the onMessage listener above, (5) adding visit-content.js back to
+// the /in/* content_scripts bundle and the /feed/* bundle back to
+// manifest, (6) unhiding the 🤖 tab + <section id="visits-panel"> in
+// popup.html and the Bulk Visit block in popup.js.
+if (false) {
 // Thin adapter between the pure LITVisitRunner.plan() and Chrome APIs.
 // Every message from popup / content script becomes an event fed into
 // plan(); the returned action list is applied here. The runner owns
@@ -407,3 +384,4 @@ async function resumeVisitQueueIfNeeded() {
   }
 }
 resumeVisitQueueIfNeeded();
+} // end if(false) — bulk-visit-queue disabled block

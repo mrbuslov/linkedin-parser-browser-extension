@@ -13,7 +13,11 @@
       <button class="tab" data-tab="marked">Marked</button>
       <button class="tab" data-tab="favorites" title="Favorites">★</button>
       <button class="tab" data-tab="viewed" title="Profiles you've viewed but not invited">👁</button>
+      <!-- Bulk Visit Queue tab hidden for 1.3.0 review; re-enable in 1.3.1
+           by uncommenting AND restoring the <section id="visits-panel">
+           block AND the consent modal AND the script imports below.
       <button class="tab" data-tab="visits" title="Bulk visit queue">🤖</button>
+      -->
       <button class="tab" data-tab="settings" title="Settings">⚙</button>
     </div>
     <div class="actions">
@@ -97,6 +101,12 @@
 
     <section id="detail-panel" class="panel" hidden></section>
 
+    <!-- BULK VISIT QUEUE DISABLED for 1.3.0 store submission.
+         The section + consent modal are wrapped in <template> so the
+         markup is preserved (browser parses but does not render or
+         instantiate its scripts). Re-enable in 1.3.1 by removing the
+         two <template> wrappers below. -->
+    <template id="_disabled_visits_panel_1_3_0">
     <section id="visits-panel" class="panel">
       <div class="visits-header">
         <div class="visits-zone" id="visits-zone">
@@ -228,7 +238,7 @@
       </div>
     </section>
 
-    <div id="visits-consent-modal" class="visits-modal" hidden>
+    <div id="visits-consent-modal" class="visits-modal" hidden><!-- inside template — inert -->
       <div class="visits-modal-inner">
         <h3>Before you start</h3>
         <p>Bulk visit queue automates activity on your LinkedIn account.
@@ -250,6 +260,7 @@
         </div>
       </div>
     </div>
+    </template>
 
     <section id="settings-panel" class="panel">
       <div class="settings-block">
@@ -293,8 +304,7 @@
 </body>
 <script src="db-client.js"></script>
 <script src="core/schema-v2.js"></script>
-<script src="core/humanizer.js"></script>
-<script src="core/visit-queue.js"></script>
+<!-- humanizer.js / visit-queue.js not loaded — Bulk Visit Queue disabled for 1.3.0 -->
 <script src="core/popup-logic.js"></script>
 <script src="popup.js"></script>
 </html>

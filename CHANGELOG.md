@@ -8,6 +8,43 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
+### Disabled in 1.3.0 (pre-store-submission)
+
+The Bulk Visit Queue feature was built, tested (114 unit tests + integration),
+and integrated end-to-end during the 1.3.0 development window. Right before
+the Chrome Web Store submission it was **disabled** — the `tabs`, `alarms`,
+`idle`, and `webNavigation` permissions it required triggered a Store
+justification round we're not ready to defend, and the feature's net value
+for the primary use case was judged marginal.
+
+What was disabled (all code preserved for 1.3.1):
+
+- `manifest.json` — `tabs`/`alarms`/`idle`/`webNavigation` permissions
+  removed; `/feed/*` content_scripts entry removed; `visit-content.js` and
+  `core/humanizer.js` removed from the `/in/*` bundle.
+- `background.js` — `importScripts` of humanizer/visit-queue/visit-runner
+  removed; `VISIT_QUEUE_*` message handlers removed; the SW glue block
+  wrapped in `if (false) { ... }`.
+- `popup.html` — 🤖 tab button HTML-commented; `<section id="visits-panel">`
+  and consent modal wrapped in `<template>` so the browser parses but
+  never renders them; humanizer/visit-queue script imports removed.
+- `popup.js` — the entire Bulk Visit Queue block (VISITS_DEFAULT_SETTINGS,
+  renderVisitsPanel, visitsStart, event handlers, etc.) wrapped in
+  `if (false) { ... }`.
+
+What remained in the repo (dormant, ready for 1.3.1):
+
+- `linkedin-tracker/core/humanizer.js` — 232 lines, 42 tests
+- `linkedin-tracker/core/visit-queue.js` — 370 lines, 42 tests
+- `linkedin-tracker/core/visit-runner.js` — 307 lines, 20 tests
+- `linkedin-tracker/visit-content.js`, `linkedin-tracker/visit-feed.js`
+- `tests/humanizer.test.js`, `tests/visit-queue.test.js`,
+  `tests/visit-queue-integration.test.js`, `tests/visit-runner.test.js`
+- `linkedin-tracker/popup.css` — visits-\* styles left (dead CSS, no runtime cost)
+
+Re-enable checklist for 1.3.1 is inlined in the disabled blocks
+(`background.js` and `popup.js`).
+
 ### Added — Bulk Visit Queue (🤖 tab in popup)
 
 Automated, humanized bulk profile visiting. Paste a list of LinkedIn URLs,

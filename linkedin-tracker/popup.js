@@ -1085,8 +1085,17 @@ loadData();
 updateScanButton();
 
 // ===========================================================================
-// Bulk Visit Queue tab
+// Bulk Visit Queue tab — DISABLED for 1.3.0 store submission. See the
+// note in background.js near the disabled SW glue. The whole block below
+// is dead-code-eliminated via `if (false) { ... }`. Re-enable in 1.3.1
+// by (1) restoring the tabs/alarms/idle/webNavigation permissions in
+// manifest.json, (2) uncommenting the 🤖 tab button + <section id=
+// "visits-panel"> + consent modal in popup.html, (3) re-adding the two
+// <script src="core/humanizer.js"> / <script src="core/visit-queue.js">
+// imports in popup.html, (4) removing the `if (false)` wrapper below,
+// (5) restoring the SW glue in background.js.
 // ===========================================================================
+if (false) {
 const VISITS_DEFAULT_SETTINGS = () => ({
   windowStart: $('visits-window-start').value || '09:00',
   windowEnd:   $('visits-window-end').value   || '21:00',
@@ -1364,3 +1373,4 @@ chrome.runtime.onMessage.addListener((msg) => {
 // First render + rerender whenever the Visits tab is opened
 renderVisitsPanel();
 document.querySelector('.tab[data-tab="visits"]').addEventListener('click', renderVisitsPanel);
+} // end if(false) — bulk-visit-queue disabled block
