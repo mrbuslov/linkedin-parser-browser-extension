@@ -53,6 +53,15 @@
       "run_at": "document_idle"
     },
     {
+      "matches": ["https://www.linkedin.com/feed/*"],
+      "js": [
+        "db-client.js",
+        "core/humanizer.js",
+        "visit-feed.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
       "matches": ["https://www.linkedin.com/mynetwork/invite-connect/connections/*"],
       "js": [
         "db-client.js",

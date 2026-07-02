@@ -170,9 +170,13 @@ function _handleCaptureDone(state, event, deps) {
   } else if (humanizer.shouldFeedBreak({
     visitsSinceFeed: q.stats.visitsSinceFeed, rand,
   })) {
-    nextDelayMs = 30_000 + Math.round(rand() * 20_000); // 30-50s feed dwell
+    // Real feed break: navigate visit tab to /feed/ so it briefly
+    // shows in the browser history — a genuine social signal LinkedIn's
+    // ML model expects on a normal-activity account.
+    nextDelayMs = 30_000 + Math.round(rand() * 20_000); // 30-50s dwell on feed
     q = visitQueue.recordFeedBreak(q, event.now + nextDelayMs);
     reason = 'feed-break';
+    actions.push({ type: ACTION.UPDATE_TAB, url: 'https://www.linkedin.com/feed/', itemIndex: -1 });
   } else {
     nextDelayMs = humanizer.betweenVisits({
       meanSec: q.settings.betweenMeanSec, minSec: 30, maxSec: 300, rand,

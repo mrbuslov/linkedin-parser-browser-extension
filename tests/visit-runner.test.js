@@ -82,6 +82,32 @@ describe('plan — CAPTURE_DONE flow', () => {
     expect(findAction(done.actions, 'NOTIFY_USER')).toBeDefined();
   });
 
+  it('feed break emits UPDATE_TAB to /feed/', () => {
+    // Force feed-break by advancing visitsSinceFeed to maxInterval.
+    // With visitsSinceFeed >= 12 (maxInterval), shouldFeedBreak returns
+    // true always. batchSize large so batch-break doesn't fire first.
+    let state = buildState({
+      urls: Array.from({ length: 20 }, (_, i) => `user${i}`),
+      settings: { ...BASE_SETTINGS, batchSize: 100 },
+    });
+    // Walk 12 visits so visitsSinceFeed hits threshold
+    let clock = NOW;
+    for (let i = 0; i < 12; i++) {
+      state = R.plan(state, { type: 'TICK', now: clock }, deps).newState;
+      const url = state.queue.items[i].url;
+      state = R.plan(state, { type: 'CAPTURE_DONE', now: clock + 30_000, url }, deps).newState;
+      clock += 90_000;
+    }
+    // 13th completion should trigger feed break
+    state = R.plan(state, { type: 'TICK', now: clock }, deps).newState;
+    const url13 = state.queue.items[12].url;
+    const done = R.plan(state, { type: 'CAPTURE_DONE', now: clock + 30_000, url: url13 }, deps);
+    const feedNav = done.actions.find((a) => a.type === 'UPDATE_TAB' && /\/feed\/$/.test(a.url));
+    expect(feedNav).toBeDefined();
+    // Feed break resets counter
+    expect(done.newState.queue.stats.visitsSinceFeed).toBe(0);
+  });
+
   it('after batchSize visits → takes batch break', () => {
     // batchSize=3, do 3 CAPTURE_DONEs, verify third schedules a >10min delay
     let state = buildState({ urls: ['a', 'b', 'c', 'd'], settings: { ...BASE_SETTINGS, batchSize: 3 } });

@@ -36,6 +36,10 @@
   if (runningIdx === -1) return;
   const running = visitQueue.items[runningIdx];
 
+  // Inject the floating widget so user can pause/cancel from the tab
+  // without opening the popup. Rendered once per page load.
+  injectVisitWidget(visitQueue);
+
   // The tab was opened at /in/{vanity}/overlay/contact-info/ — after
   // LinkedIn redirect / normalization the pathname is one of:
   //   /in/{vanity}/overlay/contact-info/
@@ -95,4 +99,67 @@ async function isQueueStillRunning() {
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+// Floating cancel widget — same shape as visit-feed.js. Kept inline
+// (not in core/) because there's no shared module system for content
+// scripts and the widget's tiny surface doesn't warrant one.
+function injectVisitWidget(visitQueue) {
+  if (document.getElementById('lit-visit-widget')) return;
+  const w = document.createElement('div');
+  w.id = 'lit-visit-widget';
+  w.style.cssText = [
+    'position:fixed', 'top:80px', 'right:16px', 'z-index:2147483647',
+    'background:#0a66c2', 'color:#fff', 'font-family:-apple-system,sans-serif',
+    'font-size:13px', 'padding:10px 12px', 'border-radius:8px',
+    'box-shadow:0 4px 12px rgba(0,0,0,0.2)', 'min-width:220px',
+    'display:flex', 'flex-direction:column', 'gap:8px',
+  ].join(';');
+
+  const visited = visitQueue.items.filter((i) => i.status === 'visited').length;
+  const total   = visitQueue.items.length;
+  const remaining = total - visited;
+
+  const title = document.createElement('div');
+  title.style.cssText = 'font-weight:700;font-size:12px';
+  title.textContent = '🤖 Bulk visit running';
+  w.appendChild(title);
+
+  const p = document.createElement('div');
+  p.style.cssText = 'font-size:11px;opacity:0.9';
+  p.textContent = `Progress: ${visited} / ${total} · ${remaining} left`;
+  w.appendChild(p);
+
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:6px';
+
+  const pauseBtn = document.createElement('button');
+  pauseBtn.textContent = 'Pause';
+  pauseBtn.style.cssText = _widgetBtn('#fff', '#0a66c2');
+  pauseBtn.addEventListener('click', () => {
+    chrome.runtime.sendMessage({ type: 'VISIT_QUEUE_PAUSE' }).catch(() => {});
+    w.remove();
+  });
+  row.appendChild(pauseBtn);
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.textContent = 'Cancel queue';
+  cancelBtn.style.cssText = _widgetBtn('#d02b1e', '#fff');
+  cancelBtn.addEventListener('click', () => {
+    if (!confirm('Cancel the queue? Remaining items will be marked as skipped.')) return;
+    chrome.runtime.sendMessage({ type: 'VISIT_QUEUE_CANCEL' }).catch(() => {});
+    w.remove();
+  });
+  row.appendChild(cancelBtn);
+
+  w.appendChild(row);
+  document.body.appendChild(w);
+}
+
+function _widgetBtn(bg, fg) {
+  return [
+    `background:${bg}`, `color:${fg}`, 'border:none', 'border-radius:5px',
+    'padding:6px 10px', 'cursor:pointer', 'font-size:11px', 'font-weight:600',
+    'flex:1',
+  ].join(';');
 }

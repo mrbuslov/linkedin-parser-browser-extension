@@ -151,6 +151,54 @@
         </div>
       </div>
 
+      <details class="visits-block visits-howto">
+        <summary>How does this work? — click to expand</summary>
+        <div class="visits-howto-body">
+          <p><b>What it does.</b> Paste a list of LinkedIn profile URLs, extension opens each one in a dedicated browser tab, waits for LinkedIn to render the page, humanized-scrolls, waits (reading dwell), then moves on. All captured data (headline, location, company, contact info if present, mutuals) goes into your local <code>contacts</code> store — same as if you'd visited manually.</p>
+
+          <p><b>Direct <code>/overlay/contact-info/</code> navigation.</b> Instead of opening a profile then clicking "Contact info", we go straight to the overlay URL. LinkedIn renders both the profile page (behind) and the contact modal (on top) in ONE tab load. Halves the time per profile without any extra requests.</p>
+
+          <p><b>Why "humanized" matters.</b> LinkedIn's ML detector doesn't just look at request rates — it looks at behaviour: mouse movement, scroll velocity, tab focus patterns, session flow. Naive bots use <code>setTimeout(url_next, 60000)</code> and get restricted in days. Here every timing decision uses distributions that model real reading behaviour:</p>
+          <ul>
+            <li><b>Between-visit pause</b> — exponential distribution, mean 90s. Mostly short, occasionally very long ("stopped to reply to a message").</li>
+            <li><b>Reading dwell</b> — log-normal, scaled by content volume. Short profile ≈ 30-60s, dense profile ≈ 2-4 min.</li>
+            <li><b>Scroll plan</b> — variable-velocity <code>scrollBy</code> chunks. Some steps fast, some slow, occasional backward step ("re-read"), occasional pause ("distracted"). Real scroll events, isTrusted=true — LinkedIn sees it as human scrolling.</li>
+            <li><b>Batch break</b> — after 3 visits, 15-45 min pause. Mimics coffee/lunch break.</li>
+            <li><b>Feed break</b> — every 5-12 visits, opens <code>/feed/</code> briefly and scrolls a couple of posts. Real users mix feed browsing into profile viewing; queue-with-zero-feed-visits is a stronger bot signal than any single visit.</li>
+          </ul>
+
+          <p><b>Time-of-day gate.</b> Default window <b>09:00-21:00 local</b>. Queue sleeps outside and resumes at reopens. Configurable but you can't set an all-night window — it's a hard safety rail. Ночью не работает.</p>
+
+          <p><b>Warmup mode.</b> First 7 days after starting the first queue: cap = 30% of configured. Prevents a 0→20 spike from tripping LinkedIn's behavioural baseline (accounts that suddenly change activity pattern get flagged).</p>
+
+          <p><b>Skip rules.</b> Profiles already in your <code>contacts</code> with <code>status='accepted'</code> (1st-degree) get skipped by default — visiting them is wasted quota. Profiles you visited within N days (default 30) also skipped. Both toggleable in Settings.</p>
+
+          <p><b>What can go wrong.</b> LinkedIn can still restrict your account — no automation is 100% safe. The extension reduces risk, doesn't eliminate it. Signals we watch for:</p>
+          <ul>
+            <li>Redirect to <code>/checkpoint/</code>, <code>/uas/</code>, or <code>/error/</code> during a visit → auto-pause + notification. Complete the check manually then Resume.</li>
+            <li>User activity in the browser (mouse/keyboard) → 5 min deferral so we don't interfere with your work.</li>
+            <li>Contact modal fails to appear within 45s → visit marked failed, queue continues to next.</li>
+          </ul>
+
+          <p><b>What we deliberately don't do.</b></p>
+          <ul>
+            <li><b>No auto-connect.</b> Sending Connect requests programmatically is what actually gets accounts restricted quickly. This extension never touches Connect buttons.</li>
+            <li><b>No mouse cursor faking.</b> Browser JS can't move the OS cursor; even if it could, LinkedIn doesn't care about cursor position, only about event trust. We rely on real user-generated events (real scrolls, real navigations).</li>
+            <li><b>No background-tab visits.</b> Chrome throttles background tabs and hides them from LinkedIn's visibility API — that pattern is easier to detect than an active foreground tab.</li>
+            <li><b>No parallel visits.</b> One tab, one profile at a time.</li>
+          </ul>
+
+          <p><b>How to control it.</b> Pause / Resume / Cancel buttons are in the popup AND floating on every visit tab (top-right corner). If anything looks wrong — hit Cancel and open the tab manually. Every state is idempotent; nothing breaks from a browser restart or extension reload.</p>
+
+          <p><b>Recommended use.</b> Warm accounts (used regularly for months), realistic daily caps (start with 10-15 for the first month, then 20), always during your normal activity window. Not for burner/new accounts.</p>
+        </div>
+      </details>
+
+      <div class="visits-block visits-history" id="visits-history-block" hidden>
+        <h3>Recent runs</h3>
+        <ul class="visits-history-list" id="visits-history-list"></ul>
+      </div>
+
       <div class="visits-block">
         <h3>Warning</h3>
         <p class="hint">
@@ -164,6 +212,29 @@
         </p>
       </div>
     </section>
+
+    <div id="visits-consent-modal" class="visits-modal" hidden>
+      <div class="visits-modal-inner">
+        <h3>Before you start</h3>
+        <p>Bulk visit queue automates activity on your LinkedIn account.
+        LinkedIn actively detects this kind of automation and <b>may
+        restrict or ban your account</b> despite the humanization
+        techniques used here.</p>
+        <p>Recommended for warm accounts (used regularly for months)
+        with realistic daily caps (start with 10-15/day). <b>Not for
+        primary business accounts you can't afford to lose.</b></p>
+        <p>By clicking Accept, you take full responsibility for your
+        account. This consent will be remembered.</p>
+        <label class="visits-modal-check">
+          <input type="checkbox" id="visits-consent-check">
+          I understand the risk and take full responsibility
+        </label>
+        <div class="visits-modal-actions">
+          <button id="visits-consent-cancel">Cancel</button>
+          <button class="cta" id="visits-consent-accept" disabled>Accept & start</button>
+        </div>
+      </div>
+    </div>
 
     <section id="settings-panel" class="panel">
       <div class="settings-block">

@@ -1171,6 +1171,7 @@ async function renderVisitsPanel() {
   renderVisitsZone(visitQueue);
   renderVisitsStatus(visitQueue);
   renderVisitsQueue(visitQueue);
+  renderVisitsHistory();
 }
 
 async function visitsPreview() {
@@ -1221,6 +1222,21 @@ async function visitsPreview() {
 }
 
 async function visitsStart() {
+  // Consent gate — first-time users see a modal with the honest
+  // risk disclosure. Consent is persisted (visitConsentAt timestamp)
+  // and never re-prompted after that.
+  const { visitConsentAt } = await dbGet('visitConsentAt');
+  if (!visitConsentAt) {
+    _pendingVisitStart = true;
+    $('visits-consent-modal').hidden = false;
+    return;
+  }
+  await _visitsStartConfirmed();
+}
+
+let _pendingVisitStart = false;
+
+async function _visitsStartConfirmed() {
   const raw = $('visits-textarea').value;
   if (!raw.trim()) return;
   const contacts = await visitsCurrentContacts();
@@ -1243,6 +1259,27 @@ async function visitsStart() {
   $('visits-preview').innerHTML = '';
   $('visits-start-btn').hidden = true;
   renderVisitsPanel();
+}
+
+async function renderVisitsHistory() {
+  const block = $('visits-history-block');
+  const list = $('visits-history-list');
+  const { visitQueueHistory = [] } = await dbGet('visitQueueHistory');
+  if (!visitQueueHistory.length) {
+    block.hidden = true;
+    return;
+  }
+  block.hidden = false;
+  list.innerHTML = '';
+  for (const entry of visitQueueHistory) {
+    const li = el('li');
+    const date = new Date(entry.completedAt).toLocaleString();
+    li.appendChild(el('span', { className: 'visits-history-date' }, [date]));
+    li.appendChild(el('span', { className: 'visits-history-stats' }, [
+      `${entry.visitedCount} visited · ${entry.skippedCount} skipped · ${entry.failedCount} failed · ${entry.itemCount} total`,
+    ]));
+    list.appendChild(li);
+  }
 }
 
 async function visitsPause()  { await chrome.runtime.sendMessage({ type: 'VISIT_QUEUE_PAUSE' });  renderVisitsPanel(); }
@@ -1269,6 +1306,27 @@ $('visits-resume-btn').addEventListener('click', visitsResume);
 $('visits-cancel-btn').addEventListener('click', visitsCancel);
 $('visits-panic-stop').addEventListener('click', visitsCancel);
 $('visits-clear-history-btn').addEventListener('click', visitsClearHistory);
+
+// Consent modal — persist visitConsentAt once accepted, gate visitsStart
+// on it until then.
+$('visits-consent-check').addEventListener('change', (e) => {
+  $('visits-consent-accept').disabled = !e.target.checked;
+});
+$('visits-consent-cancel').addEventListener('click', () => {
+  $('visits-consent-modal').hidden = true;
+  $('visits-consent-check').checked = false;
+  $('visits-consent-accept').disabled = true;
+  _pendingVisitStart = false;
+});
+$('visits-consent-accept').addEventListener('click', async () => {
+  if (!$('visits-consent-check').checked) return;
+  await dbSet({ visitConsentAt: Date.now() });
+  $('visits-consent-modal').hidden = true;
+  if (_pendingVisitStart) {
+    _pendingVisitStart = false;
+    await _visitsStartConfirmed();
+  }
+});
 
 // Live re-render when the SW pushes a queue change
 chrome.runtime.onMessage.addListener((msg) => {
