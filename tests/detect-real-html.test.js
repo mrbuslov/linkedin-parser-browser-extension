@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { detectConnectionStatus } from '../linkedin-tracker/core/detect.js';
 
 beforeEach(() => { document.body.innerHTML = ''; });
@@ -46,5 +48,33 @@ describe('detectConnectionStatus — real-world Anastasia 1st-degree fixture', (
     document.body.innerHTML = ANASTASIA_HTML;
     const root = document.querySelector('main');
     expect(detectConnectionStatus(root)).toBe('connected');
+  });
+});
+
+// Wendy Pease — real profile saved by the user from a running LinkedIn
+// session. She's in the user's 1st-degree connections but the extension
+// kept classifying her as 'visited' — that stale status combined with
+// the STATUS-collision bug (which prevented profile visits from being
+// persisted at all in the 1.3.x window). Once the collision is fixed
+// and profile.js runs, the detector MUST return 'connected' or she'll
+// stay stuck in Viewed. The aria-degree signal on her top-card is
+// "Wendy Pease 🌍 Premium Profile 1st".
+describe('detectConnectionStatus — Wendy Pease 1st-degree (full-page fixture)', () => {
+  it('returns "connected" from the aria-degree signal on the real page', () => {
+    const html = readFileSync(
+      join(__dirname, 'fixtures/wendy-pease.html'), 'utf8',
+    );
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    // Copy body into the test's document so detect can query it
+    document.body.innerHTML = doc.body.innerHTML;
+
+    // Sanity: the aria-degree anchor MUST be present in this fixture
+    const ariaLabels = Array.from(document.querySelectorAll('[aria-label]'))
+      .map((n) => n.getAttribute('aria-label'));
+    const found1st = ariaLabels.find((a) => /\b1st\b\s*$/i.test(a));
+    expect(found1st, 'expected an aria-label ending in "1st"').toBeDefined();
+
+    expect(detectConnectionStatus(document.body)).toBe('connected');
   });
 });

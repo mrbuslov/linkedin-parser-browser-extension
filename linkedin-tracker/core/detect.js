@@ -54,18 +54,49 @@ const LOCALIZED_DEGREE_PATTERNS = [
 ];
 
 // Returns the DOM element carrying the connection-degree aria-label, or null.
-// This element is LinkedIn's most stable per-profile anchor — it sits on the
-// top-card name wrapper for screen-reader accessibility and exists across
-// every profile shape we've seen (Premium, regular, Creator mode, etc).
+//
+// SIDEBAR BLEED WARNING: LinkedIn's "People also viewed" widget uses the
+// SAME card component as the profile top-card, with the SAME aria-label
+// shape ("<Name> [Premium Profile] <1st|2nd|3rd>"). Wendy Pease bug
+// (2026-07-02): her sidebar contained Bruce Eckfeldt (2nd degree),
+// whose aria-label appeared FIRST in DOM order. Naive first-match
+// returned Bruce → 'not_connected' for a real 1st-degree contact.
+//
+// DETERMINISTIC DISAMBIGUATION: on a profile page, the OWNER's card is
+// rendered in MULTIPLE UI slots (top-card, header mini, mobile
+// collapse) — the same aria-label repeats 3-6 times across the DOM.
+// Sidebar recommendations render ONCE (or occasionally twice at
+// most). Group aria-label degree candidates by their exact label
+// text, then pick the label with the MAXIMUM occurrence count. Ties
+// break on DOM order (first wins). This is a pure DOM-count check —
+// same input → same output, no heuristics that can silently flip.
 function findDegreeAnchorElement(root) {
+  const nodes = [];
   for (const node of root.querySelectorAll('[aria-label]')) {
     const aria = node.getAttribute('aria-label') || '';
-    if (ARIA_DEGREE_RE.test(aria)) return node;
+    if (ARIA_DEGREE_RE.test(aria)) { nodes.push(node); continue; }
     for (const { re } of LOCALIZED_DEGREE_PATTERNS) {
-      if (re.test(aria)) return node;
+      if (re.test(aria)) { nodes.push(node); break; }
     }
   }
-  return null;
+  if (nodes.length === 0) return null;
+
+  // Count occurrences of each unique aria-label text.
+  const countByAria = new Map();
+  for (const n of nodes) {
+    const aria = n.getAttribute('aria-label');
+    countByAria.set(aria, (countByAria.get(aria) || 0) + 1);
+  }
+  // Find the label(s) with the maximum count. If multiple tie, take
+  // the first one encountered in DOM order (deterministic tie-break).
+  let winnerAria = null;
+  let maxCount = 0;
+  for (const n of nodes) {
+    const aria = n.getAttribute('aria-label');
+    const count = countByAria.get(aria);
+    if (count > maxCount) { maxCount = count; winnerAria = aria; }
+  }
+  return nodes.find((n) => n.getAttribute('aria-label') === winnerAria);
 }
 
 function findDegreeFromAria(root) {
