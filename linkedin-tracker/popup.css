@@ -1083,6 +1083,10 @@ body.is-on-sent .empty-off-sent { display: none; }
   align-items: center;
   justify-content: center;
 }
+/* HTML `hidden` attribute must take precedence over display:flex above.
+ * Without this the modal renders on every popup open — the very bug the
+ * consent gate exists to prevent. */
+.visits-modal[hidden] { display: none; }
 .visits-modal-inner {
   background: #fff;
   border-radius: 10px;
