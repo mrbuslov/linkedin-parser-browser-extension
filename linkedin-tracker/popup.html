@@ -12,6 +12,7 @@
       <button class="tab" data-tab="accepted">Accepted</button>
       <button class="tab" data-tab="marked">Marked</button>
       <button class="tab" data-tab="favorites" title="Favorites">★</button>
+      <button class="tab" data-tab="viewed" title="Profiles you've viewed but not invited">👁</button>
       <button class="tab" data-tab="visits" title="Bulk visit queue">🤖</button>
       <button class="tab" data-tab="settings">Settings</button>
     </div>
@@ -76,6 +77,15 @@
       </div>
     </section>
 
+    <section id="viewed-panel" class="panel">
+      <div class="summary" id="viewed-summary"></div>
+      <ul class="list" id="viewed-list"></ul>
+      <div class="empty" id="viewed-empty" hidden>
+        <p>No visited profiles yet.</p>
+        <p class="hint">Profiles you open (either manually via the browser or via the bulk visit queue) that you never invited to connect show up here. Sorted by most recently visited.</p>
+      </div>
+    </section>
+
     <section id="favorites-panel" class="panel">
       <div class="summary" id="favorites-summary"></div>
       <ul class="list" id="favorites-list"></ul>
@@ -135,6 +145,11 @@
           </label>
           <label>Warmup (days at 30% cap)
             <input type="number" id="visits-warmup" value="7" min="0" max="30">
+          </label>
+          <label class="visits-checkbox visits-experimental">
+            <input type="checkbox" id="visits-click-contact-info">
+            <span><b>Experimental:</b> click "Contact info" button on each profile
+            <br><small>Programmatic <code>.click()</code> — event is <code>isTrusted:false</code>, which LinkedIn may log against your session. Modal opens for 1st-degree only. Off by default.</small></span>
           </label>
         </div>
       </div>

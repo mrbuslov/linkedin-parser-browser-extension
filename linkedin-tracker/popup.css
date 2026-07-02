@@ -1160,3 +1160,15 @@ body.is-on-sent .empty-off-sent { display: none; }
 }
 .visits-modal-actions button:hover:not(:disabled) { background: #f0f0f0; }
 .visits-modal-actions button.cta:hover:not(:disabled) { background: #084a92; }
+
+/* Experimental settings row — smaller font, muted colour so the risk
+ * warning reads as a footnote, not a primary action. */
+.visits-experimental { font-size: 11px; color: #666; }
+.visits-experimental b { color: #a01d15; }
+.visits-experimental small { color: #999; }
+.visits-experimental code { background: #f0f0f0; padding: 1px 4px; border-radius: 3px; font-size: 10px; }
+
+/* Viewed tab — reuse existing list styles; only the emoji tab needs
+ * a slight nudge to sit nicely at 380px popup width. */
+.tab[data-tab="viewed"] { font-size: 14px; }
+.tab[data-tab="viewed"]:hover { color: #0a66c2; }

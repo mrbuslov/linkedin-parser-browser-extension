@@ -89,8 +89,42 @@
   // Final check before signaling done.
   if (await isQueueStillRunning() === false) return;
 
+  // Optional: click the "Contact info" button. Opt-in via
+  // settings.clickContactInfo — default OFF. Synthetic .click() has
+  // isTrusted=false which LinkedIn may log, but the modal DOES open
+  // (React handlers don't check isTrusted). Only useful for 1st-degree
+  // connections; for others the button either doesn't exist or the
+  // modal is empty.
+  if (visitQueue.settings && visitQueue.settings.clickContactInfo) {
+    await tryClickContactInfo();
+  }
+
   chrome.runtime.sendMessage({ type: 'VISIT_CAPTURE_DONE', url: running.url }).catch(() => {});
 })();
+
+async function tryClickContactInfo() {
+  // Selector strategy: LinkedIn's Contact info button lives in the
+  // top card and has an anchor with href ending in /overlay/contact-info/
+  // OR a button with data-view-name including "contact-info". Both
+  // patterns rotate; anchor is the more stable of the two.
+  const anchor = document.querySelector(
+    'a[href*="/overlay/contact-info/"], [data-view-name*="contact-info"]',
+  );
+  if (!anchor) return;
+  try {
+    anchor.click();
+  } catch { return; }
+  // Wait up to 4s for the modal DOM to appear — LITContactsModal
+  // auto-parses when it does, no coordination needed here.
+  const deadline = Date.now() + 4000;
+  while (Date.now() < deadline) {
+    if (document.querySelector('.artdeco-modal[aria-labelledby*="contact"], section.pv-contact-info')) {
+      await sleep(1500); // let modal fully render + LITContactsModal parse
+      return;
+    }
+    await sleep(200);
+  }
+}
 
 async function isQueueStillRunning() {
   const { visitQueue } = await dbGet('visitQueue');

@@ -331,6 +331,31 @@ function renderMarked(rawItems) {
 // `favorite === true`. Rendering choice per row: 'pending' status → Pending
 // row shape (age color + sentDateRelative); 'accepted'/'declined' → Accepted
 // row shape (Mark button); anything else → contacts-only row shape.
+// Viewed tab — profiles with status='visited' (opened but never invited /
+// connected). Sorted by most recent visit. Reuses the contacts-only
+// row renderer since these entries look the same shape.
+function renderViewed(contacts) {
+  const list = $('viewed-list');
+  list.innerHTML = '';
+
+  const viewed = Object.values(contacts)
+    .filter((r) => r.status === 'visited')
+    .map(viewItem);
+  const visible = viewed.filter(matchesSearch);
+  $('viewed-empty').hidden = viewed.length > 0;
+  $('viewed-summary').textContent = viewed.length === 0
+    ? ''
+    : searchQuery
+      ? `${visible.length} of ${viewed.length} match`
+      : `${viewed.length} viewed`;
+
+  const sorted = visible.slice()
+    .sort((a, b) => (b.visitedAt || b.firstSeenAt || 0) - (a.visitedAt || a.firstSeenAt || 0));
+  for (const item of sorted) {
+    list.append(renderContactOnlyRow(item));
+  }
+}
+
 function renderFavorites(contacts) {
   const list = $('favorites-list');
   list.innerHTML = '';
@@ -449,6 +474,7 @@ async function loadData() {
   renderAccepted(accepted, scanState.connections);
   renderMarked(accepted);
   renderFavorites(contacts);
+  renderViewed(contacts);
   renderScanInfo($('pending-scan-info'), scanState.sent);
   renderScanInfo($('accepted-scan-info'), scanState.connections);
 
@@ -1071,6 +1097,7 @@ const VISITS_DEFAULT_SETTINGS = () => ({
   batchSize:       3,
   betweenMeanSec:  90,
   warmupDays:      Math.max(0, Number($('visits-warmup').value) || 0),
+  clickContactInfo: $('visits-click-contact-info').checked,
 });
 
 function visitsRandSeed() {
