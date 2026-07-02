@@ -1,5 +1,13 @@
 * { box-sizing: border-box; }
 
+/* GLOBAL: the HTML `hidden` attribute must ALWAYS hide the element.
+ * Explicit `display: flex/grid/block` rules elsewhere in this file can
+ * beat the UA's implicit `[hidden] { display: none }`, which caused
+ * two production bugs (visits panic banner always visible, consent
+ * modal always visible). Belt-and-suspenders — even if a future CSS
+ * rule sets display, this one wins because of !important. */
+[hidden] { display: none !important; }
+
 html, body {
   height: 600px; max-height: 600px;
   width: 380px; max-width: 380px;
@@ -868,6 +876,10 @@ body.is-on-sent .empty-off-sent { display: none; }
   border-radius: 8px;
   margin-bottom: 12px;
 }
+/* HTML `hidden` must beat display:flex above. Without this the "Queue
+ * running / STOP EVERYTHING" banner shows even when idle, making it
+ * impossible to tell whether a queue is actually running. */
+.visits-panic[hidden] { display: none; }
 .visits-panic-title { font-weight: 700; color: #a01d15; font-size: 13px; }
 .visits-panic-btn {
   background: #d02b1e;
@@ -950,7 +962,12 @@ body.is-on-sent .empty-off-sent { display: none; }
 .visits-actions button.cta {
   background: #0a66c2;
   color: #fff;
-  border-color: #0a66c2;
+  /* Explicit border + margin=0 because the global `.cta` rule sets
+   * border:0 and margin:8px 0 — without these overrides Preview and
+   * Start render 2px shorter AND vertically offset from Clear input,
+   * making the button row look misaligned. */
+  border: 1px solid #0a66c2;
+  margin: 0;
 }
 .visits-actions button:hover { background: #f0f0f0; }
 .visits-actions button.cta:hover { background: #084a92; }
