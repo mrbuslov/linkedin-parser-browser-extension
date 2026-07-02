@@ -341,3 +341,94 @@ describe('detectConnectionStatus', () => {
     expect(detectConnectionStatus(root)).toBe('pending');
   });
 });
+
+describe('detectConnectionStatus — RSC-first priority', () => {
+  // RSC networkDistance is authoritative when present. Aria/DOM come
+  // last. Regression: Wendy-class sidebar bleed — aria said 2nd (wrong,
+  // sidebar person picked up), RSC said 1st. Old code trusted aria.
+  // New code trusts RSC.
+
+  let realLITRSC;
+  beforeEach(() => { realLITRSC = globalThis.LITRSC; });
+  const restore = () => { globalThis.LITRSC = realLITRSC; };
+
+  it('RSC=1 wins even when aria degree is 2 (sidebar bleed scenario)', () => {
+    globalThis.LITRSC = {
+      extractRSCTextCached: () => 'payload',
+      extractRSCText:       () => 'payload',
+      findNetworkDistance:  () => 1,
+    };
+    const root = makeRoot(`
+      <h1>Wendy Real Owner</h1>
+      <section aria-label="Sidebar Person Premium Profile 2nd">
+        <p>Sidebar Person</p>
+      </section>
+    `);
+    expect(detectConnectionStatus(root)).toBe('connected');
+    restore();
+  });
+
+  it('RSC>=2 wins even when aria degree is 1 (opposite sidebar bleed)', () => {
+    globalThis.LITRSC = {
+      extractRSCTextCached: () => 'payload',
+      extractRSCText:       () => 'payload',
+      findNetworkDistance:  () => 2,
+    };
+    const root = makeRoot(`
+      <h1>Owner 2nd Degree</h1>
+      <section aria-label="Some Owner Premium Profile 1st">
+        <p>Owner heading</p>
+      </section>
+      <button>Connect</button>
+    `);
+    expect(detectConnectionStatus(root)).toBe('not_connected');
+    restore();
+  });
+
+  it('RSC=1 wins over Pending button (sidebar Pending must not hijack a 1st-degree)', () => {
+    // Kimberly Martinez / Wendy variant: real 1st-degree with a
+    // Pending button somewhere in the DOM (sidebar). Priority: 1st.
+    globalThis.LITRSC = {
+      extractRSCTextCached: () => 'payload',
+      extractRSCText:       () => 'payload',
+      findNetworkDistance:  () => 1,
+    };
+    const root = makeRoot(`
+      <h1>Real 1st Degree</h1>
+      <a aria-label="Pending, click to withdraw invitation">Pending</a>
+      <a href="/messaging/compose/">Message</a>
+    `);
+    expect(detectConnectionStatus(root)).toBe('connected');
+    restore();
+  });
+
+  it('RSC=2 + fresh Pending button → pending (user just clicked Connect)', () => {
+    globalThis.LITRSC = {
+      extractRSCTextCached: () => 'payload',
+      extractRSCText:       () => 'payload',
+      findNetworkDistance:  () => 2,
+    };
+    const root = makeRoot(`
+      <h1>Just Invited</h1>
+      <a aria-label="Pending, click to withdraw invitation">Pending</a>
+    `);
+    expect(detectConnectionStatus(root)).toBe('pending');
+    restore();
+  });
+
+  it('RSC absent → aria degree fallback (Premium profile shape)', () => {
+    globalThis.LITRSC = {
+      extractRSCTextCached: () => null,
+      extractRSCText:       () => null,
+      findNetworkDistance:  () => null,
+    };
+    const root = makeRoot(`
+      <h1>Premium Owner</h1>
+      <section aria-label="Premium Owner Premium Profile 1st">
+        <p>Owner heading</p>
+      </section>
+    `);
+    expect(detectConnectionStatus(root)).toBe('connected');
+    restore();
+  });
+});

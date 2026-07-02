@@ -216,6 +216,60 @@ describe('applyProfileVisit — connectedOnText anti-downgrade guard', () => {
   });
 });
 
+describe('applyProfileVisit — firstConnectedAt self-reinforcing guard', () => {
+  // Class-of-bug: user visits a profile, detection returns 'connected'
+  // (via aria or RSC), status becomes 'accepted'. Later, another visit
+  // hits a transient DOM state — sidebar bleed, half-hydrated RSC,
+  // race with SPA navigation — and detection returns 'not_connected'.
+  // Without a guard, the record downgrades to 'declined'. connectedOnText
+  // only exists after /connections/ scan; users who don't run that scan
+  // had no protection. firstConnectedAt closes the gap: it's set the
+  // FIRST time we ever observe 'connected', never cleared, and any
+  // future not_connected observation is refused as long as it's set.
+
+  it('sets firstConnectedAt on the first connected observation and never clears it', () => {
+    const url = 'https://www.linkedin.com/in/first-time/';
+    const stored = storedV2({});
+    // First visit: connected
+    const r1 = applyProfileVisit(stored, info({ profileUrl: url }), 'connected', NOW);
+    expect(r1.contacts[url].status).toBe(STATUS.ACCEPTED);
+    expect(r1.contacts[url].firstConnectedAt).toBe(NOW);
+
+    // Second visit later: also connected — firstConnectedAt stays the earlier value
+    const stored2 = { ...stored, contacts: r1.contacts };
+    const r2 = applyProfileVisit(stored2, info({ profileUrl: url }), 'connected', NOW + 5 * DAY);
+    expect(r2.contacts[url].firstConnectedAt).toBe(NOW);
+    // verifiedAt bumps on the second connected observation
+    expect(r2.contacts[url].verifiedAt).toBe(NOW + 5 * DAY);
+  });
+
+  it('refuses to downgrade an accepted record that has firstConnectedAt but no connectedOnText', () => {
+    const url = 'https://www.linkedin.com/in/self-guarded/';
+    // First visit: connected → firstConnectedAt set
+    let r = applyProfileVisit(storedV2({}), info({ profileUrl: url }), 'connected', NOW - 10 * DAY);
+    expect(r.contacts[url].firstConnectedAt).toBe(NOW - 10 * DAY);
+    // Later visit — DOM transient returns not_connected. Guard MUST hold.
+    r = applyProfileVisit({ ...r, contacts: r.contacts }, info({ profileUrl: url }), 'not_connected', NOW);
+    expect(r.contacts[url].status).toBe(STATUS.ACCEPTED);
+    expect(r.contacts[url].declinedAt).toBeNull();
+    // verifiedAt is NOT touched by a refused-downgrade tick (unchanged
+    // from the earlier connected observation)
+    expect(r.contacts[url].verifiedAt).toBe(NOW - 10 * DAY);
+  });
+
+  it('does NOT set firstConnectedAt on a visited-only or pending record (only on connected)', () => {
+    const url = 'https://www.linkedin.com/in/never-connected/';
+    // Visited only
+    let r = applyProfileVisit(storedV2({}), info({ profileUrl: url }), 'not_connected', NOW);
+    expect(r.contacts[url].status).toBe(STATUS.VISITED);
+    expect(r.contacts[url].firstConnectedAt).toBeNull();
+    // Pending
+    r = applyProfileVisit({ ...r, contacts: r.contacts }, info({ profileUrl: url }), 'pending', NOW + 100);
+    expect(r.contacts[url].status).toBe(STATUS.PENDING);
+    expect(r.contacts[url].firstConnectedAt).toBeNull();
+  });
+});
+
 describe('applyProfileVisit — not-connected on untracked profile', () => {
   it('creates a status=visited record when we\'ve never seen this profile before', () => {
     const r = applyProfileVisit(storedV2(), info(), 'not_connected', NOW);

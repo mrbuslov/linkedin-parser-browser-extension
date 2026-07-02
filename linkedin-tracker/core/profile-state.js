@@ -160,12 +160,20 @@ function mergeIntoTarget(contacts, oldUrl, targetUrl) {
   }
   // Status: current record's status is the freshest observation. Special
   // case: a previously-accepted record downgrading to visited should
-  // NOT lose the accepted status without canonical proof (connectedOnText).
-  if (old.status === STATUS.ACCEPTED && cur.status !== STATUS.ACCEPTED && old.connectedOnText) {
+  // NOT lose the accepted status without canonical proof — either
+  // connectedOnText (from /connections/ scan) OR firstConnectedAt
+  // (self-reinforcing marker set on any prior 'connected' observation).
+  if (old.status === STATUS.ACCEPTED
+      && cur.status !== STATUS.ACCEPTED
+      && (old.connectedOnText || old.firstConnectedAt)) {
     merged.status = STATUS.ACCEPTED;
   }
   if (old.connectedOnText && !cur.connectedOnText) merged.connectedOnText = old.connectedOnText;
   if (old.connectedOnDate && !cur.connectedOnDate) merged.connectedOnDate = old.connectedOnDate;
+  // firstConnectedAt is sticky — earliest observation wins.
+  if (old.firstConnectedAt && (!cur.firstConnectedAt || old.firstConnectedAt < cur.firstConnectedAt)) {
+    merged.firstConnectedAt = old.firstConnectedAt;
+  }
   // Preserve prior-URL history (useful for debugging vanity-rename cases).
   merged._priorUrls = merged._priorUrls || [];
   if (!merged._priorUrls.includes(oldUrl)) merged._priorUrls.push(oldUrl);
@@ -274,10 +282,11 @@ function applyProfileVisit(stored, info, status, now, contactInfo) {
 
     // Status + status-timing
     status: newStatus,
-    acceptedAt:  timing.acceptedAt,
-    declinedAt:  timing.declinedAt,
-    verifiedAt:  timing.verifiedAt,
-    daysPending: timing.daysPending,
+    acceptedAt:       timing.acceptedAt,
+    declinedAt:       timing.declinedAt,
+    verifiedAt:       timing.verifiedAt,
+    firstConnectedAt: timing.firstConnectedAt,
+    daysPending:      timing.daysPending,
   };
 
   // Avatar has the confirmed guard — go through refreshMetadata rather than
@@ -311,8 +320,21 @@ function statusFromVisit(observed, prev) {
   if (observed === 'pending')   return STATUS.PENDING;
   if (observed === 'connected') return STATUS.ACCEPTED;
   // observed === 'not_connected'
-  if (prev.connectedOnText) {
-    // Canonical proof — refuse to downgrade. Keep prior status.
+  //
+  // TWO independent anti-downgrade guards, either strong enough on
+  // its own to refuse a downgrade:
+  //
+  //   connectedOnText  — canonical proof from the /connections/ scan,
+  //                      strongest signal, set only when LinkedIn's own
+  //                      "Connected on Jan 5, 2024" text was observed.
+  //   firstConnectedAt — self-reinforcing marker set the FIRST time we
+  //                      observed 'connected' via any signal (RSC or
+  //                      aria). Once set, never cleared. Fixes the
+  //                      Wendy-class regression where a transient DOM
+  //                      state (sidebar bleed, RSC not yet hydrated)
+  //                      returned 'not_connected' and downgraded a real
+  //                      1st-degree to 'declined'.
+  if (prev.connectedOnText || prev.firstConnectedAt) {
     return prev.status || STATUS.ACCEPTED;
   }
   if (prev.status === STATUS.ACCEPTED || prev.status === STATUS.PENDING) {
@@ -327,10 +349,11 @@ function statusFromVisit(observed, prev) {
 // accepted creation).
 function timingUpdates(newStatus, observed, prev, now) {
   const out = {
-    acceptedAt:  prev.acceptedAt  || null,
-    declinedAt:  prev.declinedAt  || null,
-    verifiedAt:  prev.verifiedAt  || null,
-    daysPending: prev.daysPending || 0,
+    acceptedAt:       prev.acceptedAt        || null,
+    declinedAt:       prev.declinedAt        || null,
+    verifiedAt:       prev.verifiedAt        || null,
+    firstConnectedAt: prev.firstConnectedAt  || null,
+    daysPending:      prev.daysPending       || 0,
   };
   if (newStatus === STATUS.ACCEPTED) {
     if (!out.acceptedAt) out.acceptedAt = now;
@@ -338,7 +361,14 @@ function timingUpdates(newStatus, observed, prev, now) {
     // not_connected observation that was refused-to-downgrade via the
     // connectedOnText guard must NOT touch verifiedAt — otherwise the
     // guard would spuriously report "changed=true" every quiet tick.
-    if (observed === 'connected') out.verifiedAt = now;
+    if (observed === 'connected') {
+      out.verifiedAt = now;
+      // firstConnectedAt is sticky — set once on the FIRST 'connected'
+      // observation, never cleared. This is the self-reinforcing guard
+      // that keeps the record classified as accepted even if a future
+      // transient DOM read returns 'not_connected'.
+      if (!out.firstConnectedAt) out.firstConnectedAt = now;
+    }
     if (prev.firstSeenAt) {
       out.daysPending = Math.floor((out.acceptedAt - prev.firstSeenAt) / DAY_MS);
     }

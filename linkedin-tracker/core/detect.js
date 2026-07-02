@@ -213,35 +213,46 @@ function detectConnectionStatus(root) {
   const inviteLink = scope.querySelector('a[href*="/preload/custom-invite/"]');
   const hasInviteLink = inviteLink != null && isVisible(inviteLink);
 
-  // 1) aria-label degree === 1 wins over DOM Pending. A 1st-degree contact
-  //    cannot have an outstanding invitation by definition — she's already
-  //    accepted. Any "Pending" button found in `<main>` (mutuals sidebar,
-  //    recommendations, "People who follow X") is for someone OTHER than the
-  //    viewed profile. Regression for Kimberly Martinez who shipped as 1st
-  //    degree but with 9 Connect / multiple Pending buttons in the sidebar:
-  //    old priority returned 'pending' and stuck her in sentInvitations.
-  if (ariaDegree === 1) return 'connected';
+  // RSC is authoritative for connection degree WHEN PRESENT. LinkedIn
+  // serialises `networkDistance` into the server-side payload — it's the
+  // same field their own UI reads, and it can't be confused by sidebar
+  // bleed (RSC has ONE record for the viewed profile). Aria-label was
+  // authoritative until the Wendy Pease bug (2026-07-02): her sidebar's
+  // "People also viewed" widget used the SAME aria-label shape as her
+  // top-card, first-in-DOM sidebar entry (Bruce, 2nd degree) hijacked
+  // detection. Fixed the aria disambiguation deterministically (most-
+  // frequent label wins) — but RSC as PRIMARY closes the class of bug
+  // entirely on any profile where RSC ships.
+  //
+  // Fallback chain (short-circuits on first hit):
+  //   1) RSC networkDistance — server-side ground truth, present on
+  //      most non-Premium profiles. Complete decision tree here.
+  //   2) Aria-label degree — accessibility marker, present on every
+  //      profile shape. Deterministic disambiguation via label-count.
+  //   3) DOM buttons (Pending, Connect, Follow, Message) — inference
+  //      when neither signal fired.
+  //
+  // Within each branch, `hasPending` beats "1st" because a user just
+  // clicked Connect and the button flipped — RSC/aria still shows the
+  // OLD degree until reload. But `hasPending` does NOT beat RSC/aria
+  // === 1 (the person is already a connection; any Pending button is
+  // for a different person in a sidebar).
 
-  // 2) Real-time DOM Pending for non-1st-degree profiles: user just sent an
-  //    invite and the button flipped. aria-degree of the target is still 2/3
-  //    in the live DOM until reload, so we need this branch to catch fresh
-  //    invite events.
+  if (rscDistance != null) {
+    if (rscDistance === 1) return 'connected';
+    if (hasPending) return 'pending';
+    if (rscDistance >= 2) return 'not_connected';
+  }
+
+  if (ariaDegree != null) {
+    if (ariaDegree === 1) return 'connected';
+    if (hasPending) return 'pending';
+    if (ariaDegree >= 2) return 'not_connected';
+  }
+
+  // Neither RSC nor aria surfaced a degree. Fall to DOM heuristics.
   if (hasPending) return 'pending';
-
-  // 3) aria-label degree 2/3 → not connected.
-  if (ariaDegree != null && ariaDegree >= 2) return 'not_connected';
-
-  // 3) RSC ground truth (when aria-label didn't surface a degree). Same
-  //    semantics as before.
-  if (rscDistance === 1) return 'connected';
-  if (rscDistance != null && rscDistance >= 2) return 'not_connected';
-
-  // 4) Neither aria nor RSC told us anything definitive. Fall back to pure
-  //    DOM heuristics. Risky for 1st-degree contacts with Follow enabled
-  //    (Creator mode renders a Follow button next to Message), but that's
-  //    why aria/RSC come first.
   if (hasFollow || hasConnect || hasInviteLink) return 'not_connected';
-
   const messageLink = scope.querySelector('a[href*="/messaging/compose/"]');
   if (messageLink && isVisible(messageLink)) return 'connected';
 
