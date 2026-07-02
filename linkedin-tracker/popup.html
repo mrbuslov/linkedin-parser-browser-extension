@@ -148,8 +148,8 @@
           </label>
           <label class="visits-checkbox visits-experimental">
             <input type="checkbox" id="visits-click-contact-info">
-            <span><b>Experimental:</b> click "Contact info" button on each profile
-            <br><small>Programmatic <code>.click()</code> — event is <code>isTrusted:false</code>, which LinkedIn may log against your session. Modal opens for 1st-degree only. Off by default.</small></span>
+            <span><b>Experimental:</b> click "Contact info" button on every profile that has it
+            <br><small>Programmatic <code>.click()</code> — event is <code>isTrusted:false</code>, which LinkedIn may log against your session. Modal opens for anyone with the button — but what's INSIDE depends on LinkedIn's server-side privacy: 1st-degree = full contact fields (email/phone/websites/address), 2nd = usually only public bits (website, birthday), 3rd+ = usually empty. LinkedIn hides email/phone from non-1st regardless of what we do here. Off by default.</small></span>
           </label>
         </div>
       </div>
