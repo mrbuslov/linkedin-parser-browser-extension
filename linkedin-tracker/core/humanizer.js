@@ -16,6 +16,12 @@
 // Zero fallbacks by design: every required parameter throws when
 // missing. Callers must be explicit — a silent default here would hide
 // bugs in the runner for months.
+//
+// Wrapped in IIFE — top-level SEC/MIN identifiers must not leak into
+// popup.html / SW importScripts shared scope. See visit-queue.js
+// header for full rationale.
+
+(function () {
 
 const SEC = 1_000;
 const MIN = 60_000;
@@ -230,3 +236,5 @@ const LITHumanizer = {
 };
 if (typeof globalThis !== 'undefined') globalThis.LITHumanizer = LITHumanizer;
 if (typeof module !== 'undefined' && module.exports) module.exports = LITHumanizer;
+
+})();

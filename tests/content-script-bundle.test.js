@@ -105,6 +105,70 @@ function loadBundle(jsFiles) {
   return sandbox;
 }
 
+// popup.html script tags and background.js importScripts BOTH load their
+// files into a single shared script scope — unlike content_scripts which
+// isolate top-level `let/const` per file. Two files that both declare
+// `const STATUS` at top level → SyntaxError "Identifier already declared".
+// Real production bug 2026-07-02: schema-v2.js and visit-queue.js both had
+// `const STATUS`, popup crashed on load, feature dead until IIFE wrap.
+// This test concatenates the files and runs as ONE script to catch the
+// exact class of collision that content_scripts' per-file isolation hides.
+function loadConcat(jsFiles) {
+  const sandbox = {
+    chrome: { runtime: { getURL: (p) => p, sendMessage: () => {}, onMessage: { addListener: () => {} }, id: 'test' },
+      storage: { local: { get: () => Promise.resolve({}), set: () => Promise.resolve() } } },
+    document: new Proxy({}, { get: () => new Proxy({}, { get: () => () => null, apply: () => null }) }),
+    location: { href: 'https://www.linkedin.com/', hostname: 'www.linkedin.com', pathname: '/' },
+    setTimeout: () => 0, clearTimeout: () => {},
+    setInterval: () => 0, clearInterval: () => {},
+    fetch: () => Promise.resolve({ ok: false, status: 500, text: () => Promise.resolve('') }),
+    console: { log: () => {}, warn: () => {}, error: () => {}, info: () => {} },
+    crypto: { getRandomValues: (buf) => buf, randomUUID: () => 'x' },
+    URL: URL, Promise: Promise, Object: Object, Array: Array, Map: Map, Set: Set,
+    JSON: JSON, Math: Math, Date: Date, RegExp: RegExp, Number: Number, String: String,
+    TypeError: TypeError, RangeError: RangeError, Error: Error,
+    scrollBy: () => {}, scrollTo: () => {},
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  sandbox.self = sandbox;
+  vm.createContext(sandbox);
+  const combined = jsFiles.map((f) =>
+    `//── ${f} ──\n${readFileSync(join(ROOT, f), 'utf8')}\n`,
+  ).join('\n');
+  vm.runInContext(combined, sandbox, { filename: '[concat]' });
+  return sandbox;
+}
+
+// popup.html loads: db-client.js, core/schema-v2.js, core/humanizer.js,
+// core/visit-queue.js, core/popup-logic.js, popup.js. We test the core
+// set without popup.js (popup.js references DOM elements that don't
+// exist in sandbox; parse-time is what matters for identifier collision).
+describe('popup.html script bundle — concatenated identifier check', () => {
+  it('schema-v2 + humanizer + visit-queue + popup-logic load together without collision', () => {
+    expect(() => loadConcat([
+      'db-client.js',
+      'core/schema-v2.js',
+      'core/humanizer.js',
+      'core/visit-queue.js',
+      'core/popup-logic.js',
+    ])).not.toThrow();
+  });
+});
+
+// background.js importScripts all core files into one SW global scope.
+// Concat + eval mirrors that behaviour.
+describe('background.js importScripts bundle — concatenated identifier check', () => {
+  it('schema-v2 + humanizer + visit-queue + visit-runner import together without collision', () => {
+    expect(() => loadConcat([
+      'core/schema-v2.js',
+      'core/humanizer.js',
+      'core/visit-queue.js',
+      'core/visit-runner.js',
+    ])).not.toThrow();
+  });
+});
+
 for (const cs of manifest.content_scripts) {
   describe(`content_scripts bundle: ${cs.matches.join(', ')}`, () => {
     it('loads all js files into one shared scope without SyntaxError or identifier collision', () => {

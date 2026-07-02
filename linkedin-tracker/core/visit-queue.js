@@ -12,6 +12,15 @@
 // The queue lives at storage key `visitQueue` (see schema plan). One
 // queue is active at a time. Completed queues are archived to
 // `visitQueueHistory[]` (capped at 10 entries).
+//
+// The whole file is wrapped in an IIFE so that top-level `const` names
+// (STATUS, DAY_MS, etc.) don't leak into the shared script scope of
+// popup.html and background.js (importScripts) where schema-v2.js
+// ALSO declares `const STATUS`. Content scripts isolate per-file
+// scope, popup/SW do not — this wrapping is mandatory for any core/*
+// file loaded alongside another that reuses a common identifier.
+
+(function () {
 
 const STATUS = Object.freeze({
   QUEUED:  'queued',
@@ -368,3 +377,5 @@ const LITVisitQueue = {
 };
 if (typeof globalThis !== 'undefined') globalThis.LITVisitQueue = LITVisitQueue;
 if (typeof module !== 'undefined' && module.exports) module.exports = LITVisitQueue;
+
+})();

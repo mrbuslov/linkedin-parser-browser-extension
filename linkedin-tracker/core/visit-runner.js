@@ -19,6 +19,10 @@
 // The `deps` argument bundles:
 //   - humanizer (LITHumanizer)
 //   - visitQueue (LITVisitQueue)
+//
+// Wrapped in IIFE — see visit-queue.js header for the rationale.
+
+(function () {
 
 const EVENT = Object.freeze({
   TICK:           'TICK',
@@ -318,3 +322,5 @@ const LITVisitRunner = {
 };
 if (typeof globalThis !== 'undefined') globalThis.LITVisitRunner = LITVisitRunner;
 if (typeof module !== 'undefined' && module.exports) module.exports = LITVisitRunner;
+
+})();
