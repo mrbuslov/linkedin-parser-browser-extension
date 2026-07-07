@@ -8,104 +8,59 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
-### Disabled in 1.3.0 (pre-store-submission)
 
-The Bulk Visit Queue feature was built, tested (114 unit tests + integration),
-and integrated end-to-end during the 1.3.0 development window. Right before
-the Chrome Web Store submission it was **disabled** — the `tabs`, `alarms`,
-`idle`, and `webNavigation` permissions it required triggered a Store
-justification round we're not ready to defend, and the feature's net value
-for the primary use case was judged marginal.
+## [1.3.1] — 2026-07-02
 
-What was disabled (all code preserved for 1.3.1):
+Store-submission cleanup for the 1.3.0 branch. Bulk Visit Queue pulled
+from the shipping bundle to avoid a Chrome Web Store justification round
+on tabs/alarms/idle/webNavigation permissions. The feature's net value
+for the primary use case (invite tracking + local CRM) was marginal
+enough that defending it wasn't worth the review friction.
 
-- `manifest.json` — `tabs`/`alarms`/`idle`/`webNavigation` permissions
-  removed; `/feed/*` content_scripts entry removed; `visit-content.js` and
-  `core/humanizer.js` removed from the `/in/*` bundle.
-- `background.js` — `importScripts` of humanizer/visit-queue/visit-runner
-  removed; `VISIT_QUEUE_*` message handlers removed; the SW glue block
-  wrapped in `if (false) { ... }`.
-- `popup.html` — 🤖 tab button HTML-commented; `<section id="visits-panel">`
-  and consent modal wrapped in `<template>` so the browser parses but
-  never renders them; humanizer/visit-queue script imports removed.
-- `popup.js` — the entire Bulk Visit Queue block (VISITS_DEFAULT_SETTINGS,
-  renderVisitsPanel, visitsStart, event handlers, etc.) wrapped in
-  `if (false) { ... }`.
+### Removed
+- **Bulk Visit Queue runtime removed from the shipping bundle.**
+  - `manifest.json` — `tabs`/`alarms`/`idle`/`webNavigation` permissions
+    dropped; `/feed/*` content_scripts entry removed; `visit-content.js`
+    and `core/humanizer.js` dropped from the `/in/*` bundle.
+  - `background.js` — `importScripts` of humanizer/visit-queue/visit-runner
+    removed; `VISIT_QUEUE_*` message handlers removed; the SW glue block
+    (~160 lines) deleted outright.
+  - `popup.html` — 🤖 tab button HTML-commented; `<section id="visits-panel">`
+    and consent modal wrapped in `<template>` (parsed but never rendered
+    or instantiated); humanizer/visit-queue script imports removed.
+  - `popup.js` — the entire Bulk Visit Queue block (VISITS_DEFAULT_SETTINGS,
+    renderVisitsPanel, visitsStart, event handlers, etc., ~290 lines) deleted
+    outright.
 
-What remained in the repo (dormant, ready for 1.3.1):
+### Fixed
+- **SW startup crash on load.** Initial attempt to disable the SW glue
+  wrapped it in `if (false) { ... }`. Chrome's V8 in the MV3 service-worker
+  context evaluates `chrome.alarms.onAlarm.addListener` (and the other
+  chrome-API event bindings) eagerly, regardless of surrounding dead-code
+  branches — the calls fired at load, threw `Cannot read properties of
+  undefined (reading 'onAlarm')` because `chrome.alarms` was undefined
+  after we dropped the permission, and killed the SW. `popup.js`
+  `sendMessage` calls to the disabled Bulk Visit handlers then failed with
+  `Could not establish connection. Receiving end does not exist.`
+  Root fix: delete the dead-code blocks outright rather than fence them.
+
+### Preserved (in the repo, not in the built extension)
+
+Pure-logic modules kept unchanged so a future release can revive Bulk
+Visit Queue without a re-implementation:
 
 - `linkedin-tracker/core/humanizer.js` — 232 lines, 42 tests
 - `linkedin-tracker/core/visit-queue.js` — 370 lines, 42 tests
 - `linkedin-tracker/core/visit-runner.js` — 307 lines, 20 tests
 - `linkedin-tracker/visit-content.js`, `linkedin-tracker/visit-feed.js`
-- `tests/humanizer.test.js`, `tests/visit-queue.test.js`,
+- Full test coverage: `tests/humanizer.test.js`, `tests/visit-queue.test.js`,
   `tests/visit-queue-integration.test.js`, `tests/visit-runner.test.js`
-- `linkedin-tracker/popup.css` — visits-\* styles left (dead CSS, no runtime cost)
+- `linkedin-tracker/popup.css` — visits-\* styles left in place (dead CSS,
+  no runtime cost)
 
-Re-enable checklist for 1.3.1 is inlined in the disabled blocks
-(`background.js` and `popup.js`).
-
-### Added — Bulk Visit Queue (🤖 tab in popup)
-
-Automated, humanized bulk profile visiting. Paste a list of LinkedIn URLs,
-extension opens them one by one in a dedicated tab, scrolls, dwells, then
-moves on. Same `contacts` dict as manual visits — data lands via the
-existing `profile.js` + `LITContactsModal` parsers, no new storage schema
-for the visit results themselves.
-
-Key safety rails:
-- **Direct `/overlay/contact-info/` navigation.** One tab load fires BOTH
-  parsers — profile top-card + contact modal — halving time per profile.
-- **Real scrolls, not synthetic events.** `window.scrollBy()` triggers
-  browser-native scroll events with `isTrusted=true`. No `MouseEvent`
-  faking, no `chrome.debugger` API, no debugger banner.
-- **Log-normal distributions, not uniform.** Dwell time is log-normal
-  scaled by content volume (short profile ≈ 30s, long ≈ 3-4 min).
-  Between-visit pause is exponential. Occasional backward scroll
-  ("re-read"), occasional pause ("distracted"). Everything seeded via
-  `mulberry32` PRNG so behaviour is deterministic per queue seed —
-  same session can be replayed for post-mortem debugging.
-- **Time-of-day gate.** Default window 09:00-21:00 local. Queue sleeps
-  outside the window and resumes when it reopens. Ночью не работает.
-- **Daily cap with local-timezone date keying.** Default 20/day,
-  configurable up to 50. Visit at 23:59 local counts against local day.
-- **Warmup mode.** First 7 days at 30% of configured cap. Prevents
-  a sudden "0→30 profiles/day" spike from tripping LinkedIn's behavioral
-  baseline model.
-- **Batch breaks.** After 3 visits → 15-45 min break. After 5-12 →
-  30-50s "feed break" opens `/feed/` briefly (genuine social signal).
-- **Idle detection.** `chrome.idle.onStateChanged` — when user returns
-  to the browser, queue defers next visit by 5 min.
-- **Health-signal auto-pause.** `chrome.webNavigation.onBeforeNavigate`
-  watches the visit tab for `/checkpoint/`, `/uas/`, `/error/`. On hit:
-  queue pauses, tab closes, user gets a notification.
-- **Panic button.** Big red STOP EVERYTHING in the popup whenever
-  status='running'.
-- **Pre-skip.** URLs already in `contacts` with `status='accepted'`
-  (skipFirstDegree) or `visitedAt` within N days (skipRecentDays) are
-  automatically marked skipped before the queue starts.
-- **Dry-run preview.** Preview button shows: how many will visit,
-  how many pre-skipped and why, estimated minutes, days-needed at
-  the effective cap, warmup indicator.
-- **Safety-zone badge.** 🟢 Safe (0-33%) 🟡 Moderate (33-66%)
-  🟠 Warning (66-85%) 🔴 At-limit (85-100%) 🛑 Blocked (100%+).
-- **No auto-connect. Ever.** Only passive data capture. Sending Connect
-  requests programmatically is what actually gets accounts restricted —
-  we explicitly do not do it.
-
-Architecture:
-- Pure planner `LITVisitRunner.plan(state, event, deps) → {newState, actions}`.
-  Zero Chrome API dependencies. All side effects declared as action list.
-- SW glue in `background.js` — thin adapter mapping actions to
-  `chrome.tabs.update` / `chrome.alarms.create` / `chrome.notifications.create`.
-  Event queue serialized via a promise lock (no double-tab races).
-- Content script `visit-content.js` — activates only when there's a
-  running queue whose current URL matches this tab. Runs seeded scroll
-  plan + dwell, signals CAPTURE_DONE. Bails out mid-scroll if queue is
-  paused via popup.
-- 437 tests total. New coverage: 42 humanizer, 42 visit-queue, 20
-  visit-runner, 10 end-to-end state-machine integration.
-
+Restoration pointers for a future release are inlined as trailing
+comments in `background.js` and `popup.js` — the last shipping commit
+that had it wired end-to-end is `89090b5`.
 
 ## [1.3.0] — 2026-07-01
 
