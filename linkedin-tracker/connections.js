@@ -210,6 +210,7 @@ async function autoScrollAndCollect() {
     // is guaranteed to trigger.
     await LITScanScroll.humanizedScanScroll(container, {
       isCancelled: () => cancelRequested,
+      log: (s) => console.log(`[LI Tracker/scroll] ${s.sizeClass} ${s.delta}px in ${s.durationMs}ms → ${s.pauseClass} ${s.pauseMs}ms`),
     });
 
     await cancellableSleep(rand(2000, 3500));

@@ -152,6 +152,7 @@ async function autoScroll() {
     // last card because a sticky footer eats a few px.
     await LITScanScroll.humanizedScanScroll(null, {
       isCancelled: () => !scanInFlight,
+      log: (s) => console.log(`[LI Tracker/scroll] ${s.sizeClass} ${s.delta}px in ${s.durationMs}ms → ${s.pauseClass} ${s.pauseMs}ms`),
     });
     scrollToLastCard();
 

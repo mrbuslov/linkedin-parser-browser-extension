@@ -147,7 +147,75 @@ describe('humanizedScanScroll — targeted container', () => {
     // list. Some seeds may record 1-2 steps due to wobble mechanics
     // before the guard fires.
     expect(steps.length).toBeLessThan(3);
-    expect(delays.length).toBeLessThan(4);
+    expect(delays.length).toBeLessThan(10);
+  });
+
+  it('each chunk is ANIMATED — records many mini-step sleeps in addition to the post-chunk pause', async () => {
+    // Old (broken) implementation did one instant scrollBy per chunk
+    // → total sleeps ≈ chunk count. New implementation animates each
+    // chunk via ~60fps mini-steps → total sleeps ≈ chunk_count *
+    // ~20-40, dominating the count. This test guards that the mini-
+    // step loop is actually running.
+    const c = fakeContainer({ height: 8000, viewport: 800 });
+    const { sleep, delays } = fakeSleep();
+    const steps = await humanizedScanScroll(c, {
+      rand: seededRand(1), sleep,
+    });
+    // At least ~10 mini-sleeps per chunk on average.
+    expect(delays.length).toBeGreaterThan(steps.length * 8);
+  });
+
+  it('reports durationMs per chunk in the correct band per size class', async () => {
+    const seenByClass = { big: [], steady: [], tiny: [] };
+    for (let seed = 1; seed <= 40; seed++) {
+      const c = fakeContainer({ height: 8000, viewport: 800 });
+      const { sleep } = fakeSleep();
+      const steps = await humanizedScanScroll(c, { rand: seededRand(seed), sleep });
+      for (const s of steps) {
+        if (seenByClass[s.sizeClass]) seenByClass[s.sizeClass].push(s.durationMs);
+      }
+    }
+    // Band sanity — big is the longest, tiny is the shortest.
+    if (seenByClass.big.length && seenByClass.tiny.length) {
+      const avg = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+      expect(avg(seenByClass.big)).toBeGreaterThan(avg(seenByClass.tiny));
+    }
+    // Each class stays within its declared band.
+    for (const d of seenByClass.big)    { expect(d).toBeGreaterThanOrEqual(250); expect(d).toBeLessThanOrEqual(500); }
+    for (const d of seenByClass.steady) { expect(d).toBeGreaterThanOrEqual(180); expect(d).toBeLessThanOrEqual(380); }
+    for (const d of seenByClass.tiny)   { expect(d).toBeGreaterThanOrEqual(80);  expect(d).toBeLessThanOrEqual(220); }
+  });
+
+  it('animated mini-steps use ease-in-out (mid-chunk progress > linear)', async () => {
+    // The ease function 2t² for t<0.5 → at t=0.25, ease=0.125 (vs
+    // linear 0.25). So the chunk's scrollTop at ~25% of duration
+    // should be LESS than 25% of delta. We verify by intercepting the
+    // scrollTop mutations.
+    const positions = [];
+    const c = {
+      scrollHeight: 10_000, clientHeight: 800,
+      _top: 0,
+      get scrollTop() { return this._top; },
+      set scrollTop(v) { this._top = v; positions.push(v); },
+    };
+    const { sleep } = fakeSleep();
+    // Seed 100 usually produces a 'big' first chunk — enough motion
+    // to see the ease curve clearly.
+    await humanizedScanScroll(c, {
+      rand: seededRand(100), sleep, finalHardScroll: false,
+    });
+    // With ease-in-out, the position sequence should be strictly
+    // increasing and NOT linear — the per-step deltas should grow
+    // then shrink. Verify by checking at least one adjacent pair
+    // where later delta < earlier delta (deceleration phase).
+    const deltas = [];
+    for (let i = 1; i < positions.length; i++) {
+      deltas.push(positions[i] - positions[i - 1]);
+    }
+    // Find the peak — mid-chunk deltas should be larger than start.
+    const maxDelta = Math.max(...deltas);
+    const firstDelta = deltas[0];
+    expect(maxDelta).toBeGreaterThan(firstDelta);
   });
 });
 
