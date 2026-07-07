@@ -30,6 +30,31 @@
 
 (function () {
 
+// Find the element that actually scrolls on this page. LinkedIn's newer
+// /connections/ AND /sent/ UIs put an internal scroll on some inner
+// wrapper (scrollHeight 40k+, clientHeight ~900) while the window
+// itself has doc-height ≈ viewport — window scroll is a no-op. Older
+// layouts (or when data is small) may use window scroll. Strategy:
+//   1) If document is meaningfully taller than viewport → window scroll
+//   2) Otherwise pick the largest overflow:auto/scroll element with
+//      real overflow content
+//   3) Fall through to null = "use window scroll" (harmless no-op).
+function findScanScrollContainer() {
+  const docExcess = document.documentElement.scrollHeight - window.innerHeight;
+  if (docExcess > 200) return null;
+
+  let best = null;
+  let bestExcess = 0;
+  for (const el of document.querySelectorAll('*')) {
+    const cs = getComputedStyle(el);
+    if (cs.overflowY !== 'auto' && cs.overflowY !== 'scroll') continue;
+    const excess = el.scrollHeight - el.clientHeight;
+    if (excess < 200) continue;
+    if (excess > bestExcess) { best = el; bestExcess = excess; }
+  }
+  return best;
+}
+
 // Ease-in-out quadratic — accelerate to the midpoint, decelerate to
 // the end. Feels like a natural flick.
 function _ease(t) {
@@ -138,7 +163,7 @@ async function humanizedScanScroll(target, opts = {}) {
   return steps;
 }
 
-const LITScanScroll = { humanizedScanScroll };
+const LITScanScroll = { humanizedScanScroll, findScanScrollContainer };
 if (typeof globalThis !== 'undefined') globalThis.LITScanScroll = LITScanScroll;
 if (typeof module !== 'undefined' && module.exports) module.exports = LITScanScroll;
 

@@ -144,13 +144,19 @@ async function autoScroll() {
     console.log(`[LI Tracker] tick ${iter}: total ${cards.length}, new ${added}`);
 
     // Humanized scroll: 4-10 variable-size chunks + varied pauses +
-    // occasional micro-wobble instead of the old instant-teleport. The
-    // helper's terminal hard-scroll still fires so LinkedIn's lazy-load
-    // intersection observer at the bottom is guaranteed to trigger.
-    // Belt-and-suspenders: also call scrollToLastCard afterwards — the
-    // /sent/ list has cases where scrollTo(docHeight) lands short of the
-    // last card because a sticky footer eats a few px.
-    await LITScanScroll.humanizedScanScroll(null, {
+    // occasional micro-wobble instead of the old instant-teleport.
+    // /sent/ (like /connections/) puts the actual scroll on an internal
+    // container — window doc-height is basically viewport-height there.
+    // Discover the real scroll target on every tick; LinkedIn can swap
+    // layouts mid-scan. `null` means "use window scroll" (fallback).
+    // Belt-and-suspenders: also call scrollToLastCard afterwards so the
+    // last card is fully in view even if the container's terminal jump
+    // lands a few px short (sticky footer).
+    const scrollTarget = LITScanScroll.findScanScrollContainer();
+    if (iter === 1) {
+      console.log(`[LI Tracker/scroll] target =`, scrollTarget ? scrollTarget.tagName + (scrollTarget.className ? '.' + String(scrollTarget.className).split(' ')[0] : '') : 'window');
+    }
+    await LITScanScroll.humanizedScanScroll(scrollTarget, {
       isCancelled: () => !scanInFlight,
       log: (s) => console.log(`[LI Tracker/scroll] ${s.sizeClass} ${s.delta}px in ${s.durationMs}ms → ${s.pauseClass} ${s.pauseMs}ms`),
     });

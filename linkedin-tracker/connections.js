@@ -115,27 +115,10 @@ function parseCard(link) {
   return { profileUrl, name, headline, avatar, connectedAt, dateText };
 }
 
-// Find the element that actually scrolls. LinkedIn's newer /connections/ UI
-// puts an internal scroll on <main> (scrollHeight 40k+, clientHeight ~900)
-// while the window itself doesn't scroll at all. Older layouts may use window
-// scroll. We pick the largest overflow:auto/scroll element with real overflow
-// content, falling back to null = "use window scroll".
-function findScrollContainer() {
-  // Prefer window scroll if document is actually taller than viewport.
-  const docExcess = document.documentElement.scrollHeight - window.innerHeight;
-  if (docExcess > 200) return null;
-
-  let best = null;
-  let bestExcess = 0;
-  for (const el of document.querySelectorAll('*')) {
-    const cs = getComputedStyle(el);
-    if (cs.overflowY !== 'auto' && cs.overflowY !== 'scroll') continue;
-    const excess = el.scrollHeight - el.clientHeight;
-    if (excess < 200) continue;
-    if (excess > bestExcess) { best = el; bestExcess = excess; }
-  }
-  return best;
-}
+// Scroll container discovery moved to core/scan-scroll.js as
+// LITScanScroll.findScanScrollContainer — shared with the /sent/
+// scanner so both stay in sync when LinkedIn changes layout.
+const findScrollContainer = () => LITScanScroll.findScanScrollContainer();
 
 function scrollDownHard(container) {
   if (container) {
@@ -204,6 +187,9 @@ async function autoScrollAndCollect() {
     // Re-detect scroll container every tick — LinkedIn can swap layouts on
     // navigation, and the container may move after virtualization passes.
     const container = findScrollContainer();
+    if (iter === 1) {
+      console.log(`[LI Tracker/scroll] target =`, container ? container.tagName + (container.className ? '.' + String(container.className).split(' ')[0] : '') : 'window');
+    }
     // Humanized scroll: 4-10 variable-size chunks + varied pauses +
     // occasional micro-wobble. The helper's terminal hard-scroll still
     // fires so LinkedIn's lazy-load intersection observer at the bottom
