@@ -35,6 +35,7 @@ export default [
         LITHumanizer: 'readonly',
         LITVisitQueue: 'readonly',
         LITVisitRunner: 'readonly',
+        LITScanScroll: 'readonly',
         importScripts: 'readonly',
         // db-client.js exposes these
         dbGet: 'readonly',

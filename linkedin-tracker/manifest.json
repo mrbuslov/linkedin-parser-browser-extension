@@ -30,6 +30,7 @@
         "core/schema-v2.js",
         "core/url.js",
         "core/diff-sent.js",
+        "core/scan-scroll.js",
         "content.js"
       ],
       "run_at": "document_idle"
@@ -58,6 +59,7 @@
         "core/url.js",
         "core/parseDate.js",
         "core/merge-connections.js",
+        "core/scan-scroll.js",
         "connections.js"
       ],
       "run_at": "document_idle"

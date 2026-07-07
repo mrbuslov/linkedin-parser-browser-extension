@@ -17,6 +17,28 @@ on tabs/alarms/idle/webNavigation permissions. The feature's net value
 for the primary use case (invite tracking + local CRM) was marginal
 enough that defending it wasn't worth the review friction.
 
+### Added
+- **Humanized scroll on /sent/ and /connections/ scans.** The old
+  scanners jumped straight to the bottom (`scrollTop = scrollHeight` /
+  `scrollIntoView({block:'end'})`) once per tick — one instant
+  teleport, zero variability. Replaced with a new `core/scan-scroll.js`
+  helper (`humanizedScanScroll`) that breaks each tick's scroll into
+  4-10 variable-size chunks (big flick / steady / tiny nudge — 55-85%,
+  20-40%, 3-15% of remaining distance), variable-duration pauses
+  between chunks (fast 40-130ms / normal 130-380ms / reading
+  380-880ms), and an occasional backward micro-wobble on ~15% of
+  steps. A terminal hard-scroll still fires so LinkedIn's lazy-load
+  intersection observer at the bottom is guaranteed to trigger — the
+  humanization is on the PATH there, not the destination. Both
+  content.js (/sent/ scan) and connections.js (/connections/ scan)
+  call the shared helper; cancellation via the existing scan-cancel
+  flags is respected inside each chunk. 10 new unit tests cover:
+  chunk count bounded 4-10, all three size classes surface across
+  seeds, all three pause classes surface, ~15% wobble rate, terminal
+  hard-scroll lands at bottom, `finalHardScroll: false` skips it,
+  cancellation stops the loop early, net motion downward, no-op when
+  already at bottom, window-scroll fallback path doesn't throw.
+
 ### Removed
 - **Bulk Visit Queue runtime removed from the shipping bundle.**
   - `manifest.json` — `tabs`/`alarms`/`idle`/`webNavigation` permissions

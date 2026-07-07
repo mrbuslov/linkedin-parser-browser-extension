@@ -204,7 +204,13 @@ async function autoScrollAndCollect() {
     // Re-detect scroll container every tick — LinkedIn can swap layouts on
     // navigation, and the container may move after virtualization passes.
     const container = findScrollContainer();
-    scrollDownHard(container);
+    // Humanized scroll: 4-10 variable-size chunks + varied pauses +
+    // occasional micro-wobble. The helper's terminal hard-scroll still
+    // fires so LinkedIn's lazy-load intersection observer at the bottom
+    // is guaranteed to trigger.
+    await LITScanScroll.humanizedScanScroll(container, {
+      isCancelled: () => cancelRequested,
+    });
 
     await cancellableSleep(rand(2000, 3500));
 

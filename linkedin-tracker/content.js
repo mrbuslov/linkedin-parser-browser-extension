@@ -143,6 +143,16 @@ async function autoScroll() {
     const added = cards.length - lastCount;
     console.log(`[LI Tracker] tick ${iter}: total ${cards.length}, new ${added}`);
 
+    // Humanized scroll: 4-10 variable-size chunks + varied pauses +
+    // occasional micro-wobble instead of the old instant-teleport. The
+    // helper's terminal hard-scroll still fires so LinkedIn's lazy-load
+    // intersection observer at the bottom is guaranteed to trigger.
+    // Belt-and-suspenders: also call scrollToLastCard afterwards — the
+    // /sent/ list has cases where scrollTo(docHeight) lands short of the
+    // last card because a sticky footer eats a few px.
+    await LITScanScroll.humanizedScanScroll(null, {
+      isCancelled: () => !scanInFlight,
+    });
     scrollToLastCard();
 
     await cancellableSleep(rand(2000, 3500));
