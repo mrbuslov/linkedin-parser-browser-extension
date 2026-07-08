@@ -185,7 +185,7 @@ function statusBadge(verified) {
   return b;
 }
 
-function renderPending(rawItems) {
+function renderPending(rawItems, sentScanState) {
   const items = rawItems.map(viewItem);
   const list = $('pending-list');
   list.innerHTML = '';
@@ -197,11 +197,29 @@ function renderPending(rawItems) {
       ? `${filtered.length} of ${items.length} match`
       : `${items.length} pending · sorted newest first`;
 
+  renderPendingScanGap(items.length, sentScanState);
+
   // Newest first: invitations sent recently appear at the top. Old
   // long-pending ones drift to the bottom (and the row's age class still
   // visually flags them, regardless of position).
   const sorted = filtered.slice().sort((a, b) => b.firstSeenAt - a.firstSeenAt);
   for (const item of sorted) list.append(renderPendingRow(item));
+}
+
+// Contextual "your store has N pending, last scan captured only M" banner.
+// Fires the same threshold as diff-sent.js's partial-scan guard so the
+// user sees it exactly when the guard held back a would-be missing→accepted
+// diff. Educational — teaches the − button as the manual reconcile path.
+function renderPendingScanGap(pendingCount, sentScanState) {
+  const banner = $('pending-gap-banner');
+  if (!banner) return;
+  const lastCount = sentScanState && sentScanState.lastScannedAt ? sentScanState.lastCount : null;
+  const show = LITPopupLogic.shouldShowScanGap(pendingCount, lastCount);
+  banner.hidden = !show;
+  if (show) {
+    $('pending-gap-title').textContent =
+      `Last scan captured ${lastCount} invitation${lastCount === 1 ? '' : 's'} on LinkedIn, but ${pendingCount} still stored here.`;
+  }
 }
 
 function isMarked(item) {
@@ -218,6 +236,13 @@ function renderAcceptedRow(item, { primaryAction, primaryLabel }) {
     const actionBtn = el('button', { className: 'primary' }, [primaryLabel]);
     actionBtn.addEventListener('click', () => primaryAction(item.profileUrl));
     actions.push(actionBtn);
+  }
+  // Minus button — only on rows where LinkedIn currently claims 'accepted'
+  // AND the user hasn't already marked them as handled. Semantically it's
+  // "this isn't actually in my network" — moves to Viewed. Not shown on
+  // 'declined' (already-off-network) or on Marked rows (user's own state).
+  if (item.status === 'accepted' && !isMarked(item)) {
+    actions.push(demoteButton(item, 'visited'));
   }
   actions.push(deleteButton(item));
 
@@ -403,7 +428,10 @@ function renderPendingRow(item) {
         el('span', {}, [`Pending ${days}d`]),
         item.sentDateRelative ? el('span', {}, [item.sentDateRelative]) : null,
       ]),
-      el('div', { className: 'row-actions' }, [deleteButton(item)]),
+      el('div', { className: 'row-actions' }, [
+        demoteButton(item, 'declined'),
+        deleteButton(item),
+      ]),
     ]),
   ]);
 }
@@ -470,7 +498,7 @@ async function loadData() {
   const pending  = Object.values(contacts).filter((r) => r.status === 'pending');
   const accepted = Object.values(contacts).filter((r) => r.status === 'accepted' || r.status === 'declined');
 
-  renderPending(pending);
+  renderPending(pending, scanState.sent);
   renderAccepted(accepted, scanState.connections);
   renderMarked(accepted);
   renderFavorites(contacts);
@@ -513,6 +541,44 @@ async function deleteEntry(profileUrl, displayName) {
 function deleteButton(item) {
   const btn = el('button', { className: 'danger', type: 'button' }, ['Delete']);
   btn.addEventListener('click', () => deleteEntry(item.profileUrl, item.name));
+  return btn;
+}
+
+// Manual demote: user says "this record shouldn't be in Pending / Accepted".
+// Kept as ONE helper for both flows because the click-path is identical —
+// only the target status and tooltip change. Mutation itself is pure
+// (delegated to LITPopupLogic.demoteTo{Declined,Visited}) so behaviour is
+// unit-testable without dragging in the DB layer.
+async function demoteEntry(profileUrl, targetStatus) {
+  const { contacts = {} } = await dbGet('contacts');
+  const rec = contacts[profileUrl];
+  if (!rec) return;
+  const now = Date.now();
+  contacts[profileUrl] = targetStatus === 'declined'
+    ? LITPopupLogic.demoteToDeclined(rec, now)
+    : LITPopupLogic.demoteToVisited(rec, now);
+  await dbSet({ contacts });
+  showToast(targetStatus === 'declined' ? 'Marked declined' : 'Marked as visited');
+}
+
+// − button. Used on Pending rows (target='declined') and on Accepted rows
+// (target='visited'). Kept visually distinct from the Delete button — no
+// data is lost, only status changes.
+function demoteButton(item, targetStatus) {
+  const tooltip = targetStatus === 'declined'
+    ? 'Mark as declined — use if you already removed this invitation on LinkedIn'
+    : 'Not actually in my network — move to Viewed';
+  const btn = el('button', {
+    className: 'demote-btn',
+    type: 'button',
+    title: tooltip,
+  }, ['−']);
+  btn.setAttribute('aria-label', tooltip);
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    demoteEntry(item.profileUrl, targetStatus);
+  });
   return btn;
 }
 

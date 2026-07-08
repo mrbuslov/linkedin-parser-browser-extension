@@ -9,6 +9,74 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
 
+## [1.3.2] — 2026-07-08
+
+Pending-cleanup gap fix + a small user-visible tool to reconcile stale
+records manually. Motivated by a real report: user deleted 150+
+outstanding invitations from LinkedIn's UI, our next `/sent/` scan saw
+only 1 remaining card, but 158 Pending records stayed in the local store
+because (a) the Withdraw button was renamed to "Delete" so our click
+listener stopped stamping `withdrawnAt`, and (b) the partial-scan sanity
+guard in `diff-sent.js` correctly refused to move 157 "missing" pending
+records to accepted (that guard exists to prevent a broken/short scan
+from wrongly claiming 150 people just accepted).
+
+### Added
+- **Manual demote (`−`) button on Pending rows.** Sits before Delete in
+  the row-actions row. Click flips `status` → `declined` and stamps
+  `declinedAt = withdrawnAt = now` (only if no earlier `withdrawnAt`
+  exists — preserves real click stamps). Same semantics as if we'd
+  caught the withdraw click ourselves. Intended for one-off reconciling
+  when LinkedIn's UI cleaned up the invitation out-of-band.
+- **Manual demote (`−`) button on Accepted rows (`status='accepted'`
+  only).** Click flips `status` → `visited`, clears `acceptedAt` /
+  `verifiedAt` / `firstConnectedAt` / `connectedOnText` /
+  `connectedOnDate`, stamps `visitedAt = now`. Semantics: "this isn't
+  actually in my network." Both anti-downgrade guards
+  (`firstConnectedAt` AND `connectedOnText`) are cleared — otherwise
+  the next profile-page visit would re-elevate the record back to
+  accepted via `profile-state.js:statusFromVisit`, silently undoing
+  the user's decision. If they ARE actually connected, a future
+  `/connections/` scan restores the accepted status with fresh
+  canonical data.
+- **Contextual "partial scan" info banner in Pending tab.** Blue
+  info-style banner appears at the top of the Pending list ONLY when
+  `pendingCount > 5 && lastScanCount < pendingCount * 0.5` (mirrors
+  `SANITY_SHRINK_RATIO` / `SANITY_MIN_PREV` in `diff-sent.js`, so it
+  fires exactly when the guard suppressed a would-be missing→accepted
+  diff). Text explains: "Last scan captured N invitations on LinkedIn,
+  but M still stored here. If you removed them on LinkedIn, click −
+  on each row to mark declined." Educational — teaches the − button
+  as the manual reconcile path and explains why we don't auto-remove.
+  Auto-hides once next scan captures ≥50% of stored count.
+
+### Fixed
+- **Withdraw click listener now matches the new "Delete" button label.**
+  LinkedIn renamed the Withdraw button to "Delete" in the English
+  locale (other locales followed) sometime around 2026-07. The old
+  regex (`/^(withdraw|отозвать|скасувати|zurückziehen|retirar)\b/i`)
+  didn't match "Delete", so every click went unnoticed → no
+  `withdrawnAt` stamp → next scan classified the disappearance
+  arbitrarily → chronic stale-Pending records. New regex covers
+  `withdraw|delete|отозвать|удалить|скасувати|видалити|zurückziehen|löschen|retirar|eliminar`.
+  Scope check (`btn.closest('[role="listitem"]')`) unchanged — a Delete
+  button anywhere else on the page (post/comment/message) still can't
+  false-fire because it isn't inside a /sent/ card.
+- **Withdraw match logic extracted to `core/withdraw-match.js`** — 40
+  lines, pure, unit-tested against every label variant + false-positive
+  scenarios (Message / Follow / Ignore / Accept). Added to the /sent/
+  content-script bundle in `manifest.json`. content.js's
+  `setupWithdrawListener` now calls `LITWithdrawMatch.matchesWithdrawButton`
+  instead of inlining the regex.
+
+### Preserved (documented, unchanged behavior)
+- The `SANITY_SHRINK_RATIO = 0.5` / `SANITY_MIN_PREV = 5` partial-scan
+  guard in `diff-sent.js` is intentionally kept — a broken scan that
+  captures 1 card would otherwise cause 157 real pending invites to
+  be marked accepted silently. The new info banner explains this to
+  the user so they don't wonder why records didn't auto-move.
+
+
 ## [1.3.1] — 2026-07-02
 
 Store-submission cleanup for the 1.3.0 branch. Bulk Visit Queue pulled

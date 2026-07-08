@@ -3,7 +3,16 @@
 // now we cover the pure decision logic which is where the bugs would hide.
 
 import { describe, it, expect } from 'vitest';
-import { shouldShowDeclinedWarning, cleanHeadline, fixSwappedNameHeadline, parseMutualsCount, extractHeadlineFromScope } from '../linkedin-tracker/core/popup-logic.js';
+import {
+  shouldShowDeclinedWarning,
+  cleanHeadline,
+  fixSwappedNameHeadline,
+  parseMutualsCount,
+  extractHeadlineFromScope,
+  demoteToDeclined,
+  demoteToVisited,
+  shouldShowScanGap,
+} from '../linkedin-tracker/core/popup-logic.js';
 
 describe('shouldShowDeclinedWarning', () => {
   it('shows when there are declined entries and /connections/ was never scanned', () => {
@@ -259,5 +268,172 @@ describe('parseMutualsCount — extract count from anchor text', () => {
 
   it('locale-stable on whitespace normalization (multi-space, tabs)', () => {
     expect(parseMutualsCount('Anton,  Mikhail  and  79  other  mutual  connections')).toBe(81);
+  });
+});
+
+describe('demoteToDeclined — user marks pending as no-longer-active', () => {
+  const NOW = 1_800_000_000_000;
+
+  it('flips status to declined and stamps declinedAt+withdrawnAt', () => {
+    const rec = {
+      profileUrl: 'https://www.linkedin.com/in/alice/',
+      status: 'pending',
+      name: 'Alice',
+      firstSeenAt: NOW - 30 * 86400000,
+    };
+    const out = demoteToDeclined(rec, NOW);
+    expect(out.status).toBe('declined');
+    expect(out.declinedAt).toBe(NOW);
+    expect(out.withdrawnAt).toBe(NOW);
+  });
+
+  it('preserves an EARLIER withdrawnAt (do not overwrite a real click stamp)', () => {
+    const earlier = 1_700_000_000_000;
+    const rec = { status: 'pending', withdrawnAt: earlier };
+    const out = demoteToDeclined(rec, NOW);
+    expect(out.withdrawnAt).toBe(earlier);
+    expect(out.declinedAt).toBe(NOW);
+  });
+
+  it('preserves all other fields — nothing is destructively rewritten', () => {
+    const rec = {
+      profileUrl: 'https://www.linkedin.com/in/alice/',
+      status: 'pending',
+      name: 'Alice',
+      headline: 'Engineer at Acme',
+      firstSeenAt: 1_000,
+      sentDateRelative: '3 weeks ago',
+      notes: 'friend of Bob',
+      tags: ['warm'],
+      favorite: true,
+      mutualsCount: 5,
+    };
+    const out = demoteToDeclined(rec, NOW);
+    expect(out.name).toBe('Alice');
+    expect(out.headline).toBe('Engineer at Acme');
+    expect(out.firstSeenAt).toBe(1_000);
+    expect(out.sentDateRelative).toBe('3 weeks ago');
+    expect(out.notes).toBe('friend of Bob');
+    expect(out.tags).toEqual(['warm']);
+    expect(out.favorite).toBe(true);
+    expect(out.mutualsCount).toBe(5);
+  });
+
+  it('is defensively no-op on null/undefined record', () => {
+    expect(demoteToDeclined(null, NOW)).toBeNull();
+    expect(demoteToDeclined(undefined, NOW)).toBeUndefined();
+  });
+});
+
+describe('demoteToVisited — user marks accepted as not-in-network', () => {
+  const NOW = 1_800_000_000_000;
+
+  it('flips status to visited and clears the anti-downgrade guards', () => {
+    // Guard chain lives in profile-state.js statusFromVisit():
+    //   if (prev.connectedOnText || prev.firstConnectedAt) → keep accepted
+    // Failing to clear these fields would silently undo the user's
+    // manual override the next time they visit the profile page.
+    const rec = {
+      status: 'accepted',
+      acceptedAt: 1_000,
+      verifiedAt: 2_000,
+      firstConnectedAt: 500,
+      connectedOnText: 'Connected on Jan 5, 2024',
+      connectedOnDate: '2024-01-05',
+    };
+    const out = demoteToVisited(rec, NOW);
+    expect(out.status).toBe('visited');
+    expect(out.acceptedAt).toBeNull();
+    expect(out.verifiedAt).toBeNull();
+    expect(out.firstConnectedAt).toBeNull();
+    expect(out.connectedOnText).toBe('');
+    expect(out.connectedOnDate).toBe('');
+    expect(out.visitedAt).toBe(NOW);
+  });
+
+  it('preserves user-authored + historical fields', () => {
+    // daysPending is historical fact — how long the invite was pending
+    // BEFORE it was (wrongly?) marked accepted. Keep it as a data point.
+    const rec = {
+      status: 'accepted',
+      name: 'Alice',
+      headline: 'Engineer at Acme',
+      daysPending: 12,
+      notes: 'met at conf',
+      tags: ['warm'],
+      favorite: true,
+      firstSeenAt: 1_000,
+    };
+    const out = demoteToVisited(rec, NOW);
+    expect(out.name).toBe('Alice');
+    expect(out.headline).toBe('Engineer at Acme');
+    expect(out.daysPending).toBe(12);
+    expect(out.notes).toBe('met at conf');
+    expect(out.tags).toEqual(['warm']);
+    expect(out.favorite).toBe(true);
+    expect(out.firstSeenAt).toBe(1_000);
+  });
+
+  it('is defensively no-op on null/undefined record', () => {
+    expect(demoteToVisited(null, NOW)).toBeNull();
+    expect(demoteToVisited(undefined, NOW)).toBeUndefined();
+  });
+
+  it('subsequent profile-page visit CANNOT silently re-elevate to accepted', () => {
+    // Integration guard: after demoteToVisited, statusFromVisit for a
+    // 'not_connected' observation must return 'visited' (or 'declined'),
+    // NOT 'accepted' (which would happen if any guard field survived).
+    const { statusFromVisit } = require('../linkedin-tracker/core/profile-state.js');
+    const rec = {
+      status: 'accepted',
+      firstConnectedAt: 500,
+      connectedOnText: 'Connected on Jan 5, 2024',
+    };
+    const demoted = demoteToVisited(rec, NOW);
+    // Now simulate a fresh profile-page visit where LinkedIn shows the
+    // Connect button (they're not connected). If either guard field
+    // survived demote, statusFromVisit would re-elevate to accepted.
+    const nextStatus = statusFromVisit('not_connected', demoted);
+    expect(nextStatus).toBe('visited');
+  });
+});
+
+describe('shouldShowScanGap — contextual info banner in Pending tab', () => {
+  it('shows when store has many pending but last scan captured few', () => {
+    // The bug motivation: user cleaned 157 out of 158 pending on LinkedIn
+    // UI, next scan captured just 1, partial-scan guard preserved 157
+    // stale records. Banner explains WHY and teaches the − button.
+    expect(shouldShowScanGap(158, 1)).toBe(true);
+    expect(shouldShowScanGap(50, 20)).toBe(true);  // 20 < 25
+    expect(shouldShowScanGap(20, 9)).toBe(true);   // 9 < 10
+  });
+
+  it('does NOT show when scan captured >=50% of stored pending', () => {
+    expect(shouldShowScanGap(20, 10)).toBe(false); // exactly 50%
+    expect(shouldShowScanGap(50, 30)).toBe(false);
+    expect(shouldShowScanGap(158, 158)).toBe(false);
+    expect(shouldShowScanGap(158, 80)).toBe(false); // above threshold
+  });
+
+  it('does NOT show for tiny stores (<=5 pending) — avoids nag on brand-new users', () => {
+    // Mirrors SANITY_MIN_PREV in diff-sent.js. Prevents "you have 3
+    // pending, scan captured 0" pop-up which is likely a first-time
+    // setup, not a stale-record situation.
+    expect(shouldShowScanGap(5, 0)).toBe(false);
+    expect(shouldShowScanGap(3, 0)).toBe(false);
+    expect(shouldShowScanGap(1, 0)).toBe(false);
+  });
+
+  it('does NOT show when we have no scan info yet (first popup open)', () => {
+    // lastCount=null means the scan never ran. The gap only makes sense
+    // AFTER at least one scan established the "captured N" baseline.
+    expect(shouldShowScanGap(158, null)).toBe(false);
+    expect(shouldShowScanGap(158, undefined)).toBe(false);
+  });
+
+  it('boundary: exactly at the partial threshold does NOT show', () => {
+    // shouldShow requires strict < half. Exact half is fine (guard
+    // wouldn't have fired either).
+    expect(shouldShowScanGap(10, 5)).toBe(false);
   });
 });

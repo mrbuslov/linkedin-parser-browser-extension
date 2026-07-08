@@ -92,22 +92,20 @@ function scrollToLastCard() {
   items[items.length - 1].scrollIntoView({ block: 'end' });
 }
 
-// Withdraw click listener (P0.2). When the user clicks the Withdraw button on
-// /sent/, the card disappears just like an accepted one — and our diff would
-// misclassify it as accepted. Capture withdraws BEFORE the diff runs so the
-// pure function can respect a `withdrawnAt` stamp.
-const WITHDRAW_BTN_RE = /^(withdraw|отозвать|скасувати|zurückziehen|retirar)\b/i;
-const WITHDRAW_ARIA_RE = /(withdraw|invitation|отозвать|скасувати|запрош|приглаш)/i;
-
+// Withdraw click listener (P0.2). When the user clicks the Withdraw/Delete
+// button on /sent/, the card disappears just like an accepted one — and
+// our diff would misclassify it as accepted. Capture withdraws BEFORE the
+// diff runs so the pure function can respect a `withdrawnAt` stamp.
+//
+// Match semantics live in core/withdraw-match.js so the i18n regex is
+// unit-testable without wiring up the full content-script bundle.
 function setupWithdrawListener() {
   document.addEventListener('click', async (e) => {
     const btn = e.target.closest('button, a');
     if (!btn) return;
     const text = (btn.textContent || '').trim();
-    const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
-    const isWithdraw = WITHDRAW_BTN_RE.test(text)
-      || (WITHDRAW_ARIA_RE.test(aria) && /withdraw|отозвать|скасувати|zurückziehen|retirar/i.test(aria));
-    if (!isWithdraw) return;
+    const aria = btn.getAttribute('aria-label') || '';
+    if (!LITWithdrawMatch.matchesWithdrawButton(text, aria)) return;
 
     const card = btn.closest('[role="listitem"]');
     if (!card) return;

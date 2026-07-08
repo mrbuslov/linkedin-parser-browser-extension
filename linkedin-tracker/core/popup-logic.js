@@ -90,6 +90,57 @@ function extractHeadlineFromScope(scope, heading, name) {
   return '';
 }
 
+// Manual demote: user clicks − on a Pending row to say "this invitation
+// is no longer active on LinkedIn" (they deleted it via LinkedIn's UI and
+// we didn't catch the click, or it was cleaned up out-of-band). Semantics
+// mirror what diffSentInvitations would do if it saw a fresh withdraw
+// stamp: status → declined, both declinedAt and withdrawnAt stamped now
+// (unless withdrawnAt was already set).
+function demoteToDeclined(record, now) {
+  if (!record) return record;
+  return {
+    ...record,
+    status: 'declined',
+    declinedAt: now,
+    withdrawnAt: record.withdrawnAt || now,
+  };
+}
+
+// Manual demote: user clicks − on an Accepted row to say "this person is
+// not actually in my network". Sets status → visited and CLEARS the
+// anti-downgrade guards (firstConnectedAt AND connectedOnText/Date) —
+// without clearing them, the next profile-page visit would re-elevate
+// through profile-state.js:337, silently undoing the user's decision.
+// Historical daysPending is preserved. If a future /connections/ scan
+// sees them as truly connected, merge-connections will restore accepted
+// with fresh canonical data — that's the intended behaviour: user's
+// manual demote is a one-off correction, LinkedIn's canonical scan wins.
+function demoteToVisited(record, now) {
+  if (!record) return record;
+  return {
+    ...record,
+    status: 'visited',
+    acceptedAt: null,
+    verifiedAt: null,
+    firstConnectedAt: null,
+    connectedOnText: '',
+    connectedOnDate: '',
+    visitedAt: now,
+  };
+}
+
+// Decide whether to show the contextual "your store has N pending, last
+// scan captured only M" info banner in the Pending tab. Mirrors the
+// partial-scan guard in diff-sent.js (SANITY_SHRINK_RATIO=0.5,
+// SANITY_MIN_PREV=5) — banner shows exactly when the guard would have
+// suppressed the missing→accepted diff. Educates the user about why
+// records didn't auto-clear and points them at the − button.
+function shouldShowScanGap(pendingCount, lastScanCount) {
+  if (pendingCount <= 5) return false;
+  if (lastScanCount == null) return false;
+  return lastScanCount < pendingCount * 0.5;
+}
+
 // Parse the mutual-connections count from the anchor's text content.
 //   "Anton, Mikhail and 79 other mutual connections" → 81
 //   "and 12 other mutual connections"                 → 12
@@ -110,6 +161,15 @@ function parseMutualsCount(text) {
   return null;
 }
 
-const LITPopupLogic = { shouldShowDeclinedWarning, cleanHeadline, fixSwappedNameHeadline, parseMutualsCount, extractHeadlineFromScope };
+const LITPopupLogic = {
+  shouldShowDeclinedWarning,
+  cleanHeadline,
+  fixSwappedNameHeadline,
+  parseMutualsCount,
+  extractHeadlineFromScope,
+  demoteToDeclined,
+  demoteToVisited,
+  shouldShowScanGap,
+};
 if (typeof globalThis !== 'undefined') globalThis.LITPopupLogic = LITPopupLogic;
 if (typeof module !== 'undefined' && module.exports) module.exports = LITPopupLogic;
