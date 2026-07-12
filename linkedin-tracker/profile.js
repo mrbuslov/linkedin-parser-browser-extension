@@ -2,7 +2,7 @@
 // Pure logic lives in core/detect.js (status detection) and core/profile-state.js
 // (state transitions). This file is the DOM-scraping + persistence layer.
 
-console.log('[LI Tracker] profile.js v1.3.3-bridge-own-carrier loaded:', location.pathname);
+console.log('[LI Tracker] profile.js v1.3.3-await-cancel-fix loaded:', location.pathname);
 
 // Strip the trailing-whitespace-trimmed `name` from the start of `text` if
 // present. Case-insensitive, allows an optional separator after the name.
@@ -616,6 +616,15 @@ async function runQueueTickIfApplicable(currentProfileUrl) {
     const CMD_ATTR = 'data-lit-scroll-cmd';
 
     let cancelledMidWay = false;
+    // Background poll — dbGet is IPC to the service worker and we'd
+    // rather not do it on every 16ms mini-step. Cache the flag and let
+    // isCancelled read it synchronously. 300ms polling is fast enough
+    // for a user-initiated Cancel button.
+    let cancelSignal = false;
+    const cancelPollId = setInterval(async () => {
+      const { visitQueueSimple: s } = await dbGet('visitQueueSimple');
+      if (!s || s.cancelRequested) cancelSignal = true;
+    }, 300);
     const beforeTop = readScrollTop(scrollTarget);
     await LITScanScroll.humanizedReadingScroll(scrollTarget, {
       totalMs,
@@ -632,10 +641,9 @@ async function runQueueTickIfApplicable(currentProfileUrl) {
           console.log(`[LI Tracker/queue/attr] setAttribute #${cmdSeq} readback=${readback ? readback.slice(0, 60) + '…' : 'NULL'} inDom=${document.body.contains(cmdCarrier)}`);
         }
       },
-      isCancelled: async () => {
-        const { visitQueueSimple: s } = await dbGet('visitQueueSimple');
-        if (!s || s.cancelRequested) { cancelledMidWay = true; return true; }
-        return false;
+      isCancelled: () => {
+        if (cancelSignal) cancelledMidWay = true;
+        return cancelSignal;
       },
       log: (s) => {
         const actualTop = readScrollTop(scrollTarget);
@@ -644,6 +652,7 @@ async function runQueueTickIfApplicable(currentProfileUrl) {
         );
       },
     });
+    clearInterval(cancelPollId);
     scrollTarget.removeAttribute('data-lit-scroll-uid');
     cmdCarrier.removeAttribute(CMD_ATTR);
     const afterTop = readScrollTop(scrollTarget);

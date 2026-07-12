@@ -65,12 +65,22 @@ function _ease(t) {
 // mini-step is a real scrollBy — the browser fires trusted 'scroll'
 // events between them, LinkedIn's intersection observer / react
 // listeners see continuous motion instead of one teleport.
+//
+// `isCancelled` may be sync (returns bool) or async (returns
+// Promise<bool>). We `await` it either way — `await` on a non-Promise
+// is a no-op microtask. The old `if (isCancelled()) return;` looked
+// harmless but SILENTLY broke async callers: an async isCancelled
+// returns a Promise (truthy), the check fires on every step, and
+// applyDelta is never called even once. The outer loop's log still
+// fires from `opts.log(step)` so the caller sees chunks "happen"
+// while nothing actually moves. Diagnosed 2026-07-12 on the 1.3.3
+// bulk-visit queue.
 async function _animatedScrollBy(applyDelta, delta, durationMs, sleep, isCancelled) {
   const stepMs = 16; // ~60fps
   const stepCount = Math.max(6, Math.round(durationMs / stepMs));
   let prevScrolled = 0;
   for (let i = 1; i <= stepCount; i++) {
-    if (isCancelled()) return;
+    if (await isCancelled()) return;
     const progress = _ease(i / stepCount);
     const currentScrolled = delta * progress;
     const stepDelta = currentScrolled - prevScrolled;
