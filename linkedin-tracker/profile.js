@@ -525,13 +525,20 @@ async function runQueueTickIfApplicable(currentProfileUrl) {
   queueRunUrl  = currentProfileUrl;
 
   try {
-    console.log(`[LI Tracker/queue] ${state.currentIndex + 1}/${state.urls.length} — reading ${currentProfileUrl}`);
+    // Uniform target time per profile — 25-40s picked at random. Matches
+    // a real reader scanning through profiles: open → scroll and read
+    // → few seconds pause → next. Humanized scroll (below) runs FIRST
+    // and eats some of that budget; the rest is "sitting reading". Total
+    // time between navigations is what LinkedIn's rate detectors see.
+    const rand = Math.random;
+    const totalMs = 25_000 + Math.floor(rand() * 15_000); // 25-40s uniform
+    console.log(`[LI Tracker/queue] ${state.currentIndex + 1}/${state.urls.length} — reading ${currentProfileUrl} for ~${Math.round(totalMs / 1000)}s`);
 
-    // Humanized scroll — real users don't jump to the bottom. This also
-    // triggers LinkedIn's lazy-load of the Activity card so the next
-    // setInterval tick captures fresh posts before we advance.
-    // finalHardScroll:false — we're NOT triggering a "load more" fence,
-    // we're MIMICKING a reader; the terminal jump reads as robotic.
+    // Humanized scroll — real users don't jump to the bottom. Also triggers
+    // LinkedIn's lazy-load of the Activity card so the next setInterval
+    // tick captures fresh posts. finalHardScroll:false — we're NOT
+    // triggering a "load more" fence, we're MIMICKING a reader.
+    const scrollStart = Date.now();
     await LITScanScroll.humanizedScanScroll(null, {
       finalHardScroll: false,
       isCancelled: async () => {
@@ -539,22 +546,15 @@ async function runQueueTickIfApplicable(currentProfileUrl) {
         return !s || s.cancelRequested;
       },
     });
+    const scrollElapsed = Date.now() - scrollStart;
 
-    // Log-normal reading dwell + exponential between-visit pause. Real
-    // reading behaviour: most people scan a profile in ~30-60s, some get
-    // stuck reading a good post for minutes. Between visits, memoryless
-    // gap ("phone rang / stopped for tea / clicked something else").
-    const rand = Math.random; // stateless — determinism is via seededPRNG at test time
-    const dwellMs = LITVisitQueueSimple.logNormalDwellMs(rand, 45_000, 0.5, 15_000, 4 * 60_000);
-    const pauseMs = LITVisitQueueSimple.exponentialPauseMs(rand, 60_000, 20_000, 3 * 60_000);
-    const totalMs = dwellMs + pauseMs;
-    console.log(`[LI Tracker/queue] dwell ${Math.round(dwellMs / 1000)}s + pause ${Math.round(pauseMs / 1000)}s = ${Math.round(totalMs / 1000)}s`);
-
-    // Cancellable sleep. Checks the queue state every second so a
-    // popup-initiated cancel takes effect within ~1s of the click.
+    // Sleep for the REMAINDER of the target time. Cancellable — checks
+    // the queue state every second so a popup Cancel takes effect within
+    // ~1s of the click.
+    const sleepMs = Math.max(0, totalMs - scrollElapsed);
     const CHECK_INTERVAL_MS = 1000;
-    for (let elapsed = 0; elapsed < totalMs; elapsed += CHECK_INTERVAL_MS) {
-      await new Promise((r) => setTimeout(r, Math.min(CHECK_INTERVAL_MS, totalMs - elapsed)));
+    for (let elapsed = 0; elapsed < sleepMs; elapsed += CHECK_INTERVAL_MS) {
+      await new Promise((r) => setTimeout(r, Math.min(CHECK_INTERVAL_MS, sleepMs - elapsed)));
       const { visitQueueSimple: s } = await dbGet('visitQueueSimple');
       if (!s || s.cancelRequested) {
         console.log('[LI Tracker/queue] cancelled during wait');

@@ -463,13 +463,13 @@ describe('formatEta — human-readable time-remaining for the Bulk Visit panel',
     expect(formatEta(2 * 60 * 60_000 + 30 * 60_000)).toBe('~2h 30min');
   });
 
-  it('realistic bulk-queue ETAs (105s per profile)', () => {
-    // 10-URL run: 10 * 105s = 1050s = 17.5min → ~18 min
-    expect(formatEta(10 * 105_000)).toBe('~18 min');
-    // 100-URL run: 100 * 105s = 175min = 2h 55min
-    expect(formatEta(100 * 105_000)).toBe('~2h 55min');
-    // 525-URL run (user's real case): 525 * 105s = 918.75min = 15h 19min
-    expect(formatEta(525 * 105_000)).toBe('~15h 19min');
+  it('realistic bulk-queue ETAs (32.5s per profile — avg of 25-40s uniform)', () => {
+    // 10-URL run: 10 * 32.5s = 325s = 5.4min → ~5 min
+    expect(formatEta(10 * 32_500)).toBe('~5 min');
+    // 100-URL run: 3250s = 54min
+    expect(formatEta(100 * 32_500)).toBe('~54 min');
+    // 525-URL run (user's real case): 17062.5s = 284.4min = 4h 44min
+    expect(formatEta(525 * 32_500)).toBe('~4h 44min');
   });
 
   it('rounds sub-minute deltas gracefully', () => {

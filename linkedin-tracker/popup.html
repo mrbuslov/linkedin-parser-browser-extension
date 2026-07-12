@@ -112,7 +112,11 @@
 
     <section id="bulk-panel" class="panel">
       <div class="bulk-idle" id="bulk-idle">
-        <p class="bulk-intro">Paste LinkedIn profile URLs (one per line or comma-separated). Extension will walk through them in your current LinkedIn tab, humanized: real scrolls, log-normal reading time (avg ~45s), random between-visit pause (avg ~60s). Each profile's data (headline, location, mutuals, recent activity) lands in your local store — same as if you'd opened each manually.</p>
+        <p class="bulk-intro">Paste LinkedIn profile URLs (one per line or comma-separated). Extension walks through them in your current LinkedIn tab like a real person — opens the profile, scrolls through the page, reads for a random time, moves on.</p>
+        <p class="bulk-pace">
+          <span class="bulk-pace-emoji">⏱</span>
+          <span>Pace: <b>25-40 seconds per profile</b>, uniform random. Real humanized <code>scroll</code> events on each page. Just profile views — no Connect/Message actions. Data (headline, location, mutuals, activity) auto-lands in your local store, same as manual visit.</span>
+        </p>
         <textarea id="bulk-textarea" placeholder="https://www.linkedin.com/in/alice/&#10;https://www.linkedin.com/in/bob/&#10;…" rows="6"></textarea>
         <div class="bulk-preview" id="bulk-preview"></div>
         <div class="bulk-actions">
@@ -137,12 +141,12 @@
         <details class="bulk-howto">
           <summary>How does it work?</summary>
           <div class="bulk-howto-body">
-            <p><b>What runs.</b> Your current LinkedIn tab navigates through the pasted list. On each profile: humanized scroll (real <code>scroll</code> events, no teleport), log-normal reading dwell (median 45s, tail up to 4min), exponential between-visit pause (mean 60s, min 20s, max 3min). All timings randomized per visit — no two runs look the same.</p>
+            <p><b>What runs.</b> Your current LinkedIn tab navigates through the pasted list. On each profile: humanized scroll (real <code>scroll</code> events, ~60fps mini-steps with ease-in-out — not a jump), then a random remainder wait. Total time per profile: <b>25-40 seconds, uniform random</b>. Real recruiters visit 100-200 profiles daily at roughly this pace when scanning.</p>
             <p><b>What we capture.</b> Same as a manual visit: name, headline, location, mutuals, recent activity, contact info (if the overlay auto-opens — usually 1st-degree only). Lands in the local <code>contacts</code> store; visible in the 👁 Viewed tab.</p>
             <p><b>What we DON'T do.</b> No auto-Connect. No auto-Message. No background tabs. No parallel visits. No new tabs — reuses your current tab so LinkedIn sees a single continuous session, which reads more human than a burst of new-tab openings.</p>
             <p><b>Circuit breaker.</b> If you navigate away from a profile page mid-queue, the queue silently pauses. Resume by opening the next URL in the queue (or hit Cancel to clear).</p>
             <p><b>No new permissions.</b> Uses only the existing <code>https://www.linkedin.com/*</code> host permission. Doesn't need <code>tabs</code> / <code>alarms</code> / <code>idle</code> / <code>webNavigation</code>.</p>
-            <p><b>Warning.</b> LinkedIn actively detects bulk activity. Humanization reduces risk but doesn't eliminate it. Recommended: 10-30 URLs per session on a warm account. Not for burner/new accounts.</p>
+            <p><b>Risk profile.</b> Just profile views on a warm account is <b>low-risk</b> — recruiters manually visit 100-200 profiles daily without issues. The extension does the same, at the same pace, just as a queue. Higher risk on burner/new accounts, or if you also send Connect/Message actions from the same session (extension does NEITHER — pure viewing only).</p>
           </div>
         </details>
       </div>

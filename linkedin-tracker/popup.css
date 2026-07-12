@@ -1238,11 +1238,27 @@ body.is-on-sent .empty-off-sent { display: none; }
 #bulk-panel { padding: 12px; }
 
 .bulk-intro {
-  margin: 0 0 10px;
+  margin: 0 0 8px;
   font-size: 12px;
   color: #444;
   line-height: 1.45;
 }
+
+.bulk-pace {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  background: #eaf3ff;
+  border: 1px solid #b3d4f5;
+  border-radius: 6px;
+  font-size: 11px;
+  color: #295c92;
+  line-height: 1.4;
+}
+.bulk-pace-emoji { font-size: 14px; line-height: 1.2; flex-shrink: 0; }
+.bulk-pace b { color: #084a92; }
 
 #bulk-textarea {
   width: 100%;
