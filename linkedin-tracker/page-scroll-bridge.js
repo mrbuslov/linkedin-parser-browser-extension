@@ -23,12 +23,33 @@
   if (window.__litScrollBridgeInstalled) return;
   window.__litScrollBridgeInstalled = true;
 
+  // World-identity marker. Isolated content-script world has
+  // `typeof chrome === 'object'` and `chrome.runtime` populated; page
+  // world does not. If this logs `hasChromeRuntime=true`, the
+  // world: "MAIN" manifest entry didn't take effect and this script is
+  // running in isolated world — same broken context as the queue
+  // driver, no fix.
+  const inIsolated = typeof chrome !== 'undefined' && !!chrome.runtime && !!chrome.runtime.id;
+  // eslint-disable-next-line no-console
+  console.log(`[LI Tracker] page-scroll-bridge loaded — inIsolated=${inIsolated} (want false)`);
+
+  // Instrument every message we receive. When shipped this is noisy
+  // (14+ writes per profile × N profiles) but the noise IS the
+  // diagnostic — if you don't see these lines, bridge never received
+  // the postMessage from isolated world.
+  let _bridgeSeen = 0;
   window.addEventListener('message', (e) => {
     // Cross-origin postMessage filter — accept only messages from THIS
     // window (same tab) with our sentinel.
     if (e.source !== window) return;
     const d = e.data;
     if (!d || d.__lit !== 'scroll') return;
+
+    _bridgeSeen++;
+    if (_bridgeSeen <= 5 || _bridgeSeen % 20 === 0) {
+      // eslint-disable-next-line no-console
+      console.log(`[LI Tracker/bridge] msg #${_bridgeSeen} sel=${d.selector} delta=${d.delta}`);
+    }
 
     const el = document.querySelector(d.selector);
     if (!el) {
@@ -62,6 +83,4 @@
   // strictly necessary (isolated posts fire-and-forget) but helps
   // diagnosis if you ever wonder whether the MAIN-world script loaded.
   window.postMessage({ __lit: 'bridge-ready' }, '*');
-  // eslint-disable-next-line no-console
-  console.log('[LI Tracker] page-scroll-bridge loaded (world:MAIN)');
 })();
