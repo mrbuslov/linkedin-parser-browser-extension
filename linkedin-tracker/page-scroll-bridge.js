@@ -37,11 +37,26 @@
   // (14+ writes per profile × N profiles) but the noise IS the
   // diagnostic — if you don't see these lines, bridge never received
   // the postMessage from isolated world.
+  //
+  // NOTE: previous version had `if (e.source !== window) return;` as a
+  // cross-origin filter. Removed 1.3.3-bridge-nosource-filter — the
+  // 2026-07-12 debug showed inIsolated=false (bridge IS in page world)
+  // but ZERO scroll messages received. Only remaining hypothesis: the
+  // `e.source === window` check fails cross-world because isolated's
+  // WindowProxy != page-world's Window identity comparison. postMessage
+  // sourceOrigin still filters cross-tab noise via the sentinel
+  // check below — the source filter is redundant AND buggy.
   let _bridgeSeen = 0;
+  let _allSeen = 0;
   window.addEventListener('message', (e) => {
-    // Cross-origin postMessage filter — accept only messages from THIS
-    // window (same tab) with our sentinel.
-    if (e.source !== window) return;
+    _allSeen++;
+    // First 3 messages of ANY kind — logs whether the listener fires
+    // AT ALL. If we see LinkedIn's react-scheduler postMessages here
+    // but not ours below, the filter path is still wrong.
+    if (_allSeen <= 3) {
+      // eslint-disable-next-line no-console
+      console.log(`[LI Tracker/bridge] ANY msg #${_allSeen} sourceIsWindow=${e.source === window} data=`, typeof e.data === 'object' ? Object.keys(e.data || {}).join(',') : typeof e.data);
+    }
     const d = e.data;
     if (!d || d.__lit !== 'scroll') return;
 
