@@ -2,7 +2,7 @@
 // Pure logic lives in core/detect.js (status detection) and core/profile-state.js
 // (state transitions). This file is the DOM-scraping + persistence layer.
 
-console.log('[LI Tracker] profile.js v1.3.3-await-cancel-fix loaded:', location.pathname);
+console.log('[LI Tracker] profile.js loaded:', location.pathname);
 
 // Strip the trailing-whitespace-trimmed `name` from the start of `text` if
 // present. Case-insensitive, allows an optional separator after the name.
@@ -512,50 +512,20 @@ function readScrollTop(target) {
   return target.scrollTop;
 }
 
-// Pick the scroll target for humanizedReadingScroll. Previous incarnation
-// probed each candidate by WRITING scrollTop from isolated world and
-// reading it back to decide "does this move the page?". That's broken
-// on LinkedIn: writes from isolated world go through the native setter,
-// React resets them on next reconciliation, so the probe reads back
-// "no motion" → ALL candidates get rejected → picker returns null →
-// bridge routing skipped → nothing scrolls. Classic case of the probe
-// itself being unreliable in the exact conditions it's supposed to
-// detect.
-//
-// New strategy: no probe. Trust the DOM heuristic (findScanScrollContainer
-// picks the largest overflow:auto/scroll element with real excess — the
-// SAME heuristic /connections/ scroll uses reliably) and fall back to
-// document.scrollingElement for the "short profile / window scrolls"
-// case. All writes go through the page-world bridge — see the applyDelta
-// in runQueueTickIfApplicable. If the picked element turns out not to
-// scroll (bridge write is a no-op), the bridge warns in console.
+// findScanScrollContainer for the inner-scroll case (long profile),
+// document.scrollingElement for the window-scroll case (short profile).
 function pickScrollTarget() {
   const container = LITScanScroll.findScanScrollContainer();
-  if (container) {
-    console.log(
-      `[LI Tracker/queue] scroll target: inner container ${container.tagName}.${String(container.className).split(' ')[0]} (excess ${container.scrollHeight - container.clientHeight})`,
-    );
-    return container;
-  }
-  // Fall back to the document root — this is the standards-mode window
-  // scroll target on modern browsers.
-  const root = document.scrollingElement || document.documentElement;
-  console.log(`[LI Tracker/queue] scroll target: document root <${root.tagName.toLowerCase()}> (window scroll fallback)`);
-  return root;
+  if (container) return container;
+  return document.scrollingElement || document.documentElement;
 }
 
 async function runQueueTickIfApplicable(currentProfileUrl) {
   if (queueRunning) return;
   if (queueRunUrl === currentProfileUrl) return; // already ran on this URL
 
-  // CRITICAL: claim the lock SYNCHRONOUSLY before any await. Real bug
-  // 2026-07-12: two overlapping setInterval ticks both passed the
-  // `if (queueRunning) return;` check because queueRunning was set only
-  // AFTER `await dbGet(...)`. Both ticks then set queueRunning=true and
-  // entered try — two humanizedReadingScroll passes ran in parallel on
-  // the same main.scrollTop and fought each other back to zero, so the
-  // page appeared to not scroll at all despite the chunk logs firing.
-  // Classic TOCTOU. Setting the flag before the await closes the window.
+  // Claim the lock synchronously BEFORE any await — otherwise two
+  // overlapping ticks both pass the guard above (TOCTOU) and race.
   queueRunning = true;
 
   try {
@@ -592,19 +562,8 @@ async function runQueueTickIfApplicable(currentProfileUrl) {
     scrollTarget.setAttribute('data-lit-scroll-uid', uid);
     const scrollSelector = `[data-lit-scroll-uid="${uid}"]`;
 
-    // Cross-world channel to page-scroll-bridge — see the long comment
-    // in page-scroll-bridge.js. postMessage from isolated does not
-    // reach world:"MAIN" content-script listeners in this Chrome build,
-    // so we use a data-attribute + MutationObserver instead.
-    //
-    // The carrier is a dedicated <div> we insert ourselves. Earlier
-    // versions used <html> as the carrier — that worked briefly on a
-    // first test then stopped: LinkedIn's React reconciles attributes
-    // on document.documentElement (dark-mode class, etc.) and strips
-    // unknown data-* attrs on each pass. A dedicated element that no
-    // framework owns is never touched. Bridge observes body's subtree
-    // for our attribute filter so it doesn't need to know the exact
-    // carrier element.
+    // Cross-world scroll channel — see page-scroll-bridge.js. Carrier
+    // is our own <div> because React strips unknown attrs from <html>.
     let cmdCarrier = document.getElementById('__lit-scroll-bus');
     if (!cmdCarrier) {
       cmdCarrier = document.createElement('div');
@@ -616,10 +575,8 @@ async function runQueueTickIfApplicable(currentProfileUrl) {
     const CMD_ATTR = 'data-lit-scroll-cmd';
 
     let cancelledMidWay = false;
-    // Background poll — dbGet is IPC to the service worker and we'd
-    // rather not do it on every 16ms mini-step. Cache the flag and let
-    // isCancelled read it synchronously. 300ms polling is fast enough
-    // for a user-initiated Cancel button.
+    // Cache the cancel flag via 300ms poll so isCancelled stays sync —
+    // otherwise scan-scroll's per-mini-step check would await dbGet 60x/sec.
     let cancelSignal = false;
     const cancelPollId = setInterval(async () => {
       const { visitQueueSimple: s } = await dbGet('visitQueueSimple');
@@ -630,16 +587,10 @@ async function runQueueTickIfApplicable(currentProfileUrl) {
       totalMs,
       applyDelta: (delta) => {
         cmdSeq++;
-        const cmd = JSON.stringify({ selector: scrollSelector, delta, seq: cmdSeq });
-        cmdCarrier.setAttribute(CMD_ATTR, cmd);
-        // Verify the write survived on the first few — if isolated set
-        // it but readback is null, something (React, a MutationObserver
-        // elsewhere) is removing it before the bridge's own observer
-        // can see it. Kept minimal (first 3 only) to avoid Console spam.
-        if (cmdSeq <= 3) {
-          const readback = cmdCarrier.getAttribute(CMD_ATTR);
-          console.log(`[LI Tracker/queue/attr] setAttribute #${cmdSeq} readback=${readback ? readback.slice(0, 60) + '…' : 'NULL'} inDom=${document.body.contains(cmdCarrier)}`);
-        }
+        cmdCarrier.setAttribute(
+          CMD_ATTR,
+          JSON.stringify({ selector: scrollSelector, delta, seq: cmdSeq }),
+        );
       },
       isCancelled: () => {
         if (cancelSignal) cancelledMidWay = true;
@@ -656,9 +607,8 @@ async function runQueueTickIfApplicable(currentProfileUrl) {
     scrollTarget.removeAttribute('data-lit-scroll-uid');
     cmdCarrier.removeAttribute(CMD_ATTR);
     const afterTop = readScrollTop(scrollTarget);
-    console.log(`[LI Tracker/queue] scrollTop before=${beforeTop} after=${afterTop} (Δ=${afterTop - beforeTop}px)`);
     if (afterTop === beforeTop) {
-      console.warn('[LI Tracker/queue] WARNING: page did NOT visibly scroll — target choice may be wrong (bridge should log which write no-op\'d)');
+      console.warn('[LI Tracker/queue] page did NOT visibly scroll — check bridge no-op warnings');
     }
 
     if (cancelledMidWay) {
