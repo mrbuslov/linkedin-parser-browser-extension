@@ -2,7 +2,7 @@
 // Pure logic lives in core/detect.js (status detection) and core/profile-state.js
 // (state transitions). This file is the DOM-scraping + persistence layer.
 
-console.log('[LI Tracker] profile.js v1.3.3-probe4-scrolltop loaded:', location.pathname);
+console.log('[LI Tracker] profile.js v1.3.3-mainworld-bridge loaded:', location.pathname);
 
 // Strip the trailing-whitespace-trimmed `name` from the start of `text` if
 // present. Case-insensitive, allows an optional separator after the name.
@@ -618,27 +618,45 @@ async function runQueueTickIfApplicable(currentProfileUrl) {
         : scrollTarget.tagName + (scrollTarget.className ? '.' + String(scrollTarget.className).split(' ')[0] : ''),
     );
 
+    // Mark the target with a unique data-attribute so the page-world
+    // bridge can find it via querySelector. React might strip unknown
+    // attributes on some elements but for MAIN it should stick. Fall
+    // back to a tag+class selector if the attribute isn't accessible.
+    let scrollSelector = null;
+    if (scrollTarget) {
+      const uid = 'lit-' + Math.random().toString(36).slice(2, 10);
+      scrollTarget.setAttribute('data-lit-scroll-uid', uid);
+      scrollSelector = `[data-lit-scroll-uid="${uid}"]`;
+    }
+
     let cancelledMidWay = false;
     const beforeTop = readScrollTop(scrollTarget);
     await LITScanScroll.humanizedReadingScroll(scrollTarget, {
       totalMs,
+      // Route scroll writes through the page-world bridge — see the
+      // long comment in page-scroll-bridge.js for the "why".
+      applyDelta: (delta) => {
+        if (scrollSelector) {
+          window.postMessage({ __lit: 'scroll', selector: scrollSelector, delta }, '*');
+        } else {
+          window.scrollBy(0, delta);
+        }
+      },
       isCancelled: async () => {
         const { visitQueueSimple: s } = await dbGet('visitQueueSimple');
         if (!s || s.cancelRequested) { cancelledMidWay = true; return true; }
         return false;
       },
       log: (s) => {
-        // Read actualTop AFTER the chunk animation completes — this is
-        // the key diagnostic. If we're setting scrollTop but LinkedIn's
-        // React resets it back to 0 after each write, actualTop will
-        // stay at ~0 while deltas march up. Compound-ing scrollTop
-        // means the code works and we should see visual motion.
         const actualTop = readScrollTop(scrollTarget);
         console.log(
           `[LI Tracker/queue/scroll] ${s.direction > 0 ? '↓' : '↑'} ${s.sizeClass} ${Math.abs(s.delta)}px in ${s.durationMs}ms → scrollTop=${actualTop}px → ${s.pauseClass} ${s.pauseMs}ms`,
         );
       },
     });
+    // Clean up the data-attribute we set on the scroll target — leaving
+    // it in place after we're done is harmless but noisy in devtools.
+    if (scrollTarget) scrollTarget.removeAttribute('data-lit-scroll-uid');
     const afterTop = readScrollTop(scrollTarget);
     console.log(`[LI Tracker/queue] scrollTop before=${beforeTop} after=${afterTop} (Δ=${afterTop - beforeTop}px)`);
     if (afterTop === beforeTop) {

@@ -192,10 +192,16 @@ async function humanizedReadingScroll(target, opts = {}) {
     ? Math.max(0, target.scrollHeight - target.clientHeight)
     : Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
   const getViewport = () => target ? target.clientHeight : window.innerHeight;
-  const applyDelta = (delta) => {
+  // Caller can override the write path via opts.applyDelta — used by
+  // profile.js:runQueueTickIfApplicable to route scroll writes through
+  // a page-world postMessage bridge (React's patched scrollTop setter
+  // only fires in main world; writes from isolated content-script world
+  // go through the NATIVE setter and get reset back by React on the
+  // next reconciliation). See linkedin-tracker/page-scroll-bridge.js.
+  const applyDelta = opts.applyDelta || ((delta) => {
     if (target) target.scrollTop = Math.max(0, target.scrollTop + delta);
     else window.scrollBy(0, delta);
-  };
+  });
 
   const steps = [];
   const startedAt = now();

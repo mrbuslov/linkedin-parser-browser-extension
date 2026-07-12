@@ -68,6 +68,12 @@
       "run_at": "document_idle"
     },
     {
+      "matches": ["https://www.linkedin.com/in/*"],
+      "js": ["page-scroll-bridge.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
       "matches": ["https://www.linkedin.com/search/results/people/*"],
       "js": [
         "db-client.js",
