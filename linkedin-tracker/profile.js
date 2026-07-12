@@ -2,7 +2,7 @@
 // Pure logic lives in core/detect.js (status detection) and core/profile-state.js
 // (state transitions). This file is the DOM-scraping + persistence layer.
 
-console.log('[LI Tracker] profile.js v1.3.3-probe3-race loaded:', location.pathname);
+console.log('[LI Tracker] profile.js v1.3.3-probe4-scrolltop loaded:', location.pathname);
 
 // Strip the trailing-whitespace-trimmed `name` from the start of `text` if
 // present. Case-insensitive, allows an optional separator after the name.
@@ -627,9 +627,17 @@ async function runQueueTickIfApplicable(currentProfileUrl) {
         if (!s || s.cancelRequested) { cancelledMidWay = true; return true; }
         return false;
       },
-      log: (s) => console.log(
-        `[LI Tracker/queue/scroll] ${s.direction > 0 ? '↓' : '↑'} ${s.sizeClass} ${Math.abs(s.delta)}px in ${s.durationMs}ms → ${s.pauseClass} ${s.pauseMs}ms`,
-      ),
+      log: (s) => {
+        // Read actualTop AFTER the chunk animation completes — this is
+        // the key diagnostic. If we're setting scrollTop but LinkedIn's
+        // React resets it back to 0 after each write, actualTop will
+        // stay at ~0 while deltas march up. Compound-ing scrollTop
+        // means the code works and we should see visual motion.
+        const actualTop = readScrollTop(scrollTarget);
+        console.log(
+          `[LI Tracker/queue/scroll] ${s.direction > 0 ? '↓' : '↑'} ${s.sizeClass} ${Math.abs(s.delta)}px in ${s.durationMs}ms → scrollTop=${actualTop}px → ${s.pauseClass} ${s.pauseMs}ms`,
+        );
+      },
     });
     const afterTop = readScrollTop(scrollTarget);
     console.log(`[LI Tracker/queue] scrollTop before=${beforeTop} after=${afterTop} (Δ=${afterTop - beforeTop}px)`);
