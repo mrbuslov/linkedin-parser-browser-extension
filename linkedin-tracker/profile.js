@@ -2,7 +2,7 @@
 // Pure logic lives in core/detect.js (status detection) and core/profile-state.js
 // (state transitions). This file is the DOM-scraping + persistence layer.
 
-console.log('[LI Tracker] profile.js v1.3.3-bridge-nosourcefilter loaded:', location.pathname);
+console.log('[LI Tracker] profile.js v1.3.3-bridge-attr loaded:', location.pathname);
 
 // Strip the trailing-whitespace-trimmed `name` from the start of `text` if
 // present. Case-insensitive, allows an optional separator after the name.
@@ -592,12 +592,25 @@ async function runQueueTickIfApplicable(currentProfileUrl) {
     scrollTarget.setAttribute('data-lit-scroll-uid', uid);
     const scrollSelector = `[data-lit-scroll-uid="${uid}"]`;
 
+    // Cross-world channel to page-scroll-bridge — see the long comment
+    // in page-scroll-bridge.js. postMessage from isolated does not
+    // reach world:"MAIN" content-script listeners in this Chrome build,
+    // so we use a data-attribute + MutationObserver instead. Attribute
+    // writes cross world boundaries reliably (shared DOM).
+    let cmdSeq = 0;
+    const cmdCarrier = document.documentElement;
+    const CMD_ATTR = 'data-lit-scroll-cmd';
+
     let cancelledMidWay = false;
     const beforeTop = readScrollTop(scrollTarget);
     await LITScanScroll.humanizedReadingScroll(scrollTarget, {
       totalMs,
       applyDelta: (delta) => {
-        window.postMessage({ __lit: 'scroll', selector: scrollSelector, delta }, '*');
+        cmdSeq++;
+        cmdCarrier.setAttribute(
+          CMD_ATTR,
+          JSON.stringify({ selector: scrollSelector, delta, seq: cmdSeq }),
+        );
       },
       isCancelled: async () => {
         const { visitQueueSimple: s } = await dbGet('visitQueueSimple');
@@ -612,6 +625,7 @@ async function runQueueTickIfApplicable(currentProfileUrl) {
       },
     });
     scrollTarget.removeAttribute('data-lit-scroll-uid');
+    cmdCarrier.removeAttribute(CMD_ATTR);
     const afterTop = readScrollTop(scrollTarget);
     console.log(`[LI Tracker/queue] scrollTop before=${beforeTop} after=${afterTop} (Δ=${afterTop - beforeTop}px)`);
     if (afterTop === beforeTop) {
