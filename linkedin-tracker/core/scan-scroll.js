@@ -163,7 +163,104 @@ async function humanizedScanScroll(target, opts = {}) {
   return steps;
 }
 
-const LITScanScroll = { humanizedScanScroll, findScanScrollContainer };
+// Humanized READING scroll for the bulk-visit queue on /in/* profile
+// pages. Different behaviour than humanizedScanScroll:
+//   - scan-scroll is one-directional (always down toward the terminal
+//     load-more fence), used by /sent/ and /connections/ scanners.
+//   - reading-scroll is BIDIRECTIONAL — real readers scroll down to see
+//     new content, back up to re-read, down again, sometimes linger on
+//     a post. Runs for a fixed TIME BUDGET (totalMs) instead of a fixed
+//     chunk count. Emits random-direction chunks with random pause
+//     classes ("glance" / "reading" / "engaged") until the budget runs
+//     out or the caller cancels.
+//
+// Direction selection: near top → always down; near bottom → always up;
+// middle → 65% down / 35% up. Sizes are fractions of VIEWPORT so
+// movement scales sensibly on any page length. Each chunk animated via
+// the same _animatedScrollBy 60fps mini-step helper — trusted scroll
+// events, ease-in-out.
+async function humanizedReadingScroll(target, opts = {}) {
+  const rand = opts.rand || Math.random;
+  const sleep = opts.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
+  const isCancelled = opts.isCancelled || (() => false);
+  const log = opts.log || (() => {});
+  const totalMs = opts.totalMs || 20_000;
+  const now = opts.now || (() => Date.now());
+
+  const getTop = () => target ? target.scrollTop : window.scrollY;
+  const getMax = () => target
+    ? Math.max(0, target.scrollHeight - target.clientHeight)
+    : Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+  const getViewport = () => target ? target.clientHeight : window.innerHeight;
+  const applyDelta = (delta) => {
+    if (target) target.scrollTop = Math.max(0, target.scrollTop + delta);
+    else window.scrollBy(0, delta);
+  };
+
+  const steps = [];
+  const startedAt = now();
+
+  while (now() - startedAt < totalMs) {
+    if (await isCancelled()) break;
+
+    const max = getMax();
+    const top = getTop();
+
+    if (max < 30) {
+      // Rare: no scroll room. Just idle a bit and re-check.
+      await sleep(500 + Math.round(rand() * 500));
+      continue;
+    }
+    let direction;
+    if (top < max * 0.10)      direction = 1;
+    else if (top > max * 0.85) direction = -1;
+    else                       direction = rand() < 0.65 ? 1 : -1;
+
+    const sizeRoll = rand();
+    let sizeClass, fraction, durationMs;
+    if (sizeRoll < 0.30) {
+      sizeClass  = 'big';
+      fraction   = 0.20 + rand() * 0.25;
+      durationMs = 400 + Math.round(rand() * 400);
+    } else if (sizeRoll < 0.75) {
+      sizeClass  = 'medium';
+      fraction   = 0.06 + rand() * 0.15;
+      durationMs = 220 + Math.round(rand() * 260);
+    } else {
+      sizeClass  = 'tiny';
+      fraction   = 0.02 + rand() * 0.05;
+      durationMs = 120 + Math.round(rand() * 150);
+    }
+
+    const viewport = getViewport();
+    const delta = direction * Math.max(30, Math.round(viewport * fraction));
+
+    await _animatedScrollBy(applyDelta, delta, durationMs, sleep, isCancelled);
+
+    const pauseRoll = rand();
+    let pauseMs, pauseClass;
+    if (pauseRoll < 0.55) {
+      pauseMs   = 500 + Math.round(rand() * 800);
+      pauseClass = 'glance';
+    } else if (pauseRoll < 0.90) {
+      pauseMs   = 1200 + Math.round(rand() * 2000);
+      pauseClass = 'reading';
+    } else {
+      // "Linger on a block" — 3-8s stopped, reading a post.
+      pauseMs   = 3000 + Math.round(rand() * 5000);
+      pauseClass = 'engaged';
+    }
+
+    const step = { direction, delta, sizeClass, durationMs, pauseMs, pauseClass };
+    steps.push(step);
+    log(step);
+    await sleep(pauseMs);
+  }
+
+  return steps;
+}
+
+const LITScanScroll = { humanizedScanScroll, humanizedReadingScroll, findScanScrollContainer };
 if (typeof globalThis !== 'undefined') globalThis.LITScanScroll = LITScanScroll;
 if (typeof module !== 'undefined' && module.exports) module.exports = LITScanScroll;
 

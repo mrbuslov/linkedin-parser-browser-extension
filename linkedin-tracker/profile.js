@@ -534,33 +534,44 @@ async function runQueueTickIfApplicable(currentProfileUrl) {
     const totalMs = 25_000 + Math.floor(rand() * 15_000); // 25-40s uniform
     console.log(`[LI Tracker/queue] ${state.currentIndex + 1}/${state.urls.length} — reading ${currentProfileUrl} for ~${Math.round(totalMs / 1000)}s`);
 
-    // Humanized scroll — real users don't jump to the bottom. Also triggers
-    // LinkedIn's lazy-load of the Activity card so the next setInterval
-    // tick captures fresh posts. finalHardScroll:false — we're NOT
-    // triggering a "load more" fence, we're MIMICKING a reader.
-    const scrollStart = Date.now();
-    await LITScanScroll.humanizedScanScroll(null, {
-      finalHardScroll: false,
+    // Humanized reading-scroll — bidirectional, random size, random pauses
+    // (glance / reading / engaged-linger). Runs for the FULL totalMs
+    // budget: real scroll events throughout, not "scroll then sit".
+    //
+    // Scroll target discovery — same story as /sent/ and /connections/
+    // scanners: if we pass null (window) but the page's real scroll is
+    // on an internal container, window.scrollBy is a silent no-op and
+    // the page never moves. LITScanScroll.findScanScrollContainer returns
+    // the biggest overflow-container when window isn't scrollable, and
+    // null (use window) when it is. Log the target on entry so a
+    // stuck-scroll report ("nothing scrolls") is diagnosable in one
+    // console line.
+    const scrollTarget = LITScanScroll.findScanScrollContainer();
+    console.log(
+      `[LI Tracker/queue] scroll target:`,
+      scrollTarget
+        ? scrollTarget.tagName + (scrollTarget.className ? '.' + String(scrollTarget.className).split(' ')[0] : '')
+        : 'window'
+    );
+
+    let cancelledMidWay = false;
+    await LITScanScroll.humanizedReadingScroll(scrollTarget, {
+      totalMs,
       isCancelled: async () => {
         const { visitQueueSimple: s } = await dbGet('visitQueueSimple');
-        return !s || s.cancelRequested;
+        if (!s || s.cancelRequested) { cancelledMidWay = true; return true; }
+        return false;
       },
+      log: (s) => console.log(
+        `[LI Tracker/queue/scroll] ${s.direction > 0 ? '↓' : '↑'} ${s.sizeClass} ${Math.abs(s.delta)}px in ${s.durationMs}ms → ${s.pauseClass} ${s.pauseMs}ms`,
+      ),
     });
-    const scrollElapsed = Date.now() - scrollStart;
 
-    // Sleep for the REMAINDER of the target time. Cancellable — checks
-    // the queue state every second so a popup Cancel takes effect within
-    // ~1s of the click.
-    const sleepMs = Math.max(0, totalMs - scrollElapsed);
-    const CHECK_INTERVAL_MS = 1000;
-    for (let elapsed = 0; elapsed < sleepMs; elapsed += CHECK_INTERVAL_MS) {
-      await new Promise((r) => setTimeout(r, Math.min(CHECK_INTERVAL_MS, sleepMs - elapsed)));
+    if (cancelledMidWay) {
+      console.log('[LI Tracker/queue] cancelled during read');
       const { visitQueueSimple: s } = await dbGet('visitQueueSimple');
-      if (!s || s.cancelRequested) {
-        console.log('[LI Tracker/queue] cancelled during wait');
-        if (s && s.cancelRequested) await dbSet({ visitQueueSimple: null });
-        return;
-      }
+      if (s && s.cancelRequested) await dbSet({ visitQueueSimple: null });
+      return;
     }
 
     // Re-read state (someone else might have written meanwhile) and

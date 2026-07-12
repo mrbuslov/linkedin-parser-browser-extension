@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-const { humanizedScanScroll } = require('../linkedin-tracker/core/scan-scroll.js');
+const { humanizedScanScroll, humanizedReadingScroll } = require('../linkedin-tracker/core/scan-scroll.js');
 
 // Deterministic-ish LCG so we can seed the helper for repeatable steps.
 function seededRand(seed) {
@@ -242,5 +242,157 @@ describe('humanizedScanScroll — window scroll fallback', () => {
       window.scrollBy = originalScrollBy;
       window.scrollTo = originalScrollTo;
     }
+  });
+});
+
+// Fake clock — advances by explicit ticks so we can simulate totalMs
+// budget without actually waiting. sleep() advances the clock too.
+function fakeClock() {
+  let t = 0;
+  const now = () => t;
+  const sleep = (ms) => { t += ms; return Promise.resolve(); };
+  return { now, sleep };
+}
+
+describe('humanizedReadingScroll — bidirectional reading pattern for /in/* profile pages', () => {
+  it('respects the totalMs time budget', async () => {
+    for (let seed = 1; seed <= 20; seed++) {
+      const c = fakeContainer({ height: 8000, viewport: 900 });
+      const { now, sleep } = fakeClock();
+      await humanizedReadingScroll(c, { rand: seededRand(seed), sleep, now, totalMs: 20_000 });
+      // No sensible way to overshoot far beyond budget — one final chunk
+      // may push us slightly past. Assert within [budget, budget * 1.5].
+      expect(now()).toBeGreaterThanOrEqual(19_500);
+      expect(now()).toBeLessThan(30_000);
+    }
+  });
+
+  it('emits scrolls in BOTH directions across seeds (bidirectional guarantee)', async () => {
+    // Real bug motivation: humanizedScanScroll only ever went down.
+    // Real reader behaviour includes back-up passes. If this test ever
+    // fails after a refactor, we've regressed reading-mode to scan-mode.
+    let downSteps = 0;
+    let upSteps = 0;
+    for (let seed = 1; seed <= 30; seed++) {
+      const c = fakeContainer({ height: 8000, viewport: 900, startTop: 4000 });
+      const { now, sleep } = fakeClock();
+      const steps = await humanizedReadingScroll(c, {
+        rand: seededRand(seed), sleep, now, totalMs: 25_000,
+      });
+      for (const s of steps) {
+        if (s.direction > 0) downSteps++;
+        else if (s.direction < 0) upSteps++;
+      }
+    }
+    // At mid-scroll starting position (top=4000, max≈7100 so ratio~0.56)
+    // the 65/35 split should give us plenty of both.
+    expect(downSteps).toBeGreaterThan(0);
+    expect(upSteps).toBeGreaterThan(0);
+    // Down should be majority overall (65% target).
+    expect(downSteps).toBeGreaterThan(upSteps);
+  });
+
+  it('near TOP: always scrolls DOWN (never negative direction)', async () => {
+    for (let seed = 1; seed <= 20; seed++) {
+      const c = fakeContainer({ height: 10_000, viewport: 900, startTop: 100 });
+      const { now, sleep } = fakeClock();
+      const steps = await humanizedReadingScroll(c, {
+        rand: seededRand(seed), sleep, now, totalMs: 8_000,
+      });
+      // First step near-top must be downward. After it moves us off
+      // the near-top edge, later steps CAN reverse. Just check the very
+      // first step's direction.
+      if (steps.length > 0) {
+        expect(steps[0].direction).toBe(1);
+      }
+    }
+  });
+
+  it('near BOTTOM: always scrolls UP (never positive direction)', async () => {
+    for (let seed = 1; seed <= 20; seed++) {
+      const c = fakeContainer({ height: 8000, viewport: 900, startTop: 6900 });
+      const { now, sleep } = fakeClock();
+      const steps = await humanizedReadingScroll(c, {
+        rand: seededRand(seed), sleep, now, totalMs: 8_000,
+      });
+      if (steps.length > 0) {
+        expect(steps[0].direction).toBe(-1);
+      }
+    }
+  });
+
+  it('mixes all THREE size classes (big / medium / tiny) across seeds', async () => {
+    const seen = new Set();
+    for (let seed = 1; seed <= 30; seed++) {
+      const c = fakeContainer({ height: 8000, viewport: 900 });
+      const { now, sleep } = fakeClock();
+      const steps = await humanizedReadingScroll(c, {
+        rand: seededRand(seed), sleep, now, totalMs: 20_000,
+      });
+      for (const s of steps) seen.add(s.sizeClass);
+    }
+    expect(seen.has('big')).toBe(true);
+    expect(seen.has('medium')).toBe(true);
+    expect(seen.has('tiny')).toBe(true);
+  });
+
+  it('mixes all THREE pause classes including "engaged" long-linger', async () => {
+    // "Engaged" is the 10% tail — "stopped on a post for 3-8s". User's
+    // explicit request: "sometimes linger on some block". If this
+    // regresses, the reader behaviour goes back to fast-scan pattern.
+    const seen = new Set();
+    for (let seed = 1; seed <= 60; seed++) {
+      const c = fakeContainer({ height: 8000, viewport: 900 });
+      const { now, sleep } = fakeClock();
+      const steps = await humanizedReadingScroll(c, {
+        rand: seededRand(seed), sleep, now, totalMs: 30_000,
+      });
+      for (const s of steps) seen.add(s.pauseClass);
+    }
+    expect(seen.has('glance')).toBe(true);
+    expect(seen.has('reading')).toBe(true);
+    expect(seen.has('engaged')).toBe(true);
+  });
+
+  it('uses target.scrollTop when target is provided (NOT window)', async () => {
+    // Regression: my initial 1.3.3 shipped humanizedScanScroll(null, ...)
+    // for the bulk-visit queue. On LinkedIn profile pages whose real
+    // scroll is on an internal container, window.scrollBy is a silent
+    // no-op — nothing moved. Passing target explicitly (from
+    // findScanScrollContainer) is the fix. This test guards the target
+    // path — if we ever regress to window-only, target.scrollTop stays
+    // at 0 and the assertion fails.
+    const c = fakeContainer({ height: 8000, viewport: 900, startTop: 0 });
+    const { now, sleep } = fakeClock();
+    await humanizedReadingScroll(c, {
+      rand: seededRand(42), sleep, now, totalMs: 15_000,
+    });
+    expect(c.scrollTop).toBeGreaterThan(0);
+  });
+
+  it('cancellation stops the loop mid-flight', async () => {
+    const c = fakeContainer({ height: 8000, viewport: 900 });
+    const { now, sleep } = fakeClock();
+    let ticks = 0;
+    const steps = await humanizedReadingScroll(c, {
+      rand: seededRand(1), sleep, now, totalMs: 60_000,
+      isCancelled: () => ++ticks >= 3,
+    });
+    // With cancellation firing quickly, we shouldn't have completed many
+    // full chunks.
+    expect(steps.length).toBeLessThan(5);
+  });
+
+  it('no-scroll room case: idles without throwing', async () => {
+    // Container fits fully in viewport — nothing to scroll. Loop should
+    // idle for the totalMs budget and return an empty step list.
+    const c = fakeContainer({ height: 900, viewport: 900 });
+    const { now, sleep } = fakeClock();
+    const steps = await humanizedReadingScroll(c, {
+      rand: seededRand(1), sleep, now, totalMs: 5_000,
+    });
+    expect(steps).toEqual([]);
+    // Time should still advance to (near) totalMs via the idle sleep.
+    expect(now()).toBeGreaterThanOrEqual(5_000);
   });
 });
