@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeProfileUrl, isEmailKey, extractEmail, decodeLinkedInRedirect, isProfilePath, extractURNFromConnectionOf, isPeopleSearchPath } from '../linkedin-tracker/core/url.js';
+import { normalizeProfileUrl, isEmailKey, extractEmail, decodeLinkedInRedirect, isProfilePath, extractURNFromConnectionOf, extractUrnFromProfileUrl, isPeopleSearchPath } from '../linkedin-tracker/core/url.js';
 
 describe('normalizeProfileUrl', () => {
   it('keeps a canonical /in/name/ URL untouched', () => {
@@ -142,6 +142,58 @@ describe('extractURNFromConnectionOf', () => {
   it('returns null for empty/falsy input', () => {
     expect(extractURNFromConnectionOf('')).toBeNull();
     expect(extractURNFromConnectionOf(null)).toBeNull();
+  });
+});
+
+describe('extractUrnFromProfileUrl', () => {
+  it('extracts URN from an /in/ACoA.../ URL (LinkedIn URN-format profile URL)', () => {
+    expect(extractUrnFromProfileUrl('https://www.linkedin.com/in/ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI/'))
+      .toBe('ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI');
+    expect(extractUrnFromProfileUrl('https://www.linkedin.com/in/ACoAAAAjktYBfN_UNHAUsz2SoXjGbdK1foTREnE/'))
+      .toBe('ACoAAAAjktYBfN_UNHAUsz2SoXjGbdK1foTREnE');
+    expect(extractUrnFromProfileUrl('https://www.linkedin.com/in/ACoAAAhdDz4BVo1GEpOKgey4ACpSOiG6DcVSAl0/'))
+      .toBe('ACoAAAhdDz4BVo1GEpOKgey4ACpSOiG6DcVSAl0');
+  });
+
+  it('works without a trailing slash', () => {
+    expect(extractUrnFromProfileUrl('https://www.linkedin.com/in/ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI'))
+      .toBe('ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI');
+  });
+
+  it('returns null for vanity-format URLs (no URN in path)', () => {
+    expect(extractUrnFromProfileUrl('https://www.linkedin.com/in/joedougherty/')).toBeNull();
+    expect(extractUrnFromProfileUrl('https://www.linkedin.com/in/wendypease/')).toBeNull();
+    expect(extractUrnFromProfileUrl('https://www.linkedin.com/in/john-doe/')).toBeNull();
+  });
+
+  it('returns null for URLs that just happen to contain "ACoA" outside the path segment', () => {
+    // Query params, hash fragments, or vanity slugs that CONTAIN ACoA but
+    // don't START with it → no match (regex anchors to segment start).
+    expect(extractUrnFromProfileUrl('https://www.linkedin.com/in/notACoAperson/')).toBeNull();
+    expect(extractUrnFromProfileUrl('https://www.linkedin.com/in/john-doe/?ref=ACoAxyz')).toBeNull();
+  });
+
+  it('returns null for non-profile paths (search, feed, mailto)', () => {
+    expect(extractUrnFromProfileUrl('https://www.linkedin.com/search/results/people/?connectionOf=ACoAxyz')).toBeNull();
+    expect(extractUrnFromProfileUrl('https://www.linkedin.com/feed/')).toBeNull();
+    expect(extractUrnFromProfileUrl('mailto:foo@bar.com')).toBeNull();
+    expect(extractUrnFromProfileUrl('MAILTO:foo@bar.com')).toBeNull();
+  });
+
+  it('returns null for empty/malformed input', () => {
+    expect(extractUrnFromProfileUrl('')).toBeNull();
+    expect(extractUrnFromProfileUrl(null)).toBeNull();
+    expect(extractUrnFromProfileUrl(undefined)).toBeNull();
+    expect(extractUrnFromProfileUrl(123)).toBeNull();
+  });
+
+  it('tolerates overlay sub-paths — /in/ACoA.../overlay/... resolves to same URN', () => {
+    // Callers should ideally normalize first, but the extractor is robust
+    // to unnormalized input — anchor is the FIRST /in/<segment>/ token.
+    expect(extractUrnFromProfileUrl('https://www.linkedin.com/in/ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI/overlay/contact-info/'))
+      .toBe('ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI');
+    expect(extractUrnFromProfileUrl('https://www.linkedin.com/in/ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI/details/experience/'))
+      .toBe('ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI');
   });
 });
 

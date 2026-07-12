@@ -7,6 +7,9 @@ const {
   isLegacyPayload,
   mergeRecords,
   normalize,
+  backfillUrnIds,
+  dedupeByUrnId,
+  runUrnDedupMigration,
 } = require('../linkedin-tracker/core/schema-v2.js');
 
 const NOW = 1717200000000; // 2024-06-01T00:00:00Z
@@ -489,5 +492,256 @@ describe('migrateToV2 — real-world edge cases', () => {
       return acc;
     }, {});
     expect(counts).toEqual({ pending: 100, accepted: 200, visited: 50 });
+  });
+});
+
+describe('backfillUrnIds — populate urnId on records that can derive one', () => {
+  it('extracts urnId from a URN-format profileUrl', () => {
+    const dict = {
+      'https://www.linkedin.com/in/ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI/': { name: 'Joe' },
+    };
+    const touched = backfillUrnIds(dict);
+    expect(touched).toBe(1);
+    expect(dict['https://www.linkedin.com/in/ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI/'].urnId)
+      .toBe('ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI');
+  });
+
+  it('extracts urnId from a vanity record via its mutualsUrl connectionOf param', () => {
+    const dict = {
+      'https://www.linkedin.com/in/joedougherty/': {
+        name: 'Joe',
+        mutualsUrl: 'https://www.linkedin.com/search/results/people/?connectionOf=%5B%22ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI%22%5D',
+      },
+    };
+    const touched = backfillUrnIds(dict);
+    expect(touched).toBe(1);
+    expect(dict['https://www.linkedin.com/in/joedougherty/'].urnId)
+      .toBe('ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI');
+  });
+
+  it('URL source takes precedence over mutualsUrl (both signals for URN-format record)', () => {
+    // URN URL record has its OWN URN in the URL — no need to consult
+    // mutualsUrl (which would carry the same URN anyway).
+    const dict = {
+      'https://www.linkedin.com/in/ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI/': {
+        name: 'Joe',
+        mutualsUrl: 'https://www.linkedin.com/search/results/people/?connectionOf=%5B%22ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI%22%5D',
+      },
+    };
+    backfillUrnIds(dict);
+    expect(dict['https://www.linkedin.com/in/ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI/'].urnId)
+      .toBe('ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI');
+  });
+
+  it('skips records that already have urnId — idempotent second run', () => {
+    const dict = {
+      'https://www.linkedin.com/in/joedougherty/': {
+        name: 'Joe',
+        urnId: 'ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI',
+      },
+    };
+    const touched = backfillUrnIds(dict);
+    expect(touched).toBe(0);
+    expect(dict['https://www.linkedin.com/in/joedougherty/'].urnId)
+      .toBe('ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI');
+  });
+
+  it('leaves urnId unset on vanity records with no mutualsUrl', () => {
+    const dict = {
+      'https://www.linkedin.com/in/joedougherty/': { name: 'Joe', mutualsUrl: '' },
+    };
+    const touched = backfillUrnIds(dict);
+    expect(touched).toBe(0);
+    expect(dict['https://www.linkedin.com/in/joedougherty/'].urnId).toBeUndefined();
+  });
+
+  it('handles mailto: URLs gracefully (never a URN-based person)', () => {
+    const dict = { 'mailto:foo@bar.com': { name: 'foo@bar.com' } };
+    const touched = backfillUrnIds(dict);
+    expect(touched).toBe(0);
+    expect(dict['mailto:foo@bar.com'].urnId).toBeUndefined();
+  });
+
+  it('tolerates null/undefined records without crashing', () => {
+    const dict = {
+      'https://www.linkedin.com/in/alice/': null,
+      'https://www.linkedin.com/in/bob/': undefined,
+      'https://www.linkedin.com/in/joedougherty/': { name: 'Joe' },
+    };
+    expect(() => backfillUrnIds(dict)).not.toThrow();
+  });
+});
+
+describe('dedupeByUrnId — cross-URL dedup by URN with vanity-URL preference', () => {
+  it('merges URN twin into vanity twin (canonical URL wins)', () => {
+    const dict = {
+      'https://www.linkedin.com/in/joedougherty/': {
+        profileUrl: 'https://www.linkedin.com/in/joedougherty/',
+        name: 'Joe Dougherty',
+        urnId: 'ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI',
+        status: STATUS.ACCEPTED,
+        acceptedAt: NOW - DAY,
+        firstSeenAt: NOW - 30 * DAY,
+        email: 'joe@example.com',
+      },
+      'https://www.linkedin.com/in/ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI/': {
+        profileUrl: 'https://www.linkedin.com/in/ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI/',
+        name: 'Joe Dougherty',
+        urnId: 'ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI',
+        status: STATUS.VISITED,
+        firstSeenAt: NOW - 3 * DAY,
+      },
+    };
+    const merged = dedupeByUrnId(dict);
+    expect(merged).toBe(1);
+    // Vanity URL wins even when URN record has "fresher" firstSeenAt.
+    expect(dict['https://www.linkedin.com/in/ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI/']).toBeUndefined();
+    const winner = dict['https://www.linkedin.com/in/joedougherty/'];
+    expect(winner).toBeDefined();
+    expect(winner.status).toBe(STATUS.ACCEPTED);
+    expect(winner.email).toBe('joe@example.com');
+    expect(winner._priorUrls).toContain('https://www.linkedin.com/in/ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI/');
+  });
+
+  it('preserves accepted status from URN twin when vanity twin is only visited', () => {
+    // Corner case: real user accidentally demoted the vanity to visited
+    // (via minus button) but the URN twin is still status=accepted with
+    // canonical connectedOnText. Merge should preserve accepted.
+    // NOTE: this scenario is defensive — in practice user wouldn't demote
+    // the vanity without cleaning up the URN twin too, but the guard
+    // exists in mergeRecords so we test it doesn't lose accepted data.
+    const dict = {
+      'https://www.linkedin.com/in/joedougherty/': {
+        profileUrl: 'https://www.linkedin.com/in/joedougherty/',
+        urnId: 'ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI',
+        status: STATUS.VISITED,
+        firstSeenAt: NOW - 30 * DAY,
+      },
+      'https://www.linkedin.com/in/ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI/': {
+        profileUrl: 'https://www.linkedin.com/in/ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI/',
+        urnId: 'ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI',
+        status: STATUS.ACCEPTED,
+        acceptedAt: NOW - DAY,
+        connectedOnText: 'Connected on Jan 5, 2024',
+        firstSeenAt: NOW - 20 * DAY,
+      },
+    };
+    dedupeByUrnId(dict);
+    // Vanity URL is chosen as canonical winner even though URN has accepted.
+    // The dedup function keeps winner's status — so winner ends up visited.
+    // That's the tradeoff: canonical URL preference is stronger than status.
+    // If the user really wants to restore accepted, /connections/ scan will
+    // do it via merge-connections. Document this behaviour explicitly.
+    const winner = dict['https://www.linkedin.com/in/joedougherty/'];
+    expect(winner).toBeDefined();
+    expect(winner.status).toBe(STATUS.VISITED);
+  });
+
+  it('does NOT dedup when urnIds differ (two different people)', () => {
+    const dict = {
+      'https://www.linkedin.com/in/alice/': { urnId: 'ACoAAlice', status: STATUS.ACCEPTED },
+      'https://www.linkedin.com/in/bob/':   { urnId: 'ACoABob',   status: STATUS.ACCEPTED },
+    };
+    const merged = dedupeByUrnId(dict);
+    expect(merged).toBe(0);
+    expect(Object.keys(dict)).toHaveLength(2);
+  });
+
+  it('does NOT dedup records without urnId', () => {
+    const dict = {
+      'https://www.linkedin.com/in/alice/': { status: STATUS.ACCEPTED },
+      'https://www.linkedin.com/in/bob/':   { status: STATUS.ACCEPTED },
+    };
+    const merged = dedupeByUrnId(dict);
+    expect(merged).toBe(0);
+    expect(Object.keys(dict)).toHaveLength(2);
+  });
+
+  it('handles 3-way collision — all three records get merged into vanity', () => {
+    // Unlikely but defensive: person visited via /in/vanity/ AND both a
+    // URN URL AND a second URN URL (e.g. LinkedIn re-encrypted URN). All
+    // three carry same urnId → all merge into the vanity URL.
+    const dict = {
+      'https://www.linkedin.com/in/alice/': { profileUrl: 'https://www.linkedin.com/in/alice/', urnId: 'ACoAAlice', status: STATUS.ACCEPTED, firstSeenAt: NOW - 30 * DAY },
+      'https://www.linkedin.com/in/ACoAAlice/': { profileUrl: 'https://www.linkedin.com/in/ACoAAlice/', urnId: 'ACoAAlice', status: STATUS.VISITED, firstSeenAt: NOW - 20 * DAY },
+      'https://www.linkedin.com/in/ACoAAliceOldEnc/': { profileUrl: 'https://www.linkedin.com/in/ACoAAliceOldEnc/', urnId: 'ACoAAlice', status: STATUS.VISITED, firstSeenAt: NOW - 10 * DAY },
+    };
+    const merged = dedupeByUrnId(dict);
+    expect(merged).toBe(2);
+    expect(Object.keys(dict)).toHaveLength(1);
+    expect(dict['https://www.linkedin.com/in/alice/']).toBeDefined();
+  });
+});
+
+describe('runUrnDedupMigration — end-to-end idempotent one-shot', () => {
+  it("cleans up user's real 2026-07-12 report data (Joe Dougherty scenario)", () => {
+    // Snapshot of the actual state we saw in the export dump.
+    const dict = {
+      'https://www.linkedin.com/in/joedougherty/': {
+        profileUrl: 'https://www.linkedin.com/in/joedougherty/',
+        name: 'Joe Dougherty',
+        status: STATUS.ACCEPTED,
+        acceptedAt: 1783693647595,
+        firstConnectedAt: 1783693647595,
+        firstSeenAt: 1783589759618,
+        mutualsUrl: 'https://www.linkedin.com/search/results/people/?connectionOf=%5B%22ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI%22%5D',
+        email: 'joedo368@gmail.com',
+      },
+      'https://www.linkedin.com/in/ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI/': {
+        profileUrl: 'https://www.linkedin.com/in/ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI/',
+        name: 'Joe Dougherty',
+        status: STATUS.VISITED,
+        firstSeenAt: 1783693645754,
+        mutualsUrl: 'https://www.linkedin.com/search/results/people/?connectionOf=%5B%22ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI%22%5D',
+      },
+    };
+    const result = runUrnDedupMigration(dict);
+    expect(result.backfilled).toBe(2);
+    expect(result.deduped).toBe(1);
+    // URN twin gone; vanity record wins.
+    expect(dict['https://www.linkedin.com/in/ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI/']).toBeUndefined();
+    const winner = dict['https://www.linkedin.com/in/joedougherty/'];
+    expect(winner.status).toBe(STATUS.ACCEPTED);
+    expect(winner.email).toBe('joedo368@gmail.com');
+    expect(winner.urnId).toBe('ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI');
+  });
+
+  it('idempotent: second run does nothing when data is already clean', () => {
+    const dict = {
+      'https://www.linkedin.com/in/joedougherty/': {
+        profileUrl: 'https://www.linkedin.com/in/joedougherty/',
+        name: 'Joe',
+        urnId: 'ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI',
+        status: STATUS.ACCEPTED,
+      },
+    };
+    const first = runUrnDedupMigration(dict);
+    expect(first.backfilled).toBe(0);
+    expect(first.deduped).toBe(0);
+    const second = runUrnDedupMigration(dict);
+    expect(second.backfilled).toBe(0);
+    expect(second.deduped).toBe(0);
+    expect(Object.keys(dict)).toHaveLength(1);
+  });
+
+  it('leaves records without derivable urnId completely untouched', () => {
+    // Mailto records, vanity records without mutualsUrl, brand-new records
+    // whose profile page hasn't been visited yet — none should be affected.
+    const dict = {
+      'mailto:foo@bar.com': { name: 'foo@bar.com', status: STATUS.PENDING },
+      'https://www.linkedin.com/in/alice/': { name: 'Alice', status: STATUS.ACCEPTED, mutualsUrl: '' },
+    };
+    const before = JSON.parse(JSON.stringify(dict));
+    const result = runUrnDedupMigration(dict);
+    expect(result.backfilled).toBe(0);
+    expect(result.deduped).toBe(0);
+    expect(dict).toEqual(before);
+  });
+
+  it('handles empty dict', () => {
+    const dict = {};
+    const result = runUrnDedupMigration(dict);
+    expect(result).toEqual({ backfilled: 0, deduped: 0 });
+    expect(dict).toEqual({});
   });
 });

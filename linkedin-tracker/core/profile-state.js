@@ -51,6 +51,11 @@ function metadataFromInfo(info) {
   };
   if (info.memberId)   out.memberId   = info.memberId;
   if (info.vanityName) out.vanityName = info.vanityName;
+  // urnId is LinkedIn's encrypted member URN (the "ACoA..." blob). Same
+  // person can be reached via /in/<vanity>/ AND /in/<urn>/ URLs — same
+  // urnId in both cases. Cross-URL dedup uses this alongside memberId.
+  // The caller (profile.js) fills info.urnId from the URL and mutualsUrl.
+  if (info.urnId)      out.urnId      = info.urnId;
   return out;
 }
 
@@ -117,14 +122,23 @@ const CONTACT_FIELDS = [
 ];
 
 // Find an existing record in `contacts` under a DIFFERENT URL that refers
-// to the same LinkedIn member as `targetUrl`. Anchored on `memberId`
-// only — name matching is deliberately never used (two real people can
-// share a name; silent merge corrupts data with no recovery).
-function findDuplicateRecord(contacts, targetUrl, targetMemberId) {
-  if (!targetMemberId) return null;
+// to the same LinkedIn member as `targetUrl`. Anchored on `memberId` OR
+// `urnId` — both are stable per-person identifiers we can trust.
+// Name matching is DELIBERATELY never used (two real people can share a
+// name; silent merge corrupts data with no recovery).
+//
+// urnId matters because LinkedIn serves the same profile from BOTH
+// /in/<vanity>/ AND /in/<urn>/ URLs — user clicks a mutuals link on the
+// search page and lands at the URN URL, later they land at the vanity URL
+// via a different path. Without urnId dedup we'd end up with two records
+// for the same person (real bug 2026-07-12: Joe Dougherty had one accepted
+// record at /joedougherty/ AND one visited record at /ACoAAA...GCI/).
+function findDuplicateRecord(contacts, targetUrl, targetMemberId, targetUrnId) {
+  if (!targetMemberId && !targetUrnId) return null;
   for (const [url, rec] of Object.entries(contacts)) {
     if (url === targetUrl) continue;
-    if (rec.memberId && rec.memberId === targetMemberId) return url;
+    if (targetMemberId && rec.memberId && rec.memberId === targetMemberId) return url;
+    if (targetUrnId    && rec.urnId    && rec.urnId    === targetUrnId)    return url;
   }
   return null;
 }
@@ -204,7 +218,7 @@ function applyProfileVisit(stored, info, status, now, contactInfo) {
 
   // Cross-URL dedup FIRST so status/contact-info updates land on the
   // merged record, not on a stale duplicate at the old URL.
-  const dupUrl = findDuplicateRecord(contacts, profileUrl, info.memberId);
+  const dupUrl = findDuplicateRecord(contacts, profileUrl, info.memberId, info.urnId);
   if (dupUrl) {
     mergeIntoTarget(contacts, dupUrl, profileUrl);
   }

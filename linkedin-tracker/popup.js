@@ -469,6 +469,21 @@ async function ensureSchemaV2() {
   console.log('[LI Tracker] popup migrated storage to v2.');
 }
 
+// One-shot URN-based cross-URL dedup. Runs on every popup load; idempotent
+// (backfillUrnIds skips records that already have urnId; dedupeByUrnId
+// finds no dups once run). Motivated by real 2026-07-12 report where the
+// user had Joe Dougherty as TWO records — accepted at /joedougherty/ and
+// visited at /ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI/ — because the URN
+// URL was a valid alternate path LinkedIn served, and pre-1.3.3 dedup
+// only matched by memberId (which was empty for both records).
+async function migrateUrnDedup() {
+  const { contacts = {} } = await dbGet('contacts');
+  const result = LITSchema.runUrnDedupMigration(contacts);
+  if (result.backfilled === 0 && result.deduped === 0) return;
+  await dbSet({ contacts });
+  console.log(`[LI Tracker] URN-dedup migration: backfilled ${result.backfilled} urnIds, merged ${result.deduped} duplicate records.`);
+}
+
 // One-shot migration: walk every record and undo any name/headline swap.
 // Idempotent: no write when nothing to fix.
 async function migrateSwappedNames() {
@@ -491,6 +506,7 @@ async function migrateSwappedNames() {
 async function loadData() {
   await ensureSchemaV2();
   await migrateSwappedNames();
+  await migrateUrnDedup();
 
   const { contacts = {}, scanHistory = [], scanState = {} } =
     await dbGet(['contacts', 'scanHistory', 'scanState']);
@@ -1000,9 +1016,10 @@ function switchTab(name) {
     panel.classList.toggle('active', panel.id === `${name}-panel`);
   }
   // The per-tab Download button only makes sense on list tabs. Settings
-  // has no list; the full-backup button in that panel serves that need.
+  // and Bulk have no per-tab list to export — Settings has its own
+  // full-backup button; Bulk is a control panel, not a list view.
   const btn = $('tab-download');
-  if (btn) btn.hidden = name === 'settings';
+  if (btn) btn.hidden = name === 'settings' || name === 'bulk';
 }
 
 // Maps each popup tab to the LinkedIn page it scans. Marked and Settings have
@@ -1070,6 +1087,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   const all = keys.includes('*');
   if (all || keys.includes('scanInProgress')) updateScanButton();
   if (all || keys.includes('contacts') || keys.includes('scanState')) loadData();
+  if (all || keys.includes('visitQueueSimple')) renderBulkPanel();
 });
 
 document.querySelectorAll('.tab').forEach((tab) => {
@@ -1150,6 +1168,105 @@ $('import-file').addEventListener('change', (e) => {
 loadData();
 updateScanButton();
 
-// Bulk Visit Queue popup wiring removed for 1.3.0. To restore in 1.3.1:
-//   git show 89090b5:linkedin-tracker/popup.js
-// contains the reference implementation (from '// Bulk Visit Queue tab' to end).
+// ---------- Simplified Bulk Visit Queue (1.3.3) ----------
+//
+// Preview → Start → progress → Cancel. State machine lives in
+// core/visit-queue-simple.js; storage key is `visitQueueSimple`. The
+// driver is profile.js — it reads the queue at end of every capture
+// tick and self-navigates window.location. Popup is view + control only.
+
+function renderBulkPreview() {
+  const textarea = $('bulk-textarea');
+  const preview  = $('bulk-preview');
+  const startBtn = $('bulk-start-btn');
+  const hint     = $('bulk-hint');
+  const result   = LITVisitQueueSimple.parseUrlList(textarea.value);
+  preview.innerHTML = '';
+  hint.hidden = true;
+  if (result.valid.length === 0 && result.invalid.length === 0 && result.duplicates === 0) {
+    startBtn.disabled = true;
+    return;
+  }
+  const bits = [];
+  if (result.valid.length)     bits.push(`${result.valid.length} valid`);
+  if (result.invalid.length)   bits.push(`${result.invalid.length} rejected (not a profile URL)`);
+  if (result.duplicates)       bits.push(`${result.duplicates} duplicate${result.duplicates === 1 ? '' : 's'} dropped`);
+  preview.textContent = bits.join(' · ');
+  startBtn.disabled = result.valid.length === 0;
+  startBtn._parsedUrls = result.valid;
+}
+
+async function startBulkQueue() {
+  const startBtn = $('bulk-start-btn');
+  const urls = startBtn._parsedUrls;
+  if (!Array.isArray(urls) || urls.length === 0) return;
+
+  // Check that the user's current active tab is on LinkedIn — the queue
+  // drives THAT tab via profile.js self-navigation. No new tab is opened.
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const onLinkedIn = tab?.url?.startsWith('https://www.linkedin.com/');
+  if (!tab || !onLinkedIn) {
+    const hint = $('bulk-hint');
+    hint.hidden = false;
+    hint.textContent = 'Open a LinkedIn tab first — the queue drives your current active tab.';
+    return;
+  }
+
+  const queue = LITVisitQueueSimple.createQueue(urls, Date.now(), Math.floor(Math.random() * 1e9));
+  await dbSet({ visitQueueSimple: queue });
+  // Navigate the LinkedIn tab to the first URL — profile.js takes over
+  // from there. Popup can be closed after this point.
+  chrome.tabs.update(tab.id, { url: queue.urls[0] });
+  await renderBulkPanel();
+}
+
+async function cancelBulkQueue() {
+  const { visitQueueSimple: state } = await dbGet('visitQueueSimple');
+  if (!state) return;
+  await dbSet({ visitQueueSimple: LITVisitQueueSimple.cancelQueue(state) });
+  // The queue driver in profile.js polls the cancel flag every ~1s and
+  // clears the storage entry on next check. Popup's DB_CHANGED listener
+  // will re-render when that happens.
+}
+
+async function renderBulkPanel() {
+  const idle    = $('bulk-idle');
+  const running = $('bulk-running');
+  const list    = $('bulk-list');
+  const title   = $('bulk-progress-title');
+  const sub     = $('bulk-progress-sub');
+  const { visitQueueSimple: state } = await dbGet('visitQueueSimple');
+  const active = LITVisitQueueSimple.isActive(state);
+  idle.hidden = active;
+  running.hidden = !active;
+  if (!active) return;
+  const total = state.urls.length;
+  const done  = state.capturedCount;
+  const idx   = state.currentIndex;
+  title.textContent = `${idx + 1} of ${total} · ${done} captured`;
+  const started = new Date(state.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  sub.textContent = `Started ${started} · currently on ${state.urls[idx].replace(/^https?:\/\/(?:www\.)?linkedin\.com/, '')}`;
+  list.innerHTML = '';
+  for (let i = 0; i < state.urls.length; i++) {
+    const status = i < idx ? 'done' : i === idx ? 'running' : 'queued';
+    const icon   = status === 'done' ? '✓' : status === 'running' ? '●' : '○';
+    const li = el('li', { className: `bulk-list-item bulk-${status}` }, [
+      el('span', { className: 'bulk-list-icon' }, [icon]),
+      el('span', { className: 'bulk-list-url' }, [state.urls[i].replace(/^https?:\/\/(?:www\.)?linkedin\.com/, '')]),
+    ]);
+    list.append(li);
+  }
+}
+
+$('bulk-textarea').addEventListener('input', renderBulkPreview);
+$('bulk-clear-btn').addEventListener('click', () => {
+  $('bulk-textarea').value = '';
+  renderBulkPreview();
+});
+$('bulk-start-btn').addEventListener('click', startBulkQueue);
+$('bulk-cancel-btn').addEventListener('click', cancelBulkQueue);
+
+// Initial render (queue may already be running from a previous popup session
+// — the driver in profile.js keeps going even when the popup is closed).
+// Live updates come via the DB_CHANGED broadcast above.
+renderBulkPanel();

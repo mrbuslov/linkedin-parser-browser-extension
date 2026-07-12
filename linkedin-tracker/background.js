@@ -210,16 +210,36 @@ async function runStorageMigration() {
   }
 }
 
+// One-shot URN-dedup migration. Idempotent — see popup.js:migrateUrnDedup
+// for the full rationale. Runs on SW startup too so the migration lands
+// even when the user never opens the popup after upgrade (background
+// scans, then popup opens later, would otherwise see stale duplicates).
+async function runUrnDedupMigration() {
+  try {
+    const { contacts = {} } = await dbGet(['contacts']);
+    const result = LITSchema.runUrnDedupMigration(contacts);
+    if (result.backfilled === 0 && result.deduped === 0) return;
+    await dbSet({ contacts });
+    notifyChange(['contacts']);
+    console.log(`[LI Tracker] URN-dedup migration: backfilled ${result.backfilled} urnIds, merged ${result.deduped} duplicate records.`);
+  } catch (err) {
+    console.error('[LI Tracker] URN-dedup migration failed:', err);
+  }
+}
+
 chrome.runtime.onInstalled.addListener(async () => {
   await runStorageMigration();
+  await runUrnDedupMigration();
   refreshBadge();
 });
 chrome.runtime.onStartup.addListener(async () => {
   await runStorageMigration();
+  await runUrnDedupMigration();
   refreshBadge();
 });
 // Also run on service-worker cold start (e.g., first message wakes it up).
 runStorageMigration();
+runUrnDedupMigration();
 
 // Bulk Visit Queue SW glue removed for 1.3.0. To restore in 1.3.1:
 //   git show 89090b5:linkedin-tracker/background.js

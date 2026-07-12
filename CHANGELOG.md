@@ -9,6 +9,119 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
 
+## [1.3.3] — 2026-07-12
+
+Cross-URL dedup by LinkedIn member URN. Motivated by a real 2026-07-12
+report: user's export showed Joe Dougherty stored as TWO separate
+records — `status='accepted'` at `/in/joedougherty/` (correct) AND
+`status='visited'` at `/in/ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI/` (a
+LinkedIn URN-format alternate path served for the same profile). Pre-1.3.3
+cross-URL dedup only matched by `memberId`, which was empty for both
+records because RSC-payload extraction missed on those visits — so the
+duplicate went unresolved. Same pattern hit 3 profiles in the user's
+export (Joe Dougherty, Wendy Pease, Alexander Voronkov).
+
+### Added
+- **`urnId` field on every contact record.** LinkedIn's encrypted member
+  URN (the `ACoA…` blob). Extracted at write time from two sources:
+  (a) the profileUrl itself, if it's URN-format (`/in/ACoA…/`),
+  (b) the record's `mutualsUrl` `connectionOf=[URN]` param (the
+  mutuals-page URL is anchored on the record's own URN, so it reveals
+  the URN even for vanity-URL records). Sticky — once set, never
+  cleared by a subsequent visit that doesn't ship the URN.
+- **`LITUrl.extractUrnFromProfileUrl(href)`** — pure helper, unit-tested.
+  Handles overlay sub-paths (`/in/ACoA…/overlay/contact-info/`),
+  returns null for vanity URLs, mailto:, malformed input, and vanity
+  slugs that happen to contain "ACoA" mid-string (regex anchored to
+  segment start).
+- **`findDuplicateRecord` extended to match by `urnId`** alongside
+  `memberId` — either identifier is enough to dedup. Same-person
+  ambiguity forbidden (name-based matching still banned).
+- **One-shot URN-dedup migration (`runUrnDedupMigration`)** — walks the
+  contacts dict, backfills urnId from URL/mutualsUrl where derivable,
+  then merges any URL-twins that share urnId. Vanity URL wins as the
+  merged record's canonical URL (LinkedIn's canonical form is vanity,
+  the URN URL is just an alternate). User-authored fields (notes, tags,
+  favorite, marked, contact info) preserved via the existing
+  mergeRecords path. Runs at popup load AND at background SW startup,
+  belt-and-suspenders, so the migration lands even for users who don't
+  open the popup after upgrade. Idempotent — second run on clean data
+  is a no-op.
+
+### Fixed
+- **Duplicate profile records when reached via /in/vanity/ AND
+  /in/ACoA…/**. Both are valid LinkedIn URLs pointing at the same
+  person; before 1.3.3, our normalizeProfileUrl kept them distinct
+  (correctly — they ARE different URLs from LinkedIn's perspective)
+  but cross-URL dedup couldn't connect them without a shared memberId.
+  Now `urnId` provides the shared anchor: URN URL trivially yields
+  urnId from its path; vanity URL yields urnId from its own
+  mutualsUrl's `connectedOf=` param.
+- **Existing 3 duplicates in the 2026-07-12 report** clean up
+  automatically on upgrade — no manual Delete required. Vanity twin
+  wins in every case (Joe's `/joedougherty/` accepted record survives,
+  URN twin is merged in and dropped).
+
+### Preserved (documented, unchanged behavior)
+- The `SANITY_SHRINK_RATIO = 0.5` partial-scan guard in `diff-sent.js`
+  is intentionally kept — see 1.3.2 CHANGELOG.
+- normalizeProfileUrl unchanged — we don't try to "normalize" URN URLs
+  to vanity URLs at URL parse time (we don't have a URN→vanity map,
+  and LinkedIn's own canonical redirect is server-side). Cross-URL
+  dedup by urnId does the work at storage time instead.
+
+### Added — simplified Bulk Visit Queue (🚶 tab)
+
+Second half of 1.3.3. Motivated by user request: paste a list of
+LinkedIn profile URLs, extension walks through them capturing
+name/headline/position/mutuals/recent-activity into local storage,
+humanized behaviour (real scroll events, log-normal reading dwell,
+exponential between-visit pauses) so it doesn't look like a bot burst.
+
+**Key design constraint — no new Chrome permissions.** The shelved 1.2.x
+Bulk Visit Queue needed `tabs` / `alarms` / `idle` / `webNavigation`
+and got flagged by the Chrome Web Store review process. The
+replacement uses only the existing `https://www.linkedin.com/*` host
+permission by moving the driver INTO `profile.js` (which already runs
+on every profile page). Popup writes queue state to IDB and navigates
+the user's current LinkedIn tab; profile.js on each page does the
+humanized dwell then self-navigates via `window.location.href` to the
+next URL. No service-worker driver, no alarms, no tab lifecycle
+tracking.
+
+- **`core/visit-queue-simple.js`** — pure state machine (parseUrlList,
+  createQueue, advance, cancelQueue, isExpectedUrl, logNormalDwellMs,
+  exponentialPauseMs). 38 unit tests. Wrapped in IIFE per the shared
+  script-scope discipline. Added to /in/* content-script bundle AND
+  loaded in popup.html for URL preview parsing.
+- **`core/scan-scroll.js`** added to /in/* bundle** — needed for the
+  humanized scroll during dwell. Its `humanizedScanScroll` helper (4-10
+  chunks, size classes big/steady/tiny, wobble on ~15% of steps, etc.)
+  is reused as-is; no changes to the module itself.
+- **`profile.js:runQueueTickIfApplicable`** — new async function runs
+  at the tail of every `tick()`. Guards: `queueRunning` per-page,
+  `queueRunUrl` prevents same-URL re-trigger. Reads queue state from
+  IDB, matches current URL against expected, humanized-scrolls, dwells
+  (log-normal, median 45s, range 15s-4min), pauses (exponential,
+  mean 60s, range 20s-3min), then either clears the queue on done or
+  self-navigates via `window.location.href`. Cancellable at every 1s
+  check.
+- **Popup UI — `#bulk-panel`** with a textarea, live preview
+  ("N valid · M rejected · K duplicates"), Start button, and a running
+  state with per-URL status list (queued/running/done). Details block
+  explains what runs, what's captured, what's NOT done, and the
+  circuit-breaker behaviour when the user navigates away mid-queue.
+  New tab: 🚶.
+
+### Preserved from the original Bulk Visit Queue (still commented)
+Everything from 1.2.x's Bulk Visit Queue is still in the repo under
+`linkedin-tracker/core/humanizer.js`, `core/visit-queue.js`,
+`core/visit-runner.js`, `visit-content.js`, `visit-feed.js` — plus
+their 100+ tests. The original `<section id="visits-panel">` and
+consent modal live inside a `<template>` in popup.html. Not loaded
+into any bundle. Restore-path documented in the surrounding comment.
+
+
 ## [1.3.2] — 2026-07-08
 
 Pending-cleanup gap fix + a small user-visible tool to reconcile stale

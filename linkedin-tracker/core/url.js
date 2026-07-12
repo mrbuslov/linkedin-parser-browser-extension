@@ -61,6 +61,34 @@ function decodeLinkedInRedirect(href) {
   return target || href;
 }
 
+// Extract a LinkedIn member URN (encoded "ACoA..." form) from a profile
+// URL of the shape `/in/ACoAxxx/`. LinkedIn serves the same profile from
+// two URL formats — the human-readable vanity `/in/joedougherty/` AND the
+// URN-encoded `/in/ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI/`. Same person,
+// different keys → cross-URL dedup needs a shared anchor. The URN is that
+// anchor: extracted from URL when the URL is URN-format, from mutualsUrl
+// (via extractURNFromConnectionOf) when it's vanity-format.
+//
+// Returns the URN string (without prefix) when the path segment matches
+// the URN shape (starts with "ACoA", followed by [A-Za-z0-9_-]). Returns
+// null for vanity URLs, mailto:, malformed input.
+function extractUrnFromProfileUrl(href) {
+  if (!href || typeof href !== 'string') return null;
+  if (href.toLowerCase().startsWith('mailto:')) return null;
+  let u;
+  try {
+    u = new URL(href, 'https://www.linkedin.com');
+  } catch {
+    return null;
+  }
+  // Anchor to the FIRST /in/ segment — overlay sub-paths
+  // (`/in/ACoA.../overlay/contact-info/`) resolve to the same URN as the
+  // bare URL. The regex requires the segment to start with "ACoA" so
+  // vanity slugs that happen to contain "ACoA" mid-string are rejected.
+  const m = u.pathname.match(/^\/in\/(ACoA[A-Za-z0-9_-]+)(?:\/|$)/);
+  return m ? m[1] : null;
+}
+
 // Extract a LinkedIn member URN (encoded "ACoA..." form) from a URL's
 // `connectionOf=` query parameter. Used to identify whose mutuals page the
 // user is currently viewing on `/search/results/people/?...connectionOf=...`.
@@ -84,6 +112,16 @@ function isPeopleSearchPath(pathname) {
 // Dual-mode export: Node/Vitest gets a CJS module, classic-script content scripts
 // see `LITUrl` on globalThis (set unconditionally so order of script loading in
 // manifest doesn't matter).
-const LITUrl = { normalizeProfileUrl, isEmailKey, extractEmail, decodeLinkedInRedirect, isProfilePath, extractURNFromConnectionOf, isPeopleSearchPath, EMAIL_RE };
+const LITUrl = {
+  normalizeProfileUrl,
+  isEmailKey,
+  extractEmail,
+  decodeLinkedInRedirect,
+  isProfilePath,
+  extractURNFromConnectionOf,
+  extractUrnFromProfileUrl,
+  isPeopleSearchPath,
+  EMAIL_RE,
+};
 if (typeof globalThis !== 'undefined') globalThis.LITUrl = LITUrl;
 if (typeof module !== 'undefined' && module.exports) module.exports = LITUrl;

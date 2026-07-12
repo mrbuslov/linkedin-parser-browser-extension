@@ -449,6 +449,84 @@ describe('applyProfileVisit — cross-URL dedup (memberId ONLY, no name fallback
     expect(c.memberId).toBe('M-42');
     expect(c.vanityName).toBe('jane');
   });
+
+  // urnId dedup — added 1.3.3. LinkedIn serves the same profile from BOTH
+  // /in/<vanity>/ and /in/<urn>/ URLs. Before 1.3.3 we only dedup'd by
+  // memberId, but memberId is often absent (RSC misses) — so the same
+  // person could end up as two records. Real bug 2026-07-12: Joe Dougherty.
+  it('urnId dedup: merges records that share urnId even without memberId', () => {
+    const stored = storedV2({
+      'https://www.linkedin.com/in/ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI/': {
+        profileUrl: 'https://www.linkedin.com/in/ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI/',
+        name: 'Joe Dougherty',
+        urnId: 'ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI',
+        status: STATUS.VISITED,
+        firstSeenAt: NOW - 3 * DAY,
+      },
+    });
+    const r = applyProfileVisit(stored, info({
+      profileUrl: 'https://www.linkedin.com/in/joedougherty/',
+      name: 'Joe Dougherty',
+      urnId: 'ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI',
+    }), 'connected', NOW);
+    // Old URN record was merged into the new vanity URL.
+    expect(r.contacts['https://www.linkedin.com/in/ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI/']).toBeUndefined();
+    const cur = r.contacts['https://www.linkedin.com/in/joedougherty/'];
+    expect(cur).toBeDefined();
+    expect(cur.status).toBe(STATUS.ACCEPTED);
+    expect(cur.urnId).toBe('ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI');
+    // Earliest firstSeenAt wins across the merge.
+    expect(cur.firstSeenAt).toBe(NOW - 3 * DAY);
+  });
+
+  it('urnId dedup does NOT fire when urnIds differ (two different people)', () => {
+    const stored = storedV2({
+      'https://www.linkedin.com/in/alice/': {
+        profileUrl: 'https://www.linkedin.com/in/alice/',
+        name: 'Alice',
+        urnId: 'ACoAAAAAlice',
+        status: STATUS.ACCEPTED,
+        firstSeenAt: NOW - 30 * DAY,
+      },
+    });
+    const r = applyProfileVisit(stored, info({
+      profileUrl: 'https://www.linkedin.com/in/bob/',
+      name: 'Bob',
+      urnId: 'ACoAAAAABob',
+    }), 'connected', NOW);
+    expect(r.contacts['https://www.linkedin.com/in/alice/']).toBeDefined();
+    expect(r.contacts['https://www.linkedin.com/in/bob/']).toBeDefined();
+  });
+
+  it('urnId beats memberId when both are present — either match dedups', () => {
+    // Defensive: if urnId matches but memberId differs (LinkedIn quirk
+    // where one record has old memberId and new has fresh), we still
+    // consider it the same person. urnId is a stronger identity anchor.
+    const stored = storedV2({
+      'https://www.linkedin.com/in/old/': {
+        profileUrl: 'https://www.linkedin.com/in/old/',
+        name: 'Alice',
+        memberId: 'M-OLD',
+        urnId: 'ACoAAAAAlice',
+        status: STATUS.VISITED,
+        firstSeenAt: NOW - 30 * DAY,
+      },
+    });
+    const r = applyProfileVisit(stored, info({
+      profileUrl: 'https://www.linkedin.com/in/new/',
+      name: 'Alice',
+      memberId: 'M-NEW',
+      urnId: 'ACoAAAAAlice',
+    }), 'connected', NOW);
+    expect(r.contacts['https://www.linkedin.com/in/old/']).toBeUndefined();
+    expect(r.contacts['https://www.linkedin.com/in/new/']).toBeDefined();
+  });
+
+  it('urnId persists on the unified record when info carries it', () => {
+    const r = applyProfileVisit(storedV2(), info({ urnId: 'ACoAAAAxyz' }), 'connected', NOW);
+    const c = r.contacts[URL_JANE];
+    expect(c.urnId).toBe('ACoAAAAxyz');
+  });
 });
 
 describe('applyContactInfo — modal capture semantics', () => {

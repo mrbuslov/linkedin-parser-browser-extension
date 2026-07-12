@@ -163,8 +163,20 @@ function extractProfileInfo() {
   // would miss every post. The parser bounds itself by finding <h2>Activity</h2>.
   const activity = LITActivityParser.extractActivity(root, name, Date.now());
 
+  // urnId — LinkedIn's encrypted member URN. Preferred source is the URL
+  // itself when the profile was reached via /in/<urn>/. Fallback source
+  // is mutualsUrl's `connectionOf=[URN]` param (mutuals-page URL is
+  // anchored on THIS record's URN, so it reveals it even for vanity URLs).
+  // Populated at write time so cross-URL dedup by urnId works on future
+  // visits — real-world regression 2026-07-12 where Joe Dougherty ended
+  // up as two records (accepted at /joedougherty/, visited at /ACoA.../).
+  const profileUrlNorm = LITUrl.normalizeProfileUrl(window.location.href);
+  const urnFromUrl = LITUrl.extractUrnFromProfileUrl(profileUrlNorm);
+  const urnFromMutuals = LITUrl.extractURNFromConnectionOf(mutuals.mutualsUrl || '');
+  const urnId = urnFromUrl || urnFromMutuals || undefined;
+
   return {
-    profileUrl: LITUrl.normalizeProfileUrl(window.location.href),
+    profileUrl: profileUrlNorm,
     name,
     headline,
     avatar,
@@ -173,6 +185,7 @@ function extractProfileInfo() {
     country,
     memberId,
     vanityName,
+    urnId,
     mutualsUrl: mutuals.mutualsUrl || '',
     mutualsText: mutuals.mutualsText || '',
     mutualsCount: mutualsCount,
@@ -456,12 +469,101 @@ async function tick() {
   await updateCRMNudge(info.profileUrl, status);
   const contactsKey = contactsFingerprint(LITContactsModal.parseContactsModal(document));
   const activityKey = activityFingerprint(info);
-  if (lastDetected.url === info.profileUrl
-      && lastDetected.status === status
-      && lastDetected.contactsKey === contactsKey
-      && lastDetected.activityKey === activityKey) return;
-  lastDetected = { url: info.profileUrl, status, contactsKey, activityKey };
-  await persistVisit();
+  const dedupSkip = lastDetected.url === info.profileUrl
+    && lastDetected.status === status
+    && lastDetected.contactsKey === contactsKey
+    && lastDetected.activityKey === activityKey;
+  if (!dedupSkip) {
+    lastDetected = { url: info.profileUrl, status, contactsKey, activityKey };
+    await persistVisit();
+  }
+
+  // Bulk-visit queue driver (1.3.3). If the popup started a queue and
+  // THIS URL is the expected target, do a humanized dwell + scroll and
+  // self-navigate to the next URL. Guarded so we don't re-fire on every
+  // 250ms setInterval tick. Uses persistVisit above to capture the
+  // profile BEFORE the queue advances.
+  runQueueTickIfApplicable(info.profileUrl);
+}
+
+// Module-scope guards for the queue driver — reset on page unload
+// (fresh profile.js instance per page load).
+let queueRunning = false;
+let queueRunUrl  = null;
+
+async function runQueueTickIfApplicable(currentProfileUrl) {
+  if (queueRunning) return;
+  if (queueRunUrl === currentProfileUrl) return; // already ran on this URL
+
+  const { visitQueueSimple: state } = await dbGet('visitQueueSimple');
+  if (!LITVisitQueueSimple.isActive(state)) return;
+  if (!LITVisitQueueSimple.isExpectedUrl(state, currentProfileUrl)) return;
+
+  queueRunning = true;
+  queueRunUrl  = currentProfileUrl;
+
+  try {
+    console.log(`[LI Tracker/queue] ${state.currentIndex + 1}/${state.urls.length} — reading ${currentProfileUrl}`);
+
+    // Humanized scroll — real users don't jump to the bottom. This also
+    // triggers LinkedIn's lazy-load of the Activity card so the next
+    // setInterval tick captures fresh posts before we advance.
+    // finalHardScroll:false — we're NOT triggering a "load more" fence,
+    // we're MIMICKING a reader; the terminal jump reads as robotic.
+    await LITScanScroll.humanizedScanScroll(null, {
+      finalHardScroll: false,
+      isCancelled: async () => {
+        const { visitQueueSimple: s } = await dbGet('visitQueueSimple');
+        return !s || s.cancelRequested;
+      },
+    });
+
+    // Log-normal reading dwell + exponential between-visit pause. Real
+    // reading behaviour: most people scan a profile in ~30-60s, some get
+    // stuck reading a good post for minutes. Between visits, memoryless
+    // gap ("phone rang / stopped for tea / clicked something else").
+    const rand = Math.random; // stateless — determinism is via seededPRNG at test time
+    const dwellMs = LITVisitQueueSimple.logNormalDwellMs(rand, 45_000, 0.5, 15_000, 4 * 60_000);
+    const pauseMs = LITVisitQueueSimple.exponentialPauseMs(rand, 60_000, 20_000, 3 * 60_000);
+    const totalMs = dwellMs + pauseMs;
+    console.log(`[LI Tracker/queue] dwell ${Math.round(dwellMs / 1000)}s + pause ${Math.round(pauseMs / 1000)}s = ${Math.round(totalMs / 1000)}s`);
+
+    // Cancellable sleep. Checks the queue state every second so a
+    // popup-initiated cancel takes effect within ~1s of the click.
+    const CHECK_INTERVAL_MS = 1000;
+    for (let elapsed = 0; elapsed < totalMs; elapsed += CHECK_INTERVAL_MS) {
+      await new Promise((r) => setTimeout(r, Math.min(CHECK_INTERVAL_MS, totalMs - elapsed)));
+      const { visitQueueSimple: s } = await dbGet('visitQueueSimple');
+      if (!s || s.cancelRequested) {
+        console.log('[LI Tracker/queue] cancelled during wait');
+        if (s && s.cancelRequested) await dbSet({ visitQueueSimple: null });
+        return;
+      }
+    }
+
+    // Re-read state (someone else might have written meanwhile) and
+    // advance to the next URL. If we've hit the end, clear the queue.
+    const { visitQueueSimple: latest } = await dbGet('visitQueueSimple');
+    if (!LITVisitQueueSimple.isActive(latest)) {
+      if (latest && latest.cancelRequested) await dbSet({ visitQueueSimple: null });
+      return;
+    }
+    const result = LITVisitQueueSimple.advance(latest, Date.now());
+    if (result.done) {
+      console.log('[LI Tracker/queue] queue complete');
+      await dbSet({ visitQueueSimple: null });
+      return;
+    }
+    await dbSet({ visitQueueSimple: result.state });
+    console.log(`[LI Tracker/queue] → ${result.nextUrl}`);
+    window.location.href = result.nextUrl;
+  } catch (err) {
+    console.error('[LI Tracker/queue] driver crashed:', err);
+    // Clear queue on crash so the user isn't stuck in a broken state.
+    await dbSet({ visitQueueSimple: null });
+  } finally {
+    queueRunning = false;
+  }
 }
 
 setInterval(tick, POLL_INTERVAL_MS);

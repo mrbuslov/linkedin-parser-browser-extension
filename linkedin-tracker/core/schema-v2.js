@@ -169,6 +169,113 @@ function dedupeByMemberId(dict) {
   for (const url of drop) delete dict[url];
 }
 
+// Inline URN extractors used by backfillUrnIds. Kept here (duplicated from
+// core/url.js) so schema-v2.js has NO load-order dependency on url.js —
+// this file loads FIRST in every content-script bundle. Regex identical to
+// the one exported by url.js; if LinkedIn ever changes URN format, both
+// places must update in sync (tests will fail loudly if drift happens).
+const URN_PATH_RE = /^\/in\/(ACoA[A-Za-z0-9_-]+)(?:\/|$)/;
+const URN_CONNECTION_OF_RE = /(ACoA[A-Za-z0-9_-]+)/;
+function _extractUrnFromUrl(href) {
+  if (!href || typeof href !== 'string') return null;
+  try {
+    const u = new URL(href, 'https://www.linkedin.com');
+    const m = u.pathname.match(URN_PATH_RE);
+    return m ? m[1] : null;
+  } catch { return null; }
+}
+function _extractUrnFromMutualsUrl(href) {
+  if (!href || typeof href !== 'string') return null;
+  try {
+    const u = new URL(href, 'https://www.linkedin.com');
+    const param = u.searchParams.get('connectionOf');
+    if (!param) return null;
+    const m = param.match(URN_CONNECTION_OF_RE);
+    return m ? m[1] : null;
+  } catch { return null; }
+}
+
+// Walk `dict` and populate `record.urnId` for any record where it's not
+// already set. Two sources:
+//   1) The profileUrl itself, if it's URN-format (/in/ACoA.../).
+//   2) The record's mutualsUrl `connectionOf=[URN]` param — the mutuals-
+//      page URL is anchored on the RECORD's own URN, so it reveals the
+//      URN even for vanity-URL records.
+// Idempotent — records that already have urnId are skipped.
+function backfillUrnIds(dict) {
+  let touched = 0;
+  for (const [url, rec] of Object.entries(dict)) {
+    if (!rec || rec.urnId) continue;
+    const fromUrl = _extractUrnFromUrl(url);
+    if (fromUrl) { rec.urnId = fromUrl; touched++; continue; }
+    const fromMutuals = _extractUrnFromMutualsUrl(rec.mutualsUrl || '');
+    if (fromMutuals) { rec.urnId = fromMutuals; touched++; }
+  }
+  return touched;
+}
+
+// Cross-URL dedup by urnId. Same shape as dedupeByMemberId but with a
+// vanity-vs-URN winner preference: LinkedIn's canonical URL is the vanity
+// slug (`/in/joedougherty/`), not the URN URL (`/in/ACoAA.../`). If a
+// vanity twin exists we always land the merged record at that URL.
+function dedupeByUrnId(dict) {
+  const isUrnFormatUrl = (u) => /^https?:\/\/[^/]+\/in\/ACoA/i.test(u || '');
+  const byUrn = new Map();
+  const drop = [];
+  for (const [url, rec] of Object.entries(dict)) {
+    if (!rec || !rec.urnId) continue;
+    const prev = byUrn.get(rec.urnId);
+    if (!prev) { byUrn.set(rec.urnId, url); continue; }
+
+    const prevRec = dict[prev];
+    // Winner selection:
+    //   1) Vanity URL beats URN URL (LinkedIn's canonical form).
+    //   2) Then status priority (accepted > pending > declined > else).
+    //   3) Then visitedAt recency.
+    const curIsUrn = isUrnFormatUrl(url);
+    const prevIsUrn = isUrnFormatUrl(prev);
+    let winnerUrl;
+    if (curIsUrn !== prevIsUrn) {
+      winnerUrl = curIsUrn ? prev : url;
+    } else {
+      const rank = (r) => (
+        r.status === STATUS.ACCEPTED ? 3
+        : r.status === STATUS.PENDING ? 2
+        : r.status === STATUS.DECLINED ? 1
+        : 0
+      );
+      const rCur = rank(rec);
+      const rPrev = rank(prevRec);
+      if (rCur !== rPrev) winnerUrl = rCur > rPrev ? url : prev;
+      else winnerUrl = (rec.visitedAt || 0) > (prevRec.visitedAt || 0) ? url : prev;
+    }
+    const loserUrl = winnerUrl === url ? prev : url;
+    const winnerStatus = dict[winnerUrl].status;
+    dict[winnerUrl] = mergeRecords(dict[winnerUrl], dict[loserUrl], '_dedup_by_urnId');
+    dict[winnerUrl].status = winnerStatus;
+    if (winnerStatus !== STATUS.DECLINED) delete dict[winnerUrl].declinedAt;
+    dict[winnerUrl]._priorUrls = dict[winnerUrl]._priorUrls || [];
+    if (!dict[winnerUrl]._priorUrls.includes(loserUrl)) {
+      dict[winnerUrl]._priorUrls.push(loserUrl);
+    }
+    drop.push(loserUrl);
+    byUrn.set(rec.urnId, winnerUrl);
+  }
+  for (const url of drop) delete dict[url];
+  return drop.length;
+}
+
+// One-shot migration entry point: backfill urnId for every record that
+// can derive one, then run cross-URL dedup by urnId. Idempotent: subsequent
+// runs on already-clean data are no-ops (backfill skips records with urnId
+// set; dedup finds no duplicates). Returns `{ backfilled, deduped }` so
+// callers can log real work vs. no-op quiet runs.
+function runUrnDedupMigration(dict) {
+  const backfilled = backfillUrnIds(dict);
+  const deduped = dedupeByUrnId(dict);
+  return { backfilled, deduped };
+}
+
 // Build the unified `contacts` v2 dict from v1's three-store shape.
 // Pure function — no IDB, no side effects. Returns the new dict.
 function buildUnifiedContacts(v1) {
@@ -287,6 +394,9 @@ const LITSchema = {
   normalize,
   mergeRecords,
   dedupeByMemberId,
+  backfillUrnIds,
+  dedupeByUrnId,
+  runUrnDedupMigration,
 };
 if (typeof globalThis !== 'undefined') globalThis.LITSchema = LITSchema;
 if (typeof module !== 'undefined' && module.exports) module.exports = LITSchema;
