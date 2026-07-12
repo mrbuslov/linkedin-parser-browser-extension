@@ -62,6 +62,42 @@ export (Joe Dougherty, Wendy Pease, Alexander Voronkov).
   wins in every case (Joe's `/joedougherty/` accepted record survives,
   URN twin is merged in and dropped).
 
+### Fixed — mergeRecords silently mutated winner's identity (1.3.3 fix)
+Real-user report 2026-07-12 hours after the initial 1.3.3 URN-dedup
+shipped: Joe Dougherty was correctly moved into Accepted by the URN
+migration, but clicking Mark on his row didn't move him to the Marked
+tab. Root cause: `schema-v2.js:mergeRecords` iterates over incoming
+(loser) record fields and unconditionally overwrites base (winner)
+fields — including `profileUrl` and boolean user flags like `marked`
+and `favorite`. Result: winner Joe under dict key `/in/joedougherty/`
+had `record.profileUrl` set to the LOSER's `/in/ACoAA.../` URL, and
+`marked` demoted from `true` to `false`. Popup mutations (Mark,
+Delete, Star, minus) all key by `item.profileUrl` — they silently
+returned early on `if (!contacts[profileUrl]) return;` because the
+URL they looked up didn't exist as a dict key.
+
+Fix — three parts:
+- **`mergeRecords`** — `profileUrl` is now in `NEVER_COPIED_FROM_INCOMING`
+  (always keeps base's value). Boolean user flags `marked` and
+  `favorite` are `STICKY_TRUE_USER_FLAGS` — incoming `false` never
+  downgrades a base `true` (the reverse direction still works: an
+  incoming user gesture correctly promotes a base without one).
+- **`dedupeByUrnId` and `dedupeByMemberId`** — explicitly assert
+  `dict[winnerUrl].profileUrl = winnerUrl` after every merge.
+  Belt-and-suspenders to the mergeRecords guard; any future refactor
+  that re-introduces the drift will surface immediately.
+- **`repairProfileUrlMismatch`** — one-shot repair that walks every
+  contact record and fixes `record.profileUrl = dict_key` when they
+  disagree. Ran at popup load AND SW startup (same paths as
+  runUrnDedupMigration). Cleans up records already corrupted on
+  disk by the initial buggy 1.3.3 migration.
+
+Note: the `marked=true` state that was lost during the initial buggy
+merge (Joe's user-mark from before 1.3.3) is NOT recoverable — the
+pre-merge state was overwritten in IDB and there's no snapshot to
+restore from. Users need to re-Mark such records once; from this fix
+forward, the guard prevents any future recurrence.
+
 ### Preserved (documented, unchanged behavior)
 - The `SANITY_SHRINK_RATIO = 0.5` partial-scan guard in `diff-sent.js`
   is intentionally kept — see 1.3.2 CHANGELOG.

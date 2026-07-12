@@ -83,10 +83,30 @@ function isV2(stored) {
 //      that's set — we want the true "when we first saw them" not the
 //      most-recent-store's copy.
 //   3) All other fields: take fresh non-empty over stored empty.
+// Fields that are NEVER copied from `incoming`. profileUrl is the
+// dict KEY the caller stores under — if we let a loser record overwrite
+// it, the record.profileUrl mismatches its own dict key, and any code
+// that reads item.profileUrl (Mark, Delete, Star, minus buttons in the
+// popup) fails silently because `contacts[item.profileUrl]` is
+// undefined. Real 1.3.3 bug 2026-07-12: URN-dedup migration overwrote
+// vanity winner's profileUrl with URN loser's URL; Joe Dougherty's
+// Mark button stopped working. `mergeIntoTarget` in profile-state.js
+// already handles this via an explicit `merged.profileUrl = targetUrl`
+// after the spread — the guard here is the equivalent safety for the
+// schema-v2 merge path.
+const NEVER_COPIED_FROM_INCOMING = new Set(['profileUrl']);
+
+// User-authored boolean flags. When base already has `true`, incoming's
+// `false` must NOT downgrade — the user's positive gesture (marked /
+// favorited) is meaningful and shouldn't be lost to a merge. Same real
+// 1.3.3 bug — vanity Joe was marked, URN Joe wasn't, merge stomped it.
+const STICKY_TRUE_USER_FLAGS = new Set(['marked', 'favorite']);
+
 function mergeRecords(base, incoming, incomingSource) {
   const out = { ...base };
   for (const [k, v] of Object.entries(incoming)) {
     if (DROPPED_FIELDS.includes(k)) continue;
+    if (NEVER_COPIED_FROM_INCOMING.has(k)) continue;
     if (k === 'firstSeenAt' || k === 'acceptedAt') {
       // Earliest wins
       if (v && (!out[k] || v < out[k])) out[k] = v;
@@ -99,6 +119,8 @@ function mergeRecords(base, incoming, incomingSource) {
     if (Array.isArray(v) && v.length === 0 && Array.isArray(out[k]) && out[k].length > 0) {
       continue;
     }
+    // User flags: don't downgrade base's TRUE to incoming's FALSE.
+    if (STICKY_TRUE_USER_FLAGS.has(k) && out[k] === true && v === false) continue;
     out[k] = v;
   }
   if (incomingSource) out._migratedFrom = out._migratedFrom || [];
@@ -155,6 +177,10 @@ function dedupeByMemberId(dict) {
     // any other string and lets the loser's value override.
     const winnerStatus = dict[winnerUrl].status;
     dict[winnerUrl] = mergeRecords(dict[winnerUrl], dict[loserUrl], '_dedup_by_memberId');
+    // Defense-in-depth: mergeRecords already refuses to copy profileUrl,
+    // but we assert here too so any future regression fails loudly. Same
+    // reason as the analogous line in dedupeByUrnId below.
+    dict[winnerUrl].profileUrl = winnerUrl;
     dict[winnerUrl].status = winnerStatus;
     if (winnerStatus !== STATUS.DECLINED) delete dict[winnerUrl].declinedAt;
     // Preserve the loser URL as an alias-history marker so the popup
@@ -252,6 +278,12 @@ function dedupeByUrnId(dict) {
     const loserUrl = winnerUrl === url ? prev : url;
     const winnerStatus = dict[winnerUrl].status;
     dict[winnerUrl] = mergeRecords(dict[winnerUrl], dict[loserUrl], '_dedup_by_urnId');
+    // Force record.profileUrl to match the DICT KEY we're storing under.
+    // mergeRecords now refuses to copy profileUrl at all — this is the
+    // belt to that suspenders. Guarantees no future refactor to
+    // mergeRecords can silently re-introduce the 1.3.3 profileUrl-drift
+    // bug that broke Joe Dougherty's Mark button.
+    dict[winnerUrl].profileUrl = winnerUrl;
     dict[winnerUrl].status = winnerStatus;
     if (winnerStatus !== STATUS.DECLINED) delete dict[winnerUrl].declinedAt;
     dict[winnerUrl]._priorUrls = dict[winnerUrl]._priorUrls || [];
@@ -265,15 +297,36 @@ function dedupeByUrnId(dict) {
   return drop.length;
 }
 
+// Repair migration for the 1.3.3 profileUrl-drift bug. Walks contacts
+// and for every entry where `record.profileUrl !== dict_key`, corrects
+// `record.profileUrl = dict_key`. Idempotent. Purely defensive — every
+// caller ALSO writes a good state now, but the fix is meaningless for
+// users who already ran the buggy migration and have the drift baked
+// into their storage. Regression-guards the popup mutations (Mark,
+// Delete, Star, minus) that all key by item.profileUrl.
+function repairProfileUrlMismatch(dict) {
+  let touched = 0;
+  for (const [url, rec] of Object.entries(dict)) {
+    if (!rec) continue;
+    if (rec.profileUrl !== url) {
+      rec.profileUrl = url;
+      touched++;
+    }
+  }
+  return touched;
+}
+
 // One-shot migration entry point: backfill urnId for every record that
-// can derive one, then run cross-URL dedup by urnId. Idempotent: subsequent
-// runs on already-clean data are no-ops (backfill skips records with urnId
-// set; dedup finds no duplicates). Returns `{ backfilled, deduped }` so
-// callers can log real work vs. no-op quiet runs.
+// can derive one, then run cross-URL dedup by urnId, then repair any
+// profileUrl-drift left over from an earlier buggy migration run.
+// Idempotent: subsequent runs on already-clean data are no-ops.
+// Returns `{ backfilled, deduped, repaired }` so callers can log real
+// work vs. quiet runs.
 function runUrnDedupMigration(dict) {
   const backfilled = backfillUrnIds(dict);
-  const deduped = dedupeByUrnId(dict);
-  return { backfilled, deduped };
+  const deduped    = dedupeByUrnId(dict);
+  const repaired   = repairProfileUrlMismatch(dict);
+  return { backfilled, deduped, repaired };
 }
 
 // Build the unified `contacts` v2 dict from v1's three-store shape.
@@ -396,6 +449,7 @@ const LITSchema = {
   dedupeByMemberId,
   backfillUrnIds,
   dedupeByUrnId,
+  repairProfileUrlMismatch,
   runUrnDedupMigration,
 };
 if (typeof globalThis !== 'undefined') globalThis.LITSchema = LITSchema;

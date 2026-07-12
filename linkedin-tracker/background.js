@@ -218,10 +218,10 @@ async function runUrnDedupMigration() {
   try {
     const { contacts = {} } = await dbGet(['contacts']);
     const result = LITSchema.runUrnDedupMigration(contacts);
-    if (result.backfilled === 0 && result.deduped === 0) return;
+    if (result.backfilled === 0 && result.deduped === 0 && result.repaired === 0) return;
     await dbSet({ contacts });
     notifyChange(['contacts']);
-    console.log(`[LI Tracker] URN-dedup migration: backfilled ${result.backfilled} urnIds, merged ${result.deduped} duplicate records.`);
+    console.log(`[LI Tracker] URN-dedup migration: backfilled ${result.backfilled} urnIds, merged ${result.deduped} duplicates, repaired ${result.repaired} profileUrl mismatches.`);
   } catch (err) {
     console.error('[LI Tracker] URN-dedup migration failed:', err);
   }

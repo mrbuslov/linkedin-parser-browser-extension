@@ -9,6 +9,7 @@ const {
   normalize,
   backfillUrnIds,
   dedupeByUrnId,
+  repairProfileUrlMismatch,
   runUrnDedupMigration,
 } = require('../linkedin-tracker/core/schema-v2.js');
 
@@ -704,6 +705,11 @@ describe('runUrnDedupMigration — end-to-end idempotent one-shot', () => {
     expect(winner.status).toBe(STATUS.ACCEPTED);
     expect(winner.email).toBe('joedo368@gmail.com');
     expect(winner.urnId).toBe('ACoAAAAKdt4BJsIJ1JWspUDO30kiqpShpM9-GCI');
+    // Critical regression: after merge, record.profileUrl MUST match
+    // the dict key. If it drifts, popup mutations (Mark/Delete/Star/−)
+    // that key by item.profileUrl silently no-op because the URL they
+    // look up doesn't exist. Real 1.3.3 bug 2026-07-12.
+    expect(winner.profileUrl).toBe('https://www.linkedin.com/in/joedougherty/');
   });
 
   it('idempotent: second run does nothing when data is already clean', () => {
@@ -716,11 +722,9 @@ describe('runUrnDedupMigration — end-to-end idempotent one-shot', () => {
       },
     };
     const first = runUrnDedupMigration(dict);
-    expect(first.backfilled).toBe(0);
-    expect(first.deduped).toBe(0);
+    expect(first).toEqual({ backfilled: 0, deduped: 0, repaired: 0 });
     const second = runUrnDedupMigration(dict);
-    expect(second.backfilled).toBe(0);
-    expect(second.deduped).toBe(0);
+    expect(second).toEqual({ backfilled: 0, deduped: 0, repaired: 0 });
     expect(Object.keys(dict)).toHaveLength(1);
   });
 
@@ -728,20 +732,139 @@ describe('runUrnDedupMigration — end-to-end idempotent one-shot', () => {
     // Mailto records, vanity records without mutualsUrl, brand-new records
     // whose profile page hasn't been visited yet — none should be affected.
     const dict = {
-      'mailto:foo@bar.com': { name: 'foo@bar.com', status: STATUS.PENDING },
-      'https://www.linkedin.com/in/alice/': { name: 'Alice', status: STATUS.ACCEPTED, mutualsUrl: '' },
+      'mailto:foo@bar.com':                    { profileUrl: 'mailto:foo@bar.com', name: 'foo@bar.com', status: STATUS.PENDING },
+      'https://www.linkedin.com/in/alice/':    { profileUrl: 'https://www.linkedin.com/in/alice/', name: 'Alice', status: STATUS.ACCEPTED, mutualsUrl: '' },
     };
     const before = JSON.parse(JSON.stringify(dict));
     const result = runUrnDedupMigration(dict);
     expect(result.backfilled).toBe(0);
     expect(result.deduped).toBe(0);
+    expect(result.repaired).toBe(0);
     expect(dict).toEqual(before);
   });
 
   it('handles empty dict', () => {
     const dict = {};
     const result = runUrnDedupMigration(dict);
-    expect(result).toEqual({ backfilled: 0, deduped: 0 });
+    expect(result).toEqual({ backfilled: 0, deduped: 0, repaired: 0 });
     expect(dict).toEqual({});
+  });
+});
+
+describe('mergeRecords — profileUrl and user-flag guards (1.3.3 fix)', () => {
+  it('never copies profileUrl from incoming — base keeps its own', () => {
+    // Regression: 1.3.3 URN-dedup used mergeRecords which spread loser's
+    // profileUrl on top of the winner. Result: dict[/joe/].profileUrl
+    // pointed at /ACoAA.../, and every mutation (Mark, Delete, Star)
+    // that keyed by item.profileUrl silently no-op'd.
+    const winner = { profileUrl: '/in/joe/', name: 'Joe' };
+    const loser  = { profileUrl: '/in/ACoAAA.../', name: 'Joe' };
+    const out = mergeRecords(winner, loser, '_test');
+    expect(out.profileUrl).toBe('/in/joe/');
+  });
+
+  it('never downgrades user-authored marked=true to incoming false', () => {
+    const winner = { marked: true,  markedAt: 12345 };
+    const loser  = { marked: false, markedAt: null };
+    const out = mergeRecords(winner, loser, '_test');
+    expect(out.marked).toBe(true);
+    expect(out.markedAt).toBe(12345);
+  });
+
+  it('never downgrades user-authored favorite=true to incoming false', () => {
+    const winner = { favorite: true,  favoritedAt: 99 };
+    const loser  = { favorite: false, favoritedAt: null };
+    const out = mergeRecords(winner, loser, '_test');
+    expect(out.favorite).toBe(true);
+    expect(out.favoritedAt).toBe(99);
+  });
+
+  it('DOES allow marked to go false→true (base false, incoming true)', () => {
+    // Guard is asymmetric — an incoming record that has a real user
+    // gesture (marked=true) SHOULD promote a base without one.
+    const winner = { marked: false };
+    const loser  = { marked: true, markedAt: 999 };
+    const out = mergeRecords(winner, loser, '_test');
+    expect(out.marked).toBe(true);
+    expect(out.markedAt).toBe(999);
+  });
+});
+
+describe('dedupeByUrnId — profileUrl always matches dict key (1.3.3 fix)', () => {
+  it("winner's profileUrl equals dict key after merge even when loser stomped it", () => {
+    // Explicit end-to-end: two records with same urnId, dedup fires,
+    // winner's record.profileUrl MUST equal the dict key (vanity URL).
+    const dict = {
+      'https://www.linkedin.com/in/joe/': {
+        profileUrl: 'https://www.linkedin.com/in/joe/',
+        urnId: 'ACoAA123',
+        status: STATUS.ACCEPTED,
+        marked: true,
+        favorite: true,
+      },
+      'https://www.linkedin.com/in/ACoAA123/': {
+        profileUrl: 'https://www.linkedin.com/in/ACoAA123/',
+        urnId: 'ACoAA123',
+        status: STATUS.VISITED,
+        marked: false,
+        favorite: false,
+      },
+    };
+    dedupeByUrnId(dict);
+    const winner = dict['https://www.linkedin.com/in/joe/'];
+    expect(winner.profileUrl).toBe('https://www.linkedin.com/in/joe/');
+    // User flags survived — merge no longer downgrades them.
+    expect(winner.marked).toBe(true);
+    expect(winner.favorite).toBe(true);
+    // URN loser is gone.
+    expect(dict['https://www.linkedin.com/in/ACoAA123/']).toBeUndefined();
+  });
+});
+
+describe('repairProfileUrlMismatch — 1.3.3 repair migration for already-drifted records', () => {
+  it("corrects record.profileUrl to match its dict key", () => {
+    const dict = {
+      'https://www.linkedin.com/in/joe/': {
+        profileUrl: 'https://www.linkedin.com/in/ACoAA123/', // drifted from a bad merge
+        name: 'Joe',
+      },
+    };
+    const touched = repairProfileUrlMismatch(dict);
+    expect(touched).toBe(1);
+    expect(dict['https://www.linkedin.com/in/joe/'].profileUrl)
+      .toBe('https://www.linkedin.com/in/joe/');
+  });
+
+  it('leaves already-correct records untouched (idempotent)', () => {
+    const dict = {
+      'https://www.linkedin.com/in/joe/':   { profileUrl: 'https://www.linkedin.com/in/joe/',   name: 'Joe' },
+      'https://www.linkedin.com/in/alice/': { profileUrl: 'https://www.linkedin.com/in/alice/', name: 'Alice' },
+    };
+    const touched = repairProfileUrlMismatch(dict);
+    expect(touched).toBe(0);
+  });
+
+  it('fixes multiple drifted records in one pass', () => {
+    const dict = {
+      'https://www.linkedin.com/in/joe/':     { profileUrl: 'wrong-a', name: 'Joe' },
+      'https://www.linkedin.com/in/wendy/':   { profileUrl: 'wrong-b', name: 'Wendy' },
+      'https://www.linkedin.com/in/alex/':    { profileUrl: 'https://www.linkedin.com/in/alex/', name: 'Alex' },
+    };
+    const touched = repairProfileUrlMismatch(dict);
+    expect(touched).toBe(2);
+    expect(dict['https://www.linkedin.com/in/joe/'].profileUrl)
+      .toBe('https://www.linkedin.com/in/joe/');
+    expect(dict['https://www.linkedin.com/in/wendy/'].profileUrl)
+      .toBe('https://www.linkedin.com/in/wendy/');
+  });
+
+  it('tolerates null/undefined records', () => {
+    const dict = { 'https://www.linkedin.com/in/joe/': null };
+    expect(() => repairProfileUrlMismatch(dict)).not.toThrow();
+  });
+
+  it('is a no-op on empty dict', () => {
+    const dict = {};
+    expect(repairProfileUrlMismatch(dict)).toBe(0);
   });
 });
