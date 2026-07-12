@@ -561,24 +561,36 @@ async function runQueueTickIfApplicable(currentProfileUrl) {
   if (queueRunning) return;
   if (queueRunUrl === currentProfileUrl) return; // already ran on this URL
 
-  const { visitQueueSimple: state } = await dbGet('visitQueueSimple');
-  if (!LITVisitQueueSimple.isActive(state)) return;
-  if (!LITVisitQueueSimple.isExpectedUrl(state, currentProfileUrl)) {
-    // Log once per URL so the user can diagnose a paused queue from the
-    // DevTools console — most common cause is LinkedIn redirecting us to
-    // a URL that doesn't match the queue's expected target, or a slug
-    // normalization mismatch we didn't anticipate.
-    if (queueSkipLoggedFor !== currentProfileUrl) {
-      queueSkipLoggedFor = currentProfileUrl;
-      console.log(`[LI Tracker/queue] paused — current ${currentProfileUrl} != expected ${LITVisitQueueSimple.currentTargetUrl(state)}`);
-    }
-    return;
-  }
-
+  // CRITICAL: claim the lock SYNCHRONOUSLY before any await. Real bug
+  // 2026-07-12: two overlapping setInterval ticks both passed the
+  // `if (queueRunning) return;` check because queueRunning was set only
+  // AFTER `await dbGet(...)`. Both ticks then set queueRunning=true and
+  // entered try — two humanizedReadingScroll passes ran in parallel on
+  // the same main.scrollTop and fought each other back to zero, so the
+  // page appeared to not scroll at all despite the chunk logs firing.
+  // Classic TOCTOU. Setting the flag before the await closes the window.
   queueRunning = true;
-  queueRunUrl  = currentProfileUrl;
 
   try {
+    const { visitQueueSimple: state } = await dbGet('visitQueueSimple');
+    if (!LITVisitQueueSimple.isActive(state)) return;
+    if (!LITVisitQueueSimple.isExpectedUrl(state, currentProfileUrl)) {
+      // Log once per URL so the user can diagnose a paused queue from
+      // DevTools console — most common cause is LinkedIn redirecting us
+      // to a URL that doesn't match the queue's expected target, or a
+      // slug normalization mismatch we didn't anticipate.
+      if (queueSkipLoggedFor !== currentProfileUrl) {
+        queueSkipLoggedFor = currentProfileUrl;
+        console.log(`[LI Tracker/queue] paused — current ${currentProfileUrl} != expected ${LITVisitQueueSimple.currentTargetUrl(state)}`);
+      }
+      return;
+    }
+
+    // Only commit queueRunUrl once we're past the checks and about to
+    // actually run — that way an early-return doesn't poison the guard
+    // on subsequent ticks that might legitimately want to re-check.
+    queueRunUrl = currentProfileUrl;
+
     // Uniform target time per profile — 25-40s picked at random. Matches
     // a real reader scanning through profiles: open → scroll and read
     // → few seconds pause → next. Humanized scroll (below) runs FIRST
