@@ -2,7 +2,7 @@
 // Pure logic lives in core/detect.js (status detection) and core/profile-state.js
 // (state transitions). This file is the DOM-scraping + persistence layer.
 
-console.log('[LI Tracker] profile script loaded:', location.pathname);
+console.log('[LI Tracker] profile.js v1.3.3-probe2 loaded:', location.pathname);
 
 // Strip the trailing-whitespace-trimmed `name` from the start of `text` if
 // present. Case-insensitive, allows an optional separator after the name.
@@ -528,13 +528,15 @@ function readScrollTop(target) {
 // after the probe finishes.
 function pickWorkingScrollTarget() {
   const probes = [
-    { name: 'window (documentElement)', target: null, get: () => window.scrollY, set: (delta) => window.scrollBy(0, delta) },
+    { name: 'window', target: null, get: () => window.scrollY, set: (delta) => window.scrollBy(0, delta) },
     { name: 'document.body', target: document.body, get: () => document.body.scrollTop, set: (delta) => { document.body.scrollTop += delta; } },
   ];
   const container = LITScanScroll.findScanScrollContainer();
+  console.log(`[LI Tracker/queue/probe] findScanScrollContainer returned:`,
+    container ? `${container.tagName}.${String(container.className).split(' ')[0]} (excess ${container.scrollHeight - container.clientHeight})` : 'null');
   if (container) {
     probes.push({
-      name: 'findScanScrollContainer',
+      name: `container ${container.tagName}.${String(container.className).split(' ')[0]}`,
       target: container,
       get: () => container.scrollTop,
       set: (delta) => { container.scrollTop += delta; },
@@ -544,12 +546,13 @@ function pickWorkingScrollTarget() {
     const before = p.get();
     p.set(30);
     const after = p.get();
-    if (after > before) {
+    const moved = after > before;
+    console.log(`[LI Tracker/queue/probe] [${p.name}]: before=${before} after=${after} → ${moved ? 'WORKS ✓' : 'no-op ✗'}`);
+    if (moved) {
       p.set(-(after - before)); // reset
       return p.target;
     }
   }
-  // Nothing worked — return null so we at least attempt window.scrollBy.
   console.warn('[LI Tracker/queue] no scroll probe moved the page — nothing will visibly scroll');
   return null;
 }
