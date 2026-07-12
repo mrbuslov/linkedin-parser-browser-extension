@@ -2,7 +2,7 @@
 // Pure logic lives in core/detect.js (status detection) and core/profile-state.js
 // (state transitions). This file is the DOM-scraping + persistence layer.
 
-console.log('[LI Tracker] profile.js v1.3.3-bridge-attr loaded:', location.pathname);
+console.log('[LI Tracker] profile.js v1.3.3-bridge-own-carrier loaded:', location.pathname);
 
 // Strip the trailing-whitespace-trimmed `name` from the start of `text` if
 // present. Case-insensitive, allows an optional separator after the name.
@@ -595,10 +595,24 @@ async function runQueueTickIfApplicable(currentProfileUrl) {
     // Cross-world channel to page-scroll-bridge — see the long comment
     // in page-scroll-bridge.js. postMessage from isolated does not
     // reach world:"MAIN" content-script listeners in this Chrome build,
-    // so we use a data-attribute + MutationObserver instead. Attribute
-    // writes cross world boundaries reliably (shared DOM).
+    // so we use a data-attribute + MutationObserver instead.
+    //
+    // The carrier is a dedicated <div> we insert ourselves. Earlier
+    // versions used <html> as the carrier — that worked briefly on a
+    // first test then stopped: LinkedIn's React reconciles attributes
+    // on document.documentElement (dark-mode class, etc.) and strips
+    // unknown data-* attrs on each pass. A dedicated element that no
+    // framework owns is never touched. Bridge observes body's subtree
+    // for our attribute filter so it doesn't need to know the exact
+    // carrier element.
+    let cmdCarrier = document.getElementById('__lit-scroll-bus');
+    if (!cmdCarrier) {
+      cmdCarrier = document.createElement('div');
+      cmdCarrier.id = '__lit-scroll-bus';
+      cmdCarrier.style.display = 'none';
+      document.body.appendChild(cmdCarrier);
+    }
     let cmdSeq = 0;
-    const cmdCarrier = document.documentElement;
     const CMD_ATTR = 'data-lit-scroll-cmd';
 
     let cancelledMidWay = false;
@@ -607,10 +621,16 @@ async function runQueueTickIfApplicable(currentProfileUrl) {
       totalMs,
       applyDelta: (delta) => {
         cmdSeq++;
-        cmdCarrier.setAttribute(
-          CMD_ATTR,
-          JSON.stringify({ selector: scrollSelector, delta, seq: cmdSeq }),
-        );
+        const cmd = JSON.stringify({ selector: scrollSelector, delta, seq: cmdSeq });
+        cmdCarrier.setAttribute(CMD_ATTR, cmd);
+        // Verify the write survived on the first few — if isolated set
+        // it but readback is null, something (React, a MutationObserver
+        // elsewhere) is removing it before the bridge's own observer
+        // can see it. Kept minimal (first 3 only) to avoid Console spam.
+        if (cmdSeq <= 3) {
+          const readback = cmdCarrier.getAttribute(CMD_ATTR);
+          console.log(`[LI Tracker/queue/attr] setAttribute #${cmdSeq} readback=${readback ? readback.slice(0, 60) + '…' : 'NULL'} inDom=${document.body.contains(cmdCarrier)}`);
+        }
       },
       isCancelled: async () => {
         const { visitQueueSimple: s } = await dbGet('visitQueueSimple');

@@ -42,13 +42,13 @@
   // eslint-disable-next-line no-console
   console.log(`[LI Tracker] page-scroll-bridge loaded — inIsolated=${inIsolated} (want false)`);
 
-  const cmdCarrier = document.documentElement;
   const CMD_ATTR = 'data-lit-scroll-cmd';
   let lastSeq = 0;
   let obsCallbacks = 0;
 
-  function processCommand() {
-    const raw = cmdCarrier.getAttribute(CMD_ATTR);
+  function processFromElement(carrier) {
+    if (!carrier) return;
+    const raw = carrier.getAttribute(CMD_ATTR);
     if (!raw) return;
     const cmd = JSON.parse(raw);
     if (typeof cmd.seq !== 'number' || cmd.seq <= lastSeq) return;
@@ -80,9 +80,30 @@
     }
   }
 
-  const observer = new MutationObserver(processCommand);
-  observer.observe(cmdCarrier, {
-    attributes: true,
-    attributeFilter: [CMD_ATTR],
-  });
+  // Observe body subtree for our attribute — isolated inserts a
+  // dedicated <div id="__lit-scroll-bus"> and sets the attribute
+  // there, but we don't hard-code that ID: any element in the subtree
+  // that carries CMD_ATTR is honored. If the target elmt is somewhere
+  // else next iteration, the same observer catches it.
+  function boot() {
+    if (!document.body) {
+      // body might not exist yet at document_start — retry on
+      // DOMContentLoaded.
+      document.addEventListener('DOMContentLoaded', boot, { once: true });
+      return;
+    }
+    const observer = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        if (m.target && m.target.hasAttribute && m.target.hasAttribute(CMD_ATTR)) {
+          processFromElement(m.target);
+        }
+      }
+    });
+    observer.observe(document.body, {
+      attributes: true,
+      attributeFilter: [CMD_ATTR],
+      subtree: true,
+    });
+  }
+  boot();
 })();
