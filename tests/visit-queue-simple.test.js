@@ -109,6 +109,69 @@ describe('parseUrlList — accepts newlines and commas', () => {
     expect(parseUrlList(undefined).valid).toEqual([]);
   });
 
+  it('accepts bare linkedin.com/in/<slug> without protocol (1.3.3 report)', () => {
+    // Real user paste that failed: `linkedin.com/in/daniella-falkman-twedmark,`.
+    // Previously rejected because regex required ^https?:// anchor. Now
+    // the parser finds `linkedin.com/in/<slug>` anywhere in the line.
+    const r = parseUrlList('linkedin.com/in/daniella-falkman-twedmark,\nlinkedin.com/in/joe');
+    expect(r.valid).toEqual([
+      'https://www.linkedin.com/in/daniella-falkman-twedmark/',
+      'https://www.linkedin.com/in/joe/',
+    ]);
+    expect(r.invalid).toEqual([]);
+  });
+
+  it('accepts www.linkedin.com/in/<slug> without protocol', () => {
+    expect(parseUrlList('www.linkedin.com/in/alice').valid).toEqual([
+      'https://www.linkedin.com/in/alice/',
+    ]);
+  });
+
+  it('extracts URL embedded inside surrounding text', () => {
+    // Paste from a Slack message where someone wrote "check him out linkedin.com/in/joe".
+    expect(parseUrlList('check him out linkedin.com/in/joe').valid).toEqual([
+      'https://www.linkedin.com/in/joe/',
+    ]);
+    // Paste with parentheses.
+    expect(parseUrlList('Joe Dougherty (linkedin.com/in/joe)').valid).toEqual([
+      'https://www.linkedin.com/in/joe/',
+    ]);
+    // Paste with angle brackets (email-style).
+    expect(parseUrlList('<linkedin.com/in/joe>').valid).toEqual([
+      'https://www.linkedin.com/in/joe/',
+    ]);
+  });
+
+  it('rejects lines that lack the linkedin.com/in/ substring entirely', () => {
+    const r = parseUrlList([
+      'linkedin.com/company/acme',
+      'linkedin.com/feed/',
+      'linkedin.com/jobs/',
+      'https://twitter.com/joe',
+      'just some prose',
+    ].join('\n'));
+    expect(r.valid).toEqual([]);
+    expect(r.invalid).toHaveLength(5);
+  });
+
+  it('handles tab-separated and semicolon-separated URLs', () => {
+    expect(parseUrlList('linkedin.com/in/alice\tlinkedin.com/in/bob').valid).toEqual([
+      'https://www.linkedin.com/in/alice/',
+      'https://www.linkedin.com/in/bob/',
+    ]);
+    expect(parseUrlList('linkedin.com/in/alice; linkedin.com/in/bob').valid).toEqual([
+      'https://www.linkedin.com/in/alice/',
+      'https://www.linkedin.com/in/bob/',
+    ]);
+  });
+
+  it('handles hyphenated slug with trailing comma (1.3.3 exact case)', () => {
+    // Exact input from the user's 1.3.3 report — should extract cleanly.
+    const r = parseUrlList('linkedin.com/in/daniella-falkman-twedmark,');
+    expect(r.valid).toEqual(['https://www.linkedin.com/in/daniella-falkman-twedmark/']);
+    expect(r.invalid).toEqual([]);
+  });
+
   it('does NOT include overlay/contact-info sub-paths — collapses to canonical', () => {
     // /in/alice/overlay/contact-info/ collapses to /in/alice/ so a queue
     // of profile links pasted from various contexts doesn't dupe when

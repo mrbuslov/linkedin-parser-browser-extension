@@ -30,34 +30,48 @@
 
 // ---------- URL list parsing ----------
 
-// The one-line-per-URL and comma-separated forms are both common (user
-// might paste from a spreadsheet, a text file, or a Slack message). We
-// accept whichever they use and produce a clean, deduped list of
-// canonical `/in/<slug>/` URLs.
+// Generic — pulls any `linkedin.com/in/<slug>` occurrence out of arbitrary
+// pasted text. Protocol optional (`https://` / `http://` / bare
+// `linkedin.com`). Subdomain optional (`www.` / `uk.` / locale prefixes).
+// Trailing / embedded punctuation from spreadsheet copy-paste is fine —
+// the slug character class stops at `/`, whitespace, and common
+// separators. Overlay sub-paths (`/in/joe/overlay/contact-info/`)
+// collapse to the canonical `/in/joe/`.
 //
-// Only linkedin.com/in/... URLs pass. Everything else (feed, search,
-// company, ...) is rejected — the queue's purpose is profile capture.
-// Vanity slug OR URN-format is fine, both resolve to a profile page.
+// Accepts (all resolve to https://www.linkedin.com/in/joe/):
+//   https://www.linkedin.com/in/joe/
+//   www.linkedin.com/in/joe
+//   linkedin.com/in/joe
+//   linkedin.com/in/daniella-falkman-twedmark,   ← trailing comma OK
+//   Joe (linkedin.com/in/joe)                    ← URL embedded in text
+//   https://uk.linkedin.com/in/joe/details/experience/
 //
-// Returns:
-//   { valid: string[], invalid: string[], duplicates: number }
-// so the popup can render a preview: "12 valid, 3 skipped as non-profile,
-// 2 duplicates dropped".
+// Rejected: strings with no `linkedin.com/in/<slug>` substring at all —
+// /feed/, /search/, /company/, non-linkedin URLs, prose without a URL.
+//
+// Delimiters between URLs on one line: `,` `;` `\n` `\t`. Split first,
+// extract per fragment — so `bob@acme.com, linkedin.com/in/bob` also
+// works (email in fragment 1 is rejected; URL in fragment 2 extracted).
+//
+// Returns { valid, invalid, duplicates } so the popup can render a
+// preview like "12 valid · 3 rejected · 2 duplicates dropped".
 function parseUrlList(text) {
   if (!text || typeof text !== 'string') return { valid: [], invalid: [], duplicates: 0 };
-  // Split on newlines OR commas — user might paste either shape.
-  const raw = text.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+  const raw = text.split(/[\n\t,;]+/).map((s) => s.trim()).filter(Boolean);
+  // Slug character class excludes URL structural chars (/ ? #), whitespace,
+  // and common trailing-punctuation from copy-paste (comma / semicolon /
+  // close-paren / quote / angle-bracket). Includes vanity slug characters
+  // (letters, digits, hyphen, underscore, dot) AND URN characters. `%` is
+  // in the class so percent-encoded slugs (rare) survive.
+  const URL_RE = /linkedin\.com\/in\/([^\s/?#,;)"'>\]]+)/i;
   const valid = [];
   const invalid = [];
   const seen = new Set();
   let duplicates = 0;
   for (const line of raw) {
-    // Tolerate trailing punctuation from copy-paste.
-    const cleaned = line.replace(/[,;)"']+$/, '').trim();
-    // Must be a linkedin.com/in/<slug> URL. Vanity or URN both accepted.
-    const m = cleaned.match(/^https?:\/\/(?:[a-z]+\.)?linkedin\.com(\/in\/[^/?#]+)/i);
-    if (!m) { invalid.push(cleaned); continue; }
-    const canonical = `https://www.linkedin.com${m[1].replace(/\/+$/, '')}/`;
+    const m = line.match(URL_RE);
+    if (!m) { invalid.push(line); continue; }
+    const canonical = `https://www.linkedin.com/in/${m[1]}/`;
     if (seen.has(canonical)) { duplicates++; continue; }
     seen.add(canonical);
     valid.push(canonical);
