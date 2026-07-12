@@ -345,6 +345,43 @@ describe('isExpectedUrl', () => {
     cancelled.cancelRequested = true;
     expect(isExpectedUrl(cancelled, 'x')).toBe(false);
   });
+
+  // Regression — the 1.3.3 "Christine ™" incident. Pasted URLs contain raw
+  // non-ASCII (™, é, cyrillic, ...); browser navigates to the
+  // percent-encoded form; location.href returns the encoded string. Naive
+  // string compare left queue "paused" for 4h+ on one profile.
+  it('true when target has raw ™ and current has %E2%84%A2 (browser-encoded)', () => {
+    const q = createQueue(
+      ['https://www.linkedin.com/in/christine-scott-chi™-spanish-46136243/'],
+      NOW,
+      1,
+    );
+    expect(
+      isExpectedUrl(q, 'https://www.linkedin.com/in/christine-scott-chi%E2%84%A2-spanish-46136243/'),
+    ).toBe(true);
+  });
+
+  it('true when target has cyrillic and current is percent-encoded', () => {
+    const q = createQueue(['https://www.linkedin.com/in/дмитрий-буслов/'], NOW, 1);
+    expect(
+      isExpectedUrl(q, 'https://www.linkedin.com/in/%D0%B4%D0%BC%D0%B8%D1%82%D1%80%D0%B8%D0%B9-%D0%B1%D1%83%D1%81%D0%BB%D0%BE%D0%B2/'),
+    ).toBe(true);
+  });
+
+  it('true when target has diacritics (é) and current is percent-encoded', () => {
+    const q = createQueue(['https://www.linkedin.com/in/andré-doe/'], NOW, 1);
+    expect(isExpectedUrl(q, 'https://www.linkedin.com/in/andr%C3%A9-doe/')).toBe(true);
+  });
+
+  it('true when both sides raw (no encoding involved)', () => {
+    const q = createQueue(['https://www.linkedin.com/in/christine-™/'], NOW, 1);
+    expect(isExpectedUrl(q, 'https://www.linkedin.com/in/christine-™/')).toBe(true);
+  });
+
+  it('encoding-fix does NOT make different profiles look equal', () => {
+    const q = createQueue(['https://www.linkedin.com/in/alice-™/'], NOW, 1);
+    expect(isExpectedUrl(q, 'https://www.linkedin.com/in/bob-%E2%84%A2/')).toBe(false);
+  });
 });
 
 // ---------- Humanized timing distributions ----------

@@ -155,14 +155,26 @@ function cancelQueue(state) {
 }
 
 // Predicate for profile.js: is THIS URL the one the queue expects right
-// now? Uses a lenient equality — accepts either exact match or
-// canonical-form match (both /in/joe/ and /in/joe are the same). Note:
-// callers should have already normalized their URL via LITUrl.normalizeProfileUrl.
+// now?
+//
+// Normalizes:
+//   1) trailing slash (`/in/joe/` == `/in/joe`)
+//   2) percent-encoding — this is the load-bearing one. If the pasted URL
+//      contains a non-ASCII character (`™`, cyrillic, emoji, `é`, ...),
+//      the browser percent-encodes it during navigation. `location.href`
+//      then returns the ENCODED form while `target` in the queue still
+//      holds the RAW form. Naive `===` fails, queue paused forever — the
+//      1.3.3 "Christine ™" incident. decodeURI both sides so encoded and
+//      raw compare equal.
+//
+// decodeURI (not decodeURIComponent) — decodeURIComponent decodes
+// reserved chars too, which we don't want; decodeURI only unwraps
+// non-reserved (path-safe) chars, exactly what browser encoding did.
 function isExpectedUrl(state, currentUrl) {
   const target = currentTargetUrl(state);
   if (!target || !currentUrl) return false;
-  return target === currentUrl
-    || target.replace(/\/+$/, '') === currentUrl.replace(/\/+$/, '');
+  const norm = (u) => decodeURI(u).replace(/\/+$/, '');
+  return norm(target) === norm(currentUrl);
 }
 
 // ---------- Humanized timing ----------

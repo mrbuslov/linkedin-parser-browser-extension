@@ -30,18 +30,31 @@
     const d = e.data;
     if (!d || d.__lit !== 'scroll') return;
 
-    try {
-      const el = document.querySelector(d.selector);
-      if (!el) return;
-      if (typeof d.delta === 'number') {
-        el.scrollTop = Math.max(0, el.scrollTop + d.delta);
-      } else if (typeof d.top === 'number') {
-        el.scrollTop = Math.max(0, d.top);
+    const el = document.querySelector(d.selector);
+    if (!el) {
+      // Instrumented — silent match failure is exactly how the 1.3.3
+      // "Christine no-scroll" bug hid: bridge received the message,
+      // querySelector returned null, page never moved, no complaint
+      // in either world.
+      // eslint-disable-next-line no-console
+      console.warn('[LI Tracker/bridge] no match for', d.selector);
+      return;
+    }
+    if (typeof d.delta === 'number') {
+      const before = el.scrollTop;
+      el.scrollTop = Math.max(0, before + d.delta);
+      // If write was a no-op AND we asked for non-zero motion, that
+      // means el.scrollTop is not a scrollable property on this element
+      // (usually because the element itself isn't the actual scroll
+      // container). Log so callers can pick a different target.
+      if (d.delta !== 0 && el.scrollTop === before) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[LI Tracker/bridge] scrollTop no-op on <${el.tagName.toLowerCase()}> (delta=${d.delta}, before=after=${before}) — target is not the real scroll container`,
+        );
       }
-    } catch (_) {
-      // Silent — the isolated caller has no way to receive an error
-      // reply here, and a thrown exception in page world would just
-      // pollute LinkedIn's console.
+    } else if (typeof d.top === 'number') {
+      el.scrollTop = Math.max(0, d.top);
     }
   });
 

@@ -2,7 +2,7 @@
 // Pure logic lives in core/detect.js (status detection) and core/profile-state.js
 // (state transitions). This file is the DOM-scraping + persistence layer.
 
-console.log('[LI Tracker] profile.js v1.3.3-mainworld-bridge loaded:', location.pathname);
+console.log('[LI Tracker] profile.js v1.3.3-urlfix-noprobe loaded:', location.pathname);
 
 // Strip the trailing-whitespace-trimmed `name` from the start of `text` if
 // present. Case-insensitive, allows an optional separator after the name.
@@ -512,49 +512,36 @@ function readScrollTop(target) {
   return target.scrollTop;
 }
 
-// Empirically pick a scroll target that ACTUALLY moves the page.
-// findScanScrollContainer is DOM-inspection-based (looks for overflow:auto
-// elements with real excess) — that's a heuristic that can lose on
-// LinkedIn's newer profile UI where the target it finds is a hidden
-// widget or a sidebar. This tries candidates in order and returns the
-// first one whose scrollTop mutation ACTUALLY changes the position we
-// read back:
-//   1. window (via document.scrollingElement — modern browsers alias
-//      this to document.documentElement for HTML docs).
-//   2. document.body — some older layouts write scroll to body directly.
-//   3. LITScanScroll.findScanScrollContainer() — the DOM-inspection
-//      fallback we had before.
-// Each probe pushes 30px then resets — no visible movement remains
-// after the probe finishes.
-function pickWorkingScrollTarget() {
-  const probes = [
-    { name: 'window', target: null, get: () => window.scrollY, set: (delta) => window.scrollBy(0, delta) },
-    { name: 'document.body', target: document.body, get: () => document.body.scrollTop, set: (delta) => { document.body.scrollTop += delta; } },
-  ];
+// Pick the scroll target for humanizedReadingScroll. Previous incarnation
+// probed each candidate by WRITING scrollTop from isolated world and
+// reading it back to decide "does this move the page?". That's broken
+// on LinkedIn: writes from isolated world go through the native setter,
+// React resets them on next reconciliation, so the probe reads back
+// "no motion" → ALL candidates get rejected → picker returns null →
+// bridge routing skipped → nothing scrolls. Classic case of the probe
+// itself being unreliable in the exact conditions it's supposed to
+// detect.
+//
+// New strategy: no probe. Trust the DOM heuristic (findScanScrollContainer
+// picks the largest overflow:auto/scroll element with real excess — the
+// SAME heuristic /connections/ scroll uses reliably) and fall back to
+// document.scrollingElement for the "short profile / window scrolls"
+// case. All writes go through the page-world bridge — see the applyDelta
+// in runQueueTickIfApplicable. If the picked element turns out not to
+// scroll (bridge write is a no-op), the bridge warns in console.
+function pickScrollTarget() {
   const container = LITScanScroll.findScanScrollContainer();
-  console.log(`[LI Tracker/queue/probe] findScanScrollContainer returned:`,
-    container ? `${container.tagName}.${String(container.className).split(' ')[0]} (excess ${container.scrollHeight - container.clientHeight})` : 'null');
   if (container) {
-    probes.push({
-      name: `container ${container.tagName}.${String(container.className).split(' ')[0]}`,
-      target: container,
-      get: () => container.scrollTop,
-      set: (delta) => { container.scrollTop += delta; },
-    });
+    console.log(
+      `[LI Tracker/queue] scroll target: inner container ${container.tagName}.${String(container.className).split(' ')[0]} (excess ${container.scrollHeight - container.clientHeight})`,
+    );
+    return container;
   }
-  for (const p of probes) {
-    const before = p.get();
-    p.set(30);
-    const after = p.get();
-    const moved = after > before;
-    console.log(`[LI Tracker/queue/probe] [${p.name}]: before=${before} after=${after} → ${moved ? 'WORKS ✓' : 'no-op ✗'}`);
-    if (moved) {
-      p.set(-(after - before)); // reset
-      return p.target;
-    }
-  }
-  console.warn('[LI Tracker/queue] no scroll probe moved the page — nothing will visibly scroll');
-  return null;
+  // Fall back to the document root — this is the standards-mode window
+  // scroll target on modern browsers.
+  const root = document.scrollingElement || document.documentElement;
+  console.log(`[LI Tracker/queue] scroll target: document root <${root.tagName.toLowerCase()}> (window scroll fallback)`);
+  return root;
 }
 
 async function runQueueTickIfApplicable(currentProfileUrl) {
@@ -600,47 +587,17 @@ async function runQueueTickIfApplicable(currentProfileUrl) {
     const totalMs = 25_000 + Math.floor(rand() * 15_000); // 25-40s uniform
     console.log(`[LI Tracker/queue] ${state.currentIndex + 1}/${state.urls.length} — reading ${currentProfileUrl} for ~${Math.round(totalMs / 1000)}s`);
 
-    // Empirical scroll-target picker. Previous strategy (call
-    // findScanScrollContainer, use its verdict) was fooled on the user's
-    // LinkedIn profile pages — a candidate matched overflow:auto, we
-    // used it, but the page didn't visibly move (probably a hidden
-    // widget, or a sidebar, or something React remounts under us).
-    //
-    // New strategy: PROBE. Try candidates in order until one actually
-    // moves. Reset the position after each probe so we don't leave
-    // 30px of unintended scroll on unused candidates. Log which one
-    // won so a future stuck-scroll report is diagnosable in one line.
-    const scrollTarget = pickWorkingScrollTarget();
-    console.log(
-      `[LI Tracker/queue] scroll target:`,
-      scrollTarget === null ? 'window'
-        : scrollTarget === document.scrollingElement ? 'document.scrollingElement'
-        : scrollTarget.tagName + (scrollTarget.className ? '.' + String(scrollTarget.className).split(' ')[0] : ''),
-    );
-
-    // Mark the target with a unique data-attribute so the page-world
-    // bridge can find it via querySelector. React might strip unknown
-    // attributes on some elements but for MAIN it should stick. Fall
-    // back to a tag+class selector if the attribute isn't accessible.
-    let scrollSelector = null;
-    if (scrollTarget) {
-      const uid = 'lit-' + Math.random().toString(36).slice(2, 10);
-      scrollTarget.setAttribute('data-lit-scroll-uid', uid);
-      scrollSelector = `[data-lit-scroll-uid="${uid}"]`;
-    }
+    const scrollTarget = pickScrollTarget();
+    const uid = 'lit-' + Math.random().toString(36).slice(2, 10);
+    scrollTarget.setAttribute('data-lit-scroll-uid', uid);
+    const scrollSelector = `[data-lit-scroll-uid="${uid}"]`;
 
     let cancelledMidWay = false;
     const beforeTop = readScrollTop(scrollTarget);
     await LITScanScroll.humanizedReadingScroll(scrollTarget, {
       totalMs,
-      // Route scroll writes through the page-world bridge — see the
-      // long comment in page-scroll-bridge.js for the "why".
       applyDelta: (delta) => {
-        if (scrollSelector) {
-          window.postMessage({ __lit: 'scroll', selector: scrollSelector, delta }, '*');
-        } else {
-          window.scrollBy(0, delta);
-        }
+        window.postMessage({ __lit: 'scroll', selector: scrollSelector, delta }, '*');
       },
       isCancelled: async () => {
         const { visitQueueSimple: s } = await dbGet('visitQueueSimple');
@@ -654,13 +611,11 @@ async function runQueueTickIfApplicable(currentProfileUrl) {
         );
       },
     });
-    // Clean up the data-attribute we set on the scroll target — leaving
-    // it in place after we're done is harmless but noisy in devtools.
-    if (scrollTarget) scrollTarget.removeAttribute('data-lit-scroll-uid');
+    scrollTarget.removeAttribute('data-lit-scroll-uid');
     const afterTop = readScrollTop(scrollTarget);
     console.log(`[LI Tracker/queue] scrollTop before=${beforeTop} after=${afterTop} (Δ=${afterTop - beforeTop}px)`);
     if (afterTop === beforeTop) {
-      console.warn('[LI Tracker/queue] WARNING: page did NOT visibly scroll — target choice may be wrong');
+      console.warn('[LI Tracker/queue] WARNING: page did NOT visibly scroll — target choice may be wrong (bridge should log which write no-op\'d)');
     }
 
     if (cancelledMidWay) {
