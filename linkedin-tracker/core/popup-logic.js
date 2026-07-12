@@ -141,6 +141,21 @@ function shouldShowScanGap(pendingCount, lastScanCount) {
   return lastScanCount < pendingCount * 0.5;
 }
 
+// Format an ETA-in-ms as a short human-readable string. Used by the
+// 🚶 Bulk Visit panel to show "~14 min remaining" or "~2h 15min
+// remaining" so the user doesn't have to guess how long a 525-URL run
+// will take. Rounds to the nearest minute above 1min; small values
+// (<1min) collapse to "<1 min".
+function formatEta(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return '<1 min';
+  const totalMin = Math.round(ms / 60_000);
+  if (totalMin < 1) return '<1 min';
+  if (totalMin < 60) return `~${totalMin} min`;
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return m === 0 ? `~${h}h` : `~${h}h ${m}min`;
+}
+
 // Parse the mutual-connections count from the anchor's text content.
 //   "Anton, Mikhail and 79 other mutual connections" → 81
 //   "and 12 other mutual connections"                 → 12
@@ -170,6 +185,7 @@ const LITPopupLogic = {
   demoteToDeclined,
   demoteToVisited,
   shouldShowScanGap,
+  formatEta,
 };
 if (typeof globalThis !== 'undefined') globalThis.LITPopupLogic = LITPopupLogic;
 if (typeof module !== 'undefined' && module.exports) module.exports = LITPopupLogic;

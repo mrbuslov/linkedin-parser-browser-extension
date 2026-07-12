@@ -1243,7 +1243,14 @@ async function renderBulkPanel() {
   const total = state.urls.length;
   const done  = state.capturedCount;
   const idx   = state.currentIndex;
-  title.textContent = `${idx + 1} of ${total} · ${done} captured`;
+  // ETA — remaining URLs * average per-URL time. Matches the actual
+  // distribution params used by profile.js:runQueueTickIfApplicable
+  // (log-normal dwell median 45s, exponential pause mean 60s → ~105s
+  // per profile on average). Coarse estimate; real runs vary widely
+  // because both distributions have fat right tails.
+  const remaining = total - idx;
+  const etaMs = remaining * 105_000;
+  title.textContent = `${idx + 1} of ${total} · ${done} captured · ${LITPopupLogic.formatEta(etaMs)} remaining`;
   const started = new Date(state.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   sub.textContent = `Started ${started} · currently on ${state.urls[idx].replace(/^https?:\/\/(?:www\.)?linkedin\.com/, '')}`;
   list.innerHTML = '';

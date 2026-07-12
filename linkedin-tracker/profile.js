@@ -460,36 +460,48 @@ async function tick() {
 
   const info = extractProfileInfo();
   const root = document.querySelector('main') || document.body;
-  const status = LITDetect.detectConnectionStatus(root);
-  if (!info || !status) return;
+  const status = info ? LITDetect.detectConnectionStatus(root) : null;
 
-  // Render the CRM nudge on 1st-degree profiles with no saved contacts.
-  // Done OUTSIDE the dedup short-circuit below so the chip survives across
-  // ticks even when status/contactsKey are unchanged.
-  await updateCRMNudge(info.profileUrl, status);
-  const contactsKey = contactsFingerprint(LITContactsModal.parseContactsModal(document));
-  const activityKey = activityFingerprint(info);
-  const dedupSkip = lastDetected.url === info.profileUrl
-    && lastDetected.status === status
-    && lastDetected.contactsKey === contactsKey
-    && lastDetected.activityKey === activityKey;
-  if (!dedupSkip) {
-    lastDetected = { url: info.profileUrl, status, contactsKey, activityKey };
-    await persistVisit();
+  // CAPTURE PATH — only runs when we have both info AND status. Both are
+  // best-effort deterministic extractors that return null on pages we
+  // can't confidently read (RSC not hydrated yet, unusual profile shape,
+  // etc.). Silently skip persistVisit when either is null — no bogus
+  // partial-capture writes.
+  if (info && status) {
+    // Render the CRM nudge on 1st-degree profiles with no saved contacts.
+    // Done OUTSIDE the dedup short-circuit below so the chip survives across
+    // ticks even when status/contactsKey are unchanged.
+    await updateCRMNudge(info.profileUrl, status);
+    const contactsKey = contactsFingerprint(LITContactsModal.parseContactsModal(document));
+    const activityKey = activityFingerprint(info);
+    const dedupSkip = lastDetected.url === info.profileUrl
+      && lastDetected.status === status
+      && lastDetected.contactsKey === contactsKey
+      && lastDetected.activityKey === activityKey;
+    if (!dedupSkip) {
+      lastDetected = { url: info.profileUrl, status, contactsKey, activityKey };
+      await persistVisit();
+    }
   }
 
-  // Bulk-visit queue driver (1.3.3). If the popup started a queue and
-  // THIS URL is the expected target, do a humanized dwell + scroll and
-  // self-navigate to the next URL. Guarded so we don't re-fire on every
-  // 250ms setInterval tick. Uses persistVisit above to capture the
-  // profile BEFORE the queue advances.
-  runQueueTickIfApplicable(info.profileUrl);
+  // QUEUE DRIVER — always runs when we're on any /in/* URL, EVEN WHEN
+  // capture failed. If we gate the driver on a successful capture (as we
+  // did in the initial 1.3.3 ship), a page that doesn't hydrate cleanly
+  // stalls the entire queue — real user report 2026-07-12: 525-URL queue
+  // stuck at index 0 on a profile where status detection returned null.
+  // The whole point of the bulk queue is "walk through profiles"; if one
+  // profile is unreadable we advance past it, not sit forever.
+  const urlForQueue = info
+    ? info.profileUrl
+    : LITUrl.normalizeProfileUrl(window.location.href);
+  runQueueTickIfApplicable(urlForQueue);
 }
 
 // Module-scope guards for the queue driver — reset on page unload
 // (fresh profile.js instance per page load).
 let queueRunning = false;
 let queueRunUrl  = null;
+let queueSkipLoggedFor = null;
 
 async function runQueueTickIfApplicable(currentProfileUrl) {
   if (queueRunning) return;
@@ -497,7 +509,17 @@ async function runQueueTickIfApplicable(currentProfileUrl) {
 
   const { visitQueueSimple: state } = await dbGet('visitQueueSimple');
   if (!LITVisitQueueSimple.isActive(state)) return;
-  if (!LITVisitQueueSimple.isExpectedUrl(state, currentProfileUrl)) return;
+  if (!LITVisitQueueSimple.isExpectedUrl(state, currentProfileUrl)) {
+    // Log once per URL so the user can diagnose a paused queue from the
+    // DevTools console — most common cause is LinkedIn redirecting us to
+    // a URL that doesn't match the queue's expected target, or a slug
+    // normalization mismatch we didn't anticipate.
+    if (queueSkipLoggedFor !== currentProfileUrl) {
+      queueSkipLoggedFor = currentProfileUrl;
+      console.log(`[LI Tracker/queue] paused — current ${currentProfileUrl} != expected ${LITVisitQueueSimple.currentTargetUrl(state)}`);
+    }
+    return;
+  }
 
   queueRunning = true;
   queueRunUrl  = currentProfileUrl;

@@ -12,6 +12,7 @@ import {
   demoteToDeclined,
   demoteToVisited,
   shouldShowScanGap,
+  formatEta,
 } from '../linkedin-tracker/core/popup-logic.js';
 
 describe('shouldShowDeclinedWarning', () => {
@@ -435,5 +436,46 @@ describe('shouldShowScanGap — contextual info banner in Pending tab', () => {
     // shouldShow requires strict < half. Exact half is fine (guard
     // wouldn't have fired either).
     expect(shouldShowScanGap(10, 5)).toBe(false);
+  });
+});
+
+describe('formatEta — human-readable time-remaining for the Bulk Visit panel', () => {
+  it('< 30s collapses to "<1 min" (rounds to 0)', () => {
+    expect(formatEta(0)).toBe('<1 min');
+    expect(formatEta(-1)).toBe('<1 min');
+    expect(formatEta(NaN)).toBe('<1 min');
+    expect(formatEta(Infinity)).toBe('<1 min');
+    // 29s → 0.48min → rounds to 0 → "<1 min"
+    expect(formatEta(29_000)).toBe('<1 min');
+  });
+
+  it('minute-precision under 1 hour', () => {
+    expect(formatEta(60_000)).toBe('~1 min');
+    expect(formatEta(5 * 60_000)).toBe('~5 min');
+    expect(formatEta(45 * 60_000)).toBe('~45 min');
+    expect(formatEta(59 * 60_000)).toBe('~59 min');
+  });
+
+  it('h/min format for 1h+', () => {
+    expect(formatEta(60 * 60_000)).toBe('~1h');
+    expect(formatEta(75 * 60_000)).toBe('~1h 15min');
+    expect(formatEta(2 * 60 * 60_000)).toBe('~2h');
+    expect(formatEta(2 * 60 * 60_000 + 30 * 60_000)).toBe('~2h 30min');
+  });
+
+  it('realistic bulk-queue ETAs (105s per profile)', () => {
+    // 10-URL run: 10 * 105s = 1050s = 17.5min → ~18 min
+    expect(formatEta(10 * 105_000)).toBe('~18 min');
+    // 100-URL run: 100 * 105s = 175min = 2h 55min
+    expect(formatEta(100 * 105_000)).toBe('~2h 55min');
+    // 525-URL run (user's real case): 525 * 105s = 918.75min = 15h 19min
+    expect(formatEta(525 * 105_000)).toBe('~15h 19min');
+  });
+
+  it('rounds sub-minute deltas gracefully', () => {
+    // 90s → 1.5min → rounds to 2min
+    expect(formatEta(90_000)).toBe('~2 min');
+    // 29s → rounds down to 0 → "<1 min"
+    expect(formatEta(29_000)).toBe('<1 min');
   });
 });
