@@ -503,6 +503,57 @@ let queueRunning = false;
 let queueRunUrl  = null;
 let queueSkipLoggedFor = null;
 
+// Return the target's current scrollTop (or window.scrollY when
+// target is null / window). Used for before/after diagnostics in the
+// queue driver.
+function readScrollTop(target) {
+  if (target === null || target === undefined) return window.scrollY;
+  if (target === document.scrollingElement) return document.scrollingElement.scrollTop;
+  return target.scrollTop;
+}
+
+// Empirically pick a scroll target that ACTUALLY moves the page.
+// findScanScrollContainer is DOM-inspection-based (looks for overflow:auto
+// elements with real excess) — that's a heuristic that can lose on
+// LinkedIn's newer profile UI where the target it finds is a hidden
+// widget or a sidebar. This tries candidates in order and returns the
+// first one whose scrollTop mutation ACTUALLY changes the position we
+// read back:
+//   1. window (via document.scrollingElement — modern browsers alias
+//      this to document.documentElement for HTML docs).
+//   2. document.body — some older layouts write scroll to body directly.
+//   3. LITScanScroll.findScanScrollContainer() — the DOM-inspection
+//      fallback we had before.
+// Each probe pushes 30px then resets — no visible movement remains
+// after the probe finishes.
+function pickWorkingScrollTarget() {
+  const probes = [
+    { name: 'window (documentElement)', target: null, get: () => window.scrollY, set: (delta) => window.scrollBy(0, delta) },
+    { name: 'document.body', target: document.body, get: () => document.body.scrollTop, set: (delta) => { document.body.scrollTop += delta; } },
+  ];
+  const container = LITScanScroll.findScanScrollContainer();
+  if (container) {
+    probes.push({
+      name: 'findScanScrollContainer',
+      target: container,
+      get: () => container.scrollTop,
+      set: (delta) => { container.scrollTop += delta; },
+    });
+  }
+  for (const p of probes) {
+    const before = p.get();
+    p.set(30);
+    const after = p.get();
+    if (after > before) {
+      p.set(-(after - before)); // reset
+      return p.target;
+    }
+  }
+  // Nothing worked — return null so we at least attempt window.scrollBy.
+  console.warn('[LI Tracker/queue] no scroll probe moved the page — nothing will visibly scroll');
+  return null;
+}
+
 async function runQueueTickIfApplicable(currentProfileUrl) {
   if (queueRunning) return;
   if (queueRunUrl === currentProfileUrl) return; // already ran on this URL
@@ -534,27 +585,26 @@ async function runQueueTickIfApplicable(currentProfileUrl) {
     const totalMs = 25_000 + Math.floor(rand() * 15_000); // 25-40s uniform
     console.log(`[LI Tracker/queue] ${state.currentIndex + 1}/${state.urls.length} — reading ${currentProfileUrl} for ~${Math.round(totalMs / 1000)}s`);
 
-    // Humanized reading-scroll — bidirectional, random size, random pauses
-    // (glance / reading / engaged-linger). Runs for the FULL totalMs
-    // budget: real scroll events throughout, not "scroll then sit".
+    // Empirical scroll-target picker. Previous strategy (call
+    // findScanScrollContainer, use its verdict) was fooled on the user's
+    // LinkedIn profile pages — a candidate matched overflow:auto, we
+    // used it, but the page didn't visibly move (probably a hidden
+    // widget, or a sidebar, or something React remounts under us).
     //
-    // Scroll target discovery — same story as /sent/ and /connections/
-    // scanners: if we pass null (window) but the page's real scroll is
-    // on an internal container, window.scrollBy is a silent no-op and
-    // the page never moves. LITScanScroll.findScanScrollContainer returns
-    // the biggest overflow-container when window isn't scrollable, and
-    // null (use window) when it is. Log the target on entry so a
-    // stuck-scroll report ("nothing scrolls") is diagnosable in one
-    // console line.
-    const scrollTarget = LITScanScroll.findScanScrollContainer();
+    // New strategy: PROBE. Try candidates in order until one actually
+    // moves. Reset the position after each probe so we don't leave
+    // 30px of unintended scroll on unused candidates. Log which one
+    // won so a future stuck-scroll report is diagnosable in one line.
+    const scrollTarget = pickWorkingScrollTarget();
     console.log(
       `[LI Tracker/queue] scroll target:`,
-      scrollTarget
-        ? scrollTarget.tagName + (scrollTarget.className ? '.' + String(scrollTarget.className).split(' ')[0] : '')
-        : 'window'
+      scrollTarget === null ? 'window'
+        : scrollTarget === document.scrollingElement ? 'document.scrollingElement'
+        : scrollTarget.tagName + (scrollTarget.className ? '.' + String(scrollTarget.className).split(' ')[0] : ''),
     );
 
     let cancelledMidWay = false;
+    const beforeTop = readScrollTop(scrollTarget);
     await LITScanScroll.humanizedReadingScroll(scrollTarget, {
       totalMs,
       isCancelled: async () => {
@@ -566,6 +616,11 @@ async function runQueueTickIfApplicable(currentProfileUrl) {
         `[LI Tracker/queue/scroll] ${s.direction > 0 ? '↓' : '↑'} ${s.sizeClass} ${Math.abs(s.delta)}px in ${s.durationMs}ms → ${s.pauseClass} ${s.pauseMs}ms`,
       ),
     });
+    const afterTop = readScrollTop(scrollTarget);
+    console.log(`[LI Tracker/queue] scrollTop before=${beforeTop} after=${afterTop} (Δ=${afterTop - beforeTop}px)`);
+    if (afterTop === beforeTop) {
+      console.warn('[LI Tracker/queue] WARNING: page did NOT visibly scroll — target choice may be wrong');
+    }
 
     if (cancelledMidWay) {
       console.log('[LI Tracker/queue] cancelled during read');
