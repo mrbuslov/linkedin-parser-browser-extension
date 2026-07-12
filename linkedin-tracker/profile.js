@@ -2,7 +2,7 @@
 // Pure logic lives in core/detect.js (status detection) and core/profile-state.js
 // (state transitions). This file is the DOM-scraping + persistence layer.
 
-console.log('[LI Tracker] profile.js loaded:', location.pathname);
+console.log('[LI Tracker] profile.js v1.3.3-accept-redirect loaded:', location.pathname);
 
 // Strip the trailing-whitespace-trimmed `name` from the start of `text` if
 // present. Case-insensitive, allows an optional separator after the name.
@@ -532,15 +532,25 @@ async function runQueueTickIfApplicable(currentProfileUrl) {
     const { visitQueueSimple: state } = await dbGet('visitQueueSimple');
     if (!LITVisitQueueSimple.isActive(state)) return;
     if (!LITVisitQueueSimple.isExpectedUrl(state, currentProfileUrl)) {
-      // Log once per URL so the user can diagnose a paused queue from
-      // DevTools console — most common cause is LinkedIn redirecting us
-      // to a URL that doesn't match the queue's expected target, or a
-      // slug normalization mismatch we didn't anticipate.
-      if (queueSkipLoggedFor !== currentProfileUrl) {
-        queueSkipLoggedFor = currentProfileUrl;
-        console.log(`[LI Tracker/queue] paused — current ${currentProfileUrl} != expected ${LITVisitQueueSimple.currentTargetUrl(state)}`);
+      // If the queue itself just navigated the tab AND the URL we asked
+      // for matches the queue's current target, this is a LinkedIn
+      // vanity-redirect (e.g. /in/els-christopherfarley/ →
+      // /in/christopher-farley-business-english/). Accept the redirect
+      // target as the profile for this queue slot. sessionStorage
+      // survives the navigation but is consumed once so a stray
+      // user-driven visit to a different profile doesn't get accepted.
+      const asked = sessionStorage.getItem('__lit_queue_asked_for');
+      if (asked) sessionStorage.removeItem('__lit_queue_asked_for');
+      const target = LITVisitQueueSimple.currentTargetUrl(state);
+      const isRedirect = asked && asked === target;
+      if (!isRedirect) {
+        if (queueSkipLoggedFor !== currentProfileUrl) {
+          queueSkipLoggedFor = currentProfileUrl;
+          console.log(`[LI Tracker/queue] paused — current ${currentProfileUrl} != expected ${target}`);
+        }
+        return;
       }
-      return;
+      console.log(`[LI Tracker/queue] redirect accepted — asked for ${target}, landed on ${currentProfileUrl}`);
     }
 
     // Only commit queueRunUrl once we're past the checks and about to
@@ -633,6 +643,10 @@ async function runQueueTickIfApplicable(currentProfileUrl) {
     }
     await dbSet({ visitQueueSimple: result.state });
     console.log(`[LI Tracker/queue] → ${result.nextUrl}`);
+    // Persist the URL we asked for so the next page-load's tick can
+    // distinguish a LinkedIn redirect (accept) from a user-driven
+    // navigation to an unrelated profile (pause).
+    sessionStorage.setItem('__lit_queue_asked_for', result.nextUrl);
     window.location.href = result.nextUrl;
   } catch (err) {
     console.error('[LI Tracker/queue] driver crashed:', err);
