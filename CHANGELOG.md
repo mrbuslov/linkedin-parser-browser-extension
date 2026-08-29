@@ -8,6 +8,9 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
+
+## [1.3.4] — 2026-08-29
+
 ### Fixed
 - **Bulk visit queue stalling forever on a dead/removed profile.** Root
   cause: the queue is driven entirely by profile.js, a content script

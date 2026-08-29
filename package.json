@@ -1,6 +1,6 @@
 {
   "name": "linkedin-parser-browser-extension",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "private": true,
   "description": "Chrome extension that tracks LinkedIn invitations and builds a local contact database.",
   "scripts": {
