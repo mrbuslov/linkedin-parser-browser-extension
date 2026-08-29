@@ -7,7 +7,7 @@
 // This ensures content scripts and the popup can always assume unified
 // `contacts` shape, regardless of who woke up first after an update.
 
-importScripts('core/schema-v2.js');
+importScripts('core/schema-v2.js', 'core/visit-queue-simple.js');
 
 // Bulk Visit Queue disabled for the 1.3.0 Chrome Web Store submission —
 // the tabs/alarms/idle/webNavigation permissions triggered a
@@ -244,3 +244,53 @@ runUrnDedupMigration();
 // Bulk Visit Queue SW glue removed for 1.3.0. To restore in 1.3.1:
 //   git show 89090b5:linkedin-tracker/background.js
 // contains the reference implementation (lines ~224-386 of that revision).
+
+// ---------- Dead-profile (404) queue skip ----------
+//
+// The bulk queue is driven by profile.js, a content script scoped to
+// https://www.linkedin.com/in/* (manifest.json). A LinkedIn redirect to
+// /404/ (deleted/restricted profile) lands the tab OUTSIDE that pattern,
+// so profile.js never runs again and the queue stalls on that URL
+// forever — nothing else can see the tab get there, so the fix has to
+// live in the service worker. No new permission: host_permissions
+// already covers linkedin.com, which is what exposes changeInfo.url here.
+//
+// lastSkippedKey dedupes chrome.tabs.onUpdated firing twice for one
+// navigation (both carrying the same url) — same TOCTOU shape as
+// profile.js's queueRunning lock (profile.js:502,524-529), claimed
+// synchronously before any await.
+let lastSkippedKey = null;
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (!changeInfo.url) return;
+  let dest;
+  try {
+    dest = new URL(changeInfo.url);
+  } catch {
+    return;
+  }
+  if (dest.hostname !== 'www.linkedin.com') return;
+  if (!/^\/404\/?$/.test(dest.pathname)) return;
+  const key = `${tabId}:${changeInfo.url}`;
+  if (lastSkippedKey === key) return;
+  lastSkippedKey = key;
+  skipDeadProfileInQueue(tabId).catch((err) => {
+    console.error('[LI Tracker/queue] 404 skip failed:', err);
+  });
+});
+
+async function skipDeadProfileInQueue(tabId) {
+  const { visitQueueSimple: state } = await dbGet('visitQueueSimple');
+  if (!LITVisitQueueSimple.isActive(state)) return;
+  if (state.tabId !== tabId) return; // some other LinkedIn tab hit /404/ — not the queue's tab
+  const deadUrl = LITVisitQueueSimple.currentTargetUrl(state);
+  const result = LITVisitQueueSimple.advance(state, Date.now());
+  if (result.done) {
+    console.log(`[LI Tracker/queue] ${deadUrl} → 404, queue complete (was last profile)`);
+    await dbSet({ visitQueueSimple: null });
+    return;
+  }
+  console.log(`[LI Tracker/queue] ${deadUrl} → 404, skipping to ${result.nextUrl}`);
+  await dbSet({ visitQueueSimple: { ...result.state, tabId } });
+  await chrome.tabs.update(tabId, { url: result.nextUrl });
+}

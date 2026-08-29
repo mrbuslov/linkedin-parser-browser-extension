@@ -90,6 +90,8 @@ function parseUrlList(text) {
 //     lastAdvancedAt:  number,     // Date.now() of last navigation — for stale-queue detection in UI
 //     cancelRequested: boolean,    // set by popup Cancel, cleared by profile.js when honouring
 //     seed:            number,     // PRNG seed for reproducible humanization within a run
+//     tabId:           number,     // OPTIONAL — set by popup.js. background.js's dead-profile
+//                                  // (404) skip uses it to target the right tab; unused here.
 //   }
 //
 // null when no queue is active.

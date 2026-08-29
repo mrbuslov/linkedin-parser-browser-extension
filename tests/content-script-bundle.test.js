@@ -165,16 +165,20 @@ describe('popup.html script bundle — concatenated identifier check', () => {
   });
 });
 
-// background.js importScripts all core files into one SW global scope.
-// Concat + eval mirrors that behaviour.
+// background.js importScripts all core files into one SW global scope —
+// same collision risk as content_scripts. Parse the real importScripts(…)
+// call instead of hardcoding the file list: the hardcoded version used to
+// assert schema-v2/humanizer/visit-queue/visit-runner, none of which
+// background.js has imported since the 1.3.0 permission pullback — it was
+// silently testing a bundle Chrome never loads.
 describe('background.js importScripts bundle — concatenated identifier check', () => {
-  it('schema-v2 + humanizer + visit-queue + visit-runner import together without collision', () => {
-    expect(() => loadConcat([
-      'core/schema-v2.js',
-      'core/humanizer.js',
-      'core/visit-queue.js',
-      'core/visit-runner.js',
-    ])).not.toThrow();
+  it('imports + background.js itself load together without collision', () => {
+    const src = readFileSync(join(ROOT, 'background.js'), 'utf8');
+    const match = src.match(/importScripts\(([^)]*)\)/);
+    expect(match).not.toBeNull();
+    const imports = match[1].split(',').map((s) => s.trim().replace(/^['"]|['"]$/g, ''));
+    expect(imports.length).toBeGreaterThan(0);
+    expect(() => loadConcat([...imports, 'background.js'])).not.toThrow();
   });
 });
 

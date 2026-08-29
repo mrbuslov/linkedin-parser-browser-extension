@@ -298,6 +298,15 @@ describe('advance', () => {
   it('returns done=true on null state (defensive)', () => {
     expect(advance(null, NOW).done).toBe(true);
   });
+
+  // background.js's dead-profile (404) skip correlates the queue to a tab
+  // via a `tabId` field that isn't part of this module's own shape — must
+  // survive advance()'s spread or the correlation breaks on the next hop.
+  it('carries an unknown extra field (tabId) through unchanged', () => {
+    const q = { ...createQueue(['a', 'b', 'c'], NOW, 1), tabId: 42 };
+    const r = advance(q, NOW + 60_000);
+    expect(r.state.tabId).toBe(42);
+  });
 });
 
 // ---------- cancelQueue ----------

@@ -1213,7 +1213,8 @@ async function startBulkQueue() {
   }
 
   const queue = LITVisitQueueSimple.createQueue(urls, Date.now(), Math.floor(Math.random() * 1e9));
-  await dbSet({ visitQueueSimple: queue });
+  // tabId lets background.js's /404/ dead-profile skip target only this tab.
+  await dbSet({ visitQueueSimple: { ...queue, tabId: tab.id } });
   // Navigate the LinkedIn tab to the first URL — profile.js takes over
   // from there. Popup can be closed after this point.
   chrome.tabs.update(tab.id, { url: queue.urls[0] });

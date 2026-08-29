@@ -8,6 +8,20 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
+### Fixed
+- **Bulk visit queue stalling forever on a dead/removed profile.** Root
+  cause: the queue is driven entirely by profile.js, a content script
+  scoped to `https://www.linkedin.com/in/*`. When LinkedIn redirects a
+  deleted/restricted profile to `/404/`, the tab lands outside that match
+  pattern, profile.js is never re-injected, and `advance()` never runs
+  again — the queue sat on that index forever with nothing to rescue it.
+  background.js (the only context that sees the tab regardless of
+  content-script matches) now watches for the tab landing on `/404/` via
+  `chrome.tabs.onUpdated` and skips to the next queued URL itself. No new
+  Chrome permission needed — `host_permissions` for linkedin.com already
+  exposes tab URLs, same as popup.js's existing `chrome.tabs.query`/
+  `update` calls.
+
 
 ## [1.3.3] — 2026-07-12
 
