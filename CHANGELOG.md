@@ -9,6 +9,19 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
 
+## [1.3.5] — 2026-08-29
+
+### Fixed
+- **1.3.4's `/404/` queue skip could silently never fire.** It correlates
+  the skip to the driving tab via a `tabId` field the queue state now
+  carries, but a queue already running when that field didn't exist yet
+  (started before updating to 1.3.4, or simply resumed instead of
+  restarted) had `state.tabId === undefined`, which never equals a real
+  tab id — so the skip check always failed and the queue stalled exactly
+  as before. Now an unset `tabId` falls back to "assume it's ours" (only
+  one queue is ever active at a time) instead of silently refusing to skip.
+
+
 ## [1.3.4] — 2026-08-29
 
 ### Fixed

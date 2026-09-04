@@ -282,7 +282,11 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 async function skipDeadProfileInQueue(tabId) {
   const { visitQueueSimple: state } = await dbGet('visitQueueSimple');
   if (!LITVisitQueueSimple.isActive(state)) return;
-  if (state.tabId !== tabId) return; // some other LinkedIn tab hit /404/ — not the queue's tab
+  // Only one queue can be active at a time (single `visitQueueSimple` key), so an
+  // unset tabId (queue started before this field existed) means "assume it's ours"
+  // rather than silently refusing to ever skip. A set tabId still has to match —
+  // guards against an unrelated LinkedIn tab hitting /404/ while the queue runs elsewhere.
+  if (state.tabId != null && state.tabId !== tabId) return;
   const deadUrl = LITVisitQueueSimple.currentTargetUrl(state);
   const result = LITVisitQueueSimple.advance(state, Date.now());
   if (result.done) {
