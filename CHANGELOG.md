@@ -9,6 +9,30 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
 
+## [1.3.6] — 2026-09-16
+
+### Fixed
+- **Bulk visit queue paused on a LinkedIn vanity redirect after a `/404/`
+  skip or on the first URL.** 1.3.3 accepted redirects only when a
+  `sessionStorage` marker matched the target, but only profile.js wrote
+  that marker. The popup (first URL) and background.js (`/404/` skip)
+  navigate without it, and after a 404 a stale marker for the dead
+  profile stayed behind. Real case: `/in/nikhil-soni-1849592a0/` →
+  `/in/nikhil-shiv-soni/` paused the queue. The expected landing now
+  lives in the queue state (`awaitingLandingFor` / `landedUrl`), set by
+  `createQueue()` / `advance()`, so every navigator gets it. Reloading a
+  redirected page no longer pauses the queue either.
+- **Another LinkedIn tab could drive the queue.** profile.js now asks the
+  service worker for its own tab id and ignores the queue unless it is
+  the queue's tab (same `isQueueTab` rule as the `/404/` skip).
+- The profile.js load log prints the real manifest version instead of a
+  stale hardcoded `v1.3.3-accept-redirect`.
+
+### Note
+- A queue started before 1.3.6 has no `awaitingLandingFor`, so it
+  still pauses on redirects. Restart it after updating.
+
+
 ## [1.3.5] — 2026-08-29
 
 ### Fixed

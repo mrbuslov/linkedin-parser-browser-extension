@@ -90,8 +90,9 @@ function parseUrlList(text) {
 //     lastAdvancedAt:  number,     // Date.now() of last navigation — for stale-queue detection in UI
 //     cancelRequested: boolean,    // set by popup Cancel, cleared by profile.js when honouring
 //     seed:            number,     // PRNG seed for reproducible humanization within a run
-//     tabId:           number,     // OPTIONAL — set by popup.js. background.js's dead-profile
-//                                  // (404) skip uses it to target the right tab; unused here.
+//     tabId:           number,     // OPTIONAL — set by popup.js; see isQueueTab.
+//     awaitingLandingFor: string|null, // URL the queue just navigated to; null once profile.js landed
+//     landedUrl:       string|null, // where that navigation actually ended (may be a LinkedIn redirect)
 //   }
 //
 // null when no queue is active.
@@ -109,6 +110,8 @@ function createQueue(urls, now, seed) {
     lastAdvancedAt: now,
     cancelRequested: false,
     seed: typeof seed === 'number' ? seed : Math.floor(Math.random() * 1e9),
+    awaitingLandingFor: urls[0],
+    landedUrl: null,
   };
 }
 
@@ -141,6 +144,8 @@ function advance(state, now) {
     currentIndex: nextIndex,
     capturedCount: state.capturedCount + 1,
     lastAdvancedAt: now,
+    awaitingLandingFor: state.urls[nextIndex],
+    landedUrl: null,
   };
   if (nextIndex >= state.urls.length) {
     return { done: true, state: null, nextUrl: null };
@@ -172,11 +177,41 @@ function cancelQueue(state) {
 // decodeURI (not decodeURIComponent) — decodeURIComponent decodes
 // reserved chars too, which we don't want; decodeURI only unwraps
 // non-reserved (path-safe) chars, exactly what browser encoding did.
+function sameProfileUrl(a, b) {
+  const norm = (u) => decodeURI(u).replace(/\/+$/, '');
+  return norm(a) === norm(b);
+}
+
 function isExpectedUrl(state, currentUrl) {
   const target = currentTargetUrl(state);
   if (!target || !currentUrl) return false;
-  const norm = (u) => decodeURI(u).replace(/\/+$/, '');
-  return norm(target) === norm(currentUrl);
+  return sameProfileUrl(target, currentUrl);
+}
+
+// A queue started before tabId existed has none; only one queue is ever active, so it's ours.
+function isQueueTab(state, tabId) {
+  if (!Number.isInteger(tabId)) {
+    throw new TypeError(`isQueueTab: tabId must be an integer, got ${tabId}`);
+  }
+  return state.tabId == null || state.tabId === tabId;
+}
+
+// 'redirect' = the queue asked for the target and LinkedIn sent us elsewhere (or a reload of that page).
+// 'mismatch' = the user navigated away → pause.
+function classifyLanding(state, currentUrl, tabId) {
+  if (!isActive(state)) {
+    throw new Error('classifyLanding: queue is not active');
+  }
+  if (!isQueueTab(state, tabId)) return 'other-tab';
+  if (isExpectedUrl(state, currentUrl)) return 'expected';
+  const target = currentTargetUrl(state);
+  if (state.awaitingLandingFor === target) return 'redirect';
+  if (state.landedUrl && sameProfileUrl(state.landedUrl, currentUrl)) return 'redirect';
+  return 'mismatch';
+}
+
+function markLanded(state, currentUrl) {
+  return { ...state, awaitingLandingFor: null, landedUrl: currentUrl };
 }
 
 // ---------- Humanized timing ----------
@@ -215,6 +250,9 @@ const LITVisitQueueSimple = {
   advance,
   cancelQueue,
   isExpectedUrl,
+  isQueueTab,
+  classifyLanding,
+  markLanded,
   logNormalDwellMs,
   exponentialPauseMs,
 };

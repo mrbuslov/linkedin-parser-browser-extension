@@ -67,7 +67,7 @@ function loadBundle(jsFiles) {
       readyState: 'loading',
     },
     chrome: {
-      runtime: { sendMessage: () => Promise.resolve({}), onMessage: { addListener: () => {} } },
+      runtime: { sendMessage: () => Promise.resolve({}), onMessage: { addListener: () => {} }, getManifest: () => ({ version: 'test' }) },
       tabs: { query: () => Promise.resolve([]), update: () => {}, create: () => {}, sendMessage: () => Promise.resolve({}) },
     },
     location: { href: 'https://www.linkedin.com/in/test/', pathname: '/in/test/' },

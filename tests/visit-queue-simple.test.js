@@ -12,6 +12,9 @@ const {
   advance,
   cancelQueue,
   isExpectedUrl,
+  isQueueTab,
+  classifyLanding,
+  markLanded,
   logNormalDwellMs,
   exponentialPauseMs,
 } = require('../linkedin-tracker/core/visit-queue-simple.js');
@@ -394,6 +397,76 @@ describe('isExpectedUrl', () => {
 });
 
 // ---------- Humanized timing distributions ----------
+
+// ---------- classifyLanding ----------
+
+describe('classifyLanding — redirect acceptance across every navigator', () => {
+  const A = 'https://www.linkedin.com/in/alice/';
+  const DEAD = 'https://www.linkedin.com/in/dead-profile/';
+  const N = 'https://www.linkedin.com/in/nikhil-soni-1849592a0/';
+  const N_REDIRECT = 'https://www.linkedin.com/in/nikhil-shiv-soni/';
+  const TAB = 7;
+  const start = (urls) => ({ ...createQueue(urls, NOW, 1), tabId: TAB });
+
+  it('accepts a redirect on the very first URL (navigated by popup)', () => {
+    expect(classifyLanding(start([N, A]), N_REDIRECT, TAB)).toBe('redirect');
+  });
+
+  it('accepts a redirect right after background skipped a /404/ profile', () => {
+    let q = markLanded(start([A, DEAD, N]), A);
+    q = advance(q, NOW).state;          // profile.js → DEAD, which 404s (profile.js never runs)
+    q = advance(q, NOW).state;          // background.js skip → N
+    expect(classifyLanding(q, N_REDIRECT, TAB)).toBe('redirect');
+  });
+
+  it('exact landing is expected', () => {
+    expect(classifyLanding(start([N]), N, TAB)).toBe('expected');
+  });
+
+  it('pauses when the user navigates away after the queue page landed', () => {
+    const q = markLanded(start([N, A]), N_REDIRECT);
+    expect(classifyLanding(q, A, TAB)).toBe('mismatch');
+  });
+
+  it('reloading the redirected page stays accepted', () => {
+    const q = markLanded(start([N, A]), N_REDIRECT);
+    expect(classifyLanding(q, N_REDIRECT, TAB)).toBe('redirect');
+  });
+
+  it('advance forgets the previous landedUrl', () => {
+    const q = advance(markLanded(start([N, A, DEAD]), N_REDIRECT), NOW).state;
+    expect(q.landedUrl).toBeNull();
+    expect(q.awaitingLandingFor).toBe(A);
+    expect(classifyLanding(markLanded(q, A), N_REDIRECT, TAB)).toBe('mismatch');
+  });
+
+  it('another LinkedIn tab never claims the queue, even on the exact target', () => {
+    const q = start([N, A]);
+    expect(classifyLanding(q, N_REDIRECT, TAB + 1)).toBe('other-tab');
+    expect(classifyLanding(q, N, TAB + 1)).toBe('other-tab');
+  });
+
+  it('queue without tabId (started before 1.3.4) is treated as this tab', () => {
+    expect(classifyLanding(createQueue([N], NOW, 1), N_REDIRECT, TAB)).toBe('redirect');
+  });
+
+  it('queue state from before 1.3.6 (no awaitingLandingFor) does not accept a redirect', () => {
+    const legacy = start([N]);
+    delete legacy.awaitingLandingFor;
+    delete legacy.landedUrl;
+    expect(classifyLanding(legacy, N_REDIRECT, TAB)).toBe('mismatch');
+  });
+
+  it('throws on an inactive queue', () => {
+    expect(() => classifyLanding(null, N, TAB)).toThrow(/not active/);
+  });
+});
+
+describe('isQueueTab', () => {
+  it('throws on a non-integer tab id', () => {
+    expect(() => isQueueTab({ tabId: 1 }, undefined)).toThrow(TypeError);
+  });
+});
 
 describe('logNormalDwellMs — reading time distribution', () => {
   it('respects [min, max] clamp on every draw', () => {

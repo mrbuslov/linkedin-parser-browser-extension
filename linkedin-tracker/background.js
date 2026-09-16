@@ -148,7 +148,7 @@ function notifyNewlyAccepted(newlyAccepted) {
   });
 }
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type === 'DB_GET') {
     dbGet(msg.keys).then(sendResponse, (e) => { console.error('[LI Tracker] DB_GET', e); sendResponse({}); });
     return true;
@@ -172,6 +172,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   if (msg?.type === 'REFRESH_BADGE') {
     refreshBadge();
+    return;
+  }
+  if (msg?.type === 'GET_OWN_TAB_ID') {
+    if (!sender.tab) throw new Error('GET_OWN_TAB_ID must come from a content script in a tab');
+    sendResponse({ tabId: sender.tab.id });
     return;
   }
   // Bulk Visit Queue message handlers — disabled with the rest of the
@@ -282,11 +287,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 async function skipDeadProfileInQueue(tabId) {
   const { visitQueueSimple: state } = await dbGet('visitQueueSimple');
   if (!LITVisitQueueSimple.isActive(state)) return;
-  // Only one queue can be active at a time (single `visitQueueSimple` key), so an
-  // unset tabId (queue started before this field existed) means "assume it's ours"
-  // rather than silently refusing to ever skip. A set tabId still has to match —
-  // guards against an unrelated LinkedIn tab hitting /404/ while the queue runs elsewhere.
-  if (state.tabId != null && state.tabId !== tabId) return;
+  if (!LITVisitQueueSimple.isQueueTab(state, tabId)) return;
   const deadUrl = LITVisitQueueSimple.currentTargetUrl(state);
   const result = LITVisitQueueSimple.advance(state, Date.now());
   if (result.done) {

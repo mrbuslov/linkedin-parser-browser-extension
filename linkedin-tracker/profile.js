@@ -2,7 +2,7 @@
 // Pure logic lives in core/detect.js (status detection) and core/profile-state.js
 // (state transitions). This file is the DOM-scraping + persistence layer.
 
-console.log('[LI Tracker] profile.js v1.3.3-accept-redirect loaded:', location.pathname);
+console.log(`[LI Tracker] profile.js v${chrome.runtime.getManifest().version} loaded:`, location.pathname);
 
 // Strip the trailing-whitespace-trimmed `name` from the start of `text` if
 // present. Case-insensitive, allows an optional separator after the name.
@@ -520,6 +520,19 @@ function pickScrollTarget() {
   return document.scrollingElement || document.documentElement;
 }
 
+let ownTabIdPromise = null;
+function getOwnTabId() {
+  if (!ownTabIdPromise) {
+    ownTabIdPromise = chrome.runtime.sendMessage({ type: 'GET_OWN_TAB_ID' }).then((res) => {
+      if (!Number.isInteger(res?.tabId)) {
+        throw new Error(`GET_OWN_TAB_ID returned no tabId: ${JSON.stringify(res)}`);
+      }
+      return res.tabId;
+    });
+  }
+  return ownTabIdPromise;
+}
+
 async function runQueueTickIfApplicable(currentProfileUrl) {
   if (queueRunning) return;
   if (queueRunUrl === currentProfileUrl) return; // already ran on this URL
@@ -531,27 +544,20 @@ async function runQueueTickIfApplicable(currentProfileUrl) {
   try {
     const { visitQueueSimple: state } = await dbGet('visitQueueSimple');
     if (!LITVisitQueueSimple.isActive(state)) return;
-    if (!LITVisitQueueSimple.isExpectedUrl(state, currentProfileUrl)) {
-      // If the queue itself just navigated the tab AND the URL we asked
-      // for matches the queue's current target, this is a LinkedIn
-      // vanity-redirect (e.g. /in/els-christopherfarley/ →
-      // /in/christopher-farley-business-english/). Accept the redirect
-      // target as the profile for this queue slot. sessionStorage
-      // survives the navigation but is consumed once so a stray
-      // user-driven visit to a different profile doesn't get accepted.
-      const asked = sessionStorage.getItem('__lit_queue_asked_for');
-      if (asked) sessionStorage.removeItem('__lit_queue_asked_for');
-      const target = LITVisitQueueSimple.currentTargetUrl(state);
-      const isRedirect = asked && asked === target;
-      if (!isRedirect) {
-        if (queueSkipLoggedFor !== currentProfileUrl) {
-          queueSkipLoggedFor = currentProfileUrl;
-          console.log(`[LI Tracker/queue] paused — current ${currentProfileUrl} != expected ${target}`);
-        }
-        return;
+    const landing = LITVisitQueueSimple.classifyLanding(state, currentProfileUrl, await getOwnTabId());
+    if (landing === 'other-tab') return;
+    const target = LITVisitQueueSimple.currentTargetUrl(state);
+    if (landing === 'mismatch') {
+      if (queueSkipLoggedFor !== currentProfileUrl) {
+        queueSkipLoggedFor = currentProfileUrl;
+        console.log(`[LI Tracker/queue] paused — current ${currentProfileUrl} != expected ${target}`);
       }
+      return;
+    }
+    if (landing === 'redirect') {
       console.log(`[LI Tracker/queue] redirect accepted — asked for ${target}, landed on ${currentProfileUrl}`);
     }
+    await dbSet({ visitQueueSimple: LITVisitQueueSimple.markLanded(state, currentProfileUrl) });
 
     // Only commit queueRunUrl once we're past the checks and about to
     // actually run — that way an early-return doesn't poison the guard
@@ -643,10 +649,6 @@ async function runQueueTickIfApplicable(currentProfileUrl) {
     }
     await dbSet({ visitQueueSimple: result.state });
     console.log(`[LI Tracker/queue] → ${result.nextUrl}`);
-    // Persist the URL we asked for so the next page-load's tick can
-    // distinguish a LinkedIn redirect (accept) from a user-driven
-    // navigation to an unrelated profile (pause).
-    sessionStorage.setItem('__lit_queue_asked_for', result.nextUrl);
     window.location.href = result.nextUrl;
   } catch (err) {
     console.error('[LI Tracker/queue] driver crashed:', err);
