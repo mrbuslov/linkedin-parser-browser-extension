@@ -15,6 +15,9 @@ const {
   isQueueTab,
   classifyLanding,
   markLanded,
+  isPaused,
+  pauseWithError,
+  resumeQueue,
   logNormalDwellMs,
   exponentialPauseMs,
 } = require('../linkedin-tracker/core/visit-queue-simple.js');
@@ -406,65 +409,123 @@ describe('classifyLanding — redirect acceptance across every navigator', () =>
   const N = 'https://www.linkedin.com/in/nikhil-soni-1849592a0/';
   const N_REDIRECT = 'https://www.linkedin.com/in/nikhil-shiv-soni/';
   const TAB = 7;
+  const FRESH_PAGE = NOW + 5_000;
   const start = (urls) => ({ ...createQueue(urls, NOW, 1), tabId: TAB });
 
   it('accepts a redirect on the very first URL (navigated by popup)', () => {
-    expect(classifyLanding(start([N, A]), N_REDIRECT, TAB)).toBe('redirect');
+    expect(classifyLanding(start([N, A]), N_REDIRECT, TAB, FRESH_PAGE)).toBe('redirect');
   });
 
   it('accepts a redirect right after background skipped a /404/ profile', () => {
     let q = markLanded(start([A, DEAD, N]), A);
     q = advance(q, NOW).state;          // profile.js → DEAD, which 404s (profile.js never runs)
     q = advance(q, NOW).state;          // background.js skip → N
-    expect(classifyLanding(q, N_REDIRECT, TAB)).toBe('redirect');
+    expect(classifyLanding(q, N_REDIRECT, TAB, FRESH_PAGE)).toBe('redirect');
   });
 
   it('exact landing is expected', () => {
-    expect(classifyLanding(start([N]), N, TAB)).toBe('expected');
+    expect(classifyLanding(start([N]), N, TAB, FRESH_PAGE)).toBe('expected');
   });
 
   it('pauses when the user navigates away after the queue page landed', () => {
     const q = markLanded(start([N, A]), N_REDIRECT);
-    expect(classifyLanding(q, A, TAB)).toBe('mismatch');
+    expect(classifyLanding(q, A, TAB, FRESH_PAGE)).toBe('mismatch');
   });
 
   it('reloading the redirected page stays accepted', () => {
     const q = markLanded(start([N, A]), N_REDIRECT);
-    expect(classifyLanding(q, N_REDIRECT, TAB)).toBe('redirect');
+    expect(classifyLanding(q, N_REDIRECT, TAB, FRESH_PAGE)).toBe('redirect');
   });
 
   it('advance forgets the previous landedUrl', () => {
     const q = advance(markLanded(start([N, A, DEAD]), N_REDIRECT), NOW).state;
     expect(q.landedUrl).toBeNull();
     expect(q.awaitingLandingFor).toBe(A);
-    expect(classifyLanding(markLanded(q, A), N_REDIRECT, TAB)).toBe('mismatch');
+    expect(classifyLanding(markLanded(q, A), N_REDIRECT, TAB, FRESH_PAGE)).toBe('mismatch');
   });
 
   it('another LinkedIn tab never claims the queue, even on the exact target', () => {
     const q = start([N, A]);
-    expect(classifyLanding(q, N_REDIRECT, TAB + 1)).toBe('other-tab');
-    expect(classifyLanding(q, N, TAB + 1)).toBe('other-tab');
+    expect(classifyLanding(q, N_REDIRECT, TAB + 1, FRESH_PAGE)).toBe('other-tab');
+    expect(classifyLanding(q, N, TAB + 1, FRESH_PAGE)).toBe('other-tab');
   });
 
   it('queue without tabId (started before 1.3.4) is treated as this tab', () => {
-    expect(classifyLanding(createQueue([N], NOW, 1), N_REDIRECT, TAB)).toBe('redirect');
+    expect(classifyLanding(createQueue([N], NOW, 1), N_REDIRECT, TAB, FRESH_PAGE)).toBe('redirect');
   });
 
   it('queue state from before 1.3.6 (no awaitingLandingFor) does not accept a redirect', () => {
     const legacy = start([N]);
     delete legacy.awaitingLandingFor;
     delete legacy.landedUrl;
-    expect(classifyLanding(legacy, N_REDIRECT, TAB)).toBe('mismatch');
+    expect(classifyLanding(legacy, N_REDIRECT, TAB, FRESH_PAGE)).toBe('mismatch');
+  });
+
+  it('ignores the page the popup started the queue from (loaded before Start)', () => {
+    expect(classifyLanding(start([N, A]), N, TAB, NOW - 60_000)).toBe('stale-page');
+    expect(classifyLanding(start([N, A]), A, TAB, NOW - 60_000)).toBe('stale-page');
+  });
+
+  it('ignores the previous profile page right after profile.js advanced', () => {
+    const q = advance(markLanded(start([A, N]), A), NOW + 30_000).state;
+    expect(classifyLanding(q, A, TAB, NOW + 1_000)).toBe('stale-page');
+    expect(classifyLanding(q, N_REDIRECT, TAB, NOW + 31_000)).toBe('redirect');
+  });
+
+  it('throws on a non-finite pageStartedAt', () => {
+    expect(() => classifyLanding(start([N]), N, TAB, undefined)).toThrow(TypeError);
   });
 
   it('throws on an inactive queue', () => {
-    expect(() => classifyLanding(null, N, TAB)).toThrow(/not active/);
+    expect(() => classifyLanding(null, N, TAB, FRESH_PAGE)).toThrow(/not active/);
   });
 });
 
 describe('isQueueTab', () => {
   it('throws on a non-integer tab id', () => {
     expect(() => isQueueTab({ tabId: 1 }, undefined)).toThrow(TypeError);
+  });
+});
+
+describe('pause / resume after a driver crash', () => {
+  const A = 'https://www.linkedin.com/in/alice/';
+  const B = 'https://www.linkedin.com/in/bob/';
+
+  it('pauseWithError keeps the queue and makes it inactive', () => {
+    const q = { ...createQueue([A, B], NOW, 1), tabId: 3 };
+    const p = pauseWithError(q, 'boom');
+    expect(p.urls).toEqual([A, B]);
+    expect(isActive(p)).toBe(false);
+    expect(isPaused(p)).toBe(true);
+    expect(currentTargetUrl(p)).toBeNull();
+  });
+
+  it('pauseWithError rejects an empty message and an inactive queue', () => {
+    const q = createQueue([A], NOW, 1);
+    expect(() => pauseWithError(q, '')).toThrow(TypeError);
+    expect(() => pauseWithError(cancelQueue(q), 'x')).toThrow(/not active/);
+  });
+
+  it('resumeQueue re-arms the landing for the same index in the new tab', () => {
+    let q = advance(createQueue([A, B], NOW, 1), NOW).state;
+    q = pauseWithError(markLanded(q, B), 'boom');
+    const r = resumeQueue(q, NOW + 99_000, 11);
+    expect(isActive(r)).toBe(true);
+    expect(r.currentIndex).toBe(1);
+    expect(r.tabId).toBe(11);
+    expect(r.lastAdvancedAt).toBe(NOW + 99_000);
+    expect(r.awaitingLandingFor).toBe(B);
+    expect(r.landedUrl).toBeNull();
+    expect(classifyLanding(r, B, 11, NOW + 100_000)).toBe('expected');
+  });
+
+  it('resumeQueue throws when the queue is not paused', () => {
+    expect(() => resumeQueue(createQueue([A], NOW, 1), NOW, 1)).toThrow(/not paused/);
+  });
+
+  it('cancelled queue is not paused', () => {
+    const q = cancelQueue(pauseWithError(createQueue([A], NOW, 1), 'x'));
+    expect(isPaused(q)).toBe(false);
   });
 });
 

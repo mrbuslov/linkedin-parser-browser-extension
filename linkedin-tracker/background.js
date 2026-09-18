@@ -148,22 +148,28 @@ function notifyNewlyAccepted(newlyAccepted) {
   });
 }
 
+function replyWith(promise, sendResponse, type) {
+  promise.then(
+    (value) => sendResponse({ ok: true, value }),
+    (e) => {
+      console.error(`[LI Tracker] ${type}`, e);
+      sendResponse({ ok: false, error: String(e?.message ?? e) });
+    },
+  );
+  return true;
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg?.type === 'DB_GET') {
-    dbGet(msg.keys).then(sendResponse, (e) => { console.error('[LI Tracker] DB_GET', e); sendResponse({}); });
-    return true;
-  }
-  if (msg?.type === 'DB_SET') {
-    dbSet(msg.data).then(() => sendResponse(true), (e) => { console.error('[LI Tracker] DB_SET', e); sendResponse(false); });
-    return true;
-  }
-  if (msg?.type === 'DB_DELETE') {
-    dbDelete(msg.keys).then(() => sendResponse(true), (e) => { console.error('[LI Tracker] DB_DELETE', e); sendResponse(false); });
-    return true;
-  }
-  if (msg?.type === 'DB_CLEAR') {
-    dbClear().then(() => sendResponse(true), (e) => { console.error('[LI Tracker] DB_CLEAR', e); sendResponse(false); });
-    return true;
+  if (msg?.type === 'DB_GET') return replyWith(dbGet(msg.keys), sendResponse, msg.type);
+  if (msg?.type === 'DB_SET') return replyWith(dbSet(msg.data), sendResponse, msg.type);
+  if (msg?.type === 'DB_DELETE') return replyWith(dbDelete(msg.keys), sendResponse, msg.type);
+  if (msg?.type === 'DB_CLEAR') return replyWith(dbClear(), sendResponse, msg.type);
+  if (msg?.type === 'GET_OWN_TAB_ID') {
+    const tabId = sender.tab?.id;
+    const reply = Number.isInteger(tabId)
+      ? Promise.resolve(tabId)
+      : Promise.reject(new Error(`GET_OWN_TAB_ID must come from a content script in a tab, sender=${sender.url}`));
+    return replyWith(reply, sendResponse, msg.type);
   }
   if (msg?.type === 'SCAN_DONE') {
     notifyNewlyAccepted(msg.newlyAccepted);
@@ -172,11 +178,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg?.type === 'REFRESH_BADGE') {
     refreshBadge();
-    return;
-  }
-  if (msg?.type === 'GET_OWN_TAB_ID') {
-    if (!sender.tab) throw new Error('GET_OWN_TAB_ID must come from a content script in a tab');
-    sendResponse({ tabId: sender.tab.id });
     return;
   }
   // Bulk Visit Queue message handlers — disabled with the rest of the

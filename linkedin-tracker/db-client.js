@@ -4,25 +4,36 @@
 // — so they can't see extension-scoped IDB directly. All reads/writes are
 // forwarded via chrome.runtime.sendMessage to the service worker.
 
+// Every service-worker handler replies { ok: true, value } or { ok: false, error }.
+async function swRequest(message) {
+  const res = await chrome.runtime.sendMessage(message);
+  if (typeof res?.ok !== 'boolean') {
+    const got = JSON.stringify(res)?.slice(0, 200);
+    throw new Error(`${message.type}: service worker replied ${got} instead of {ok, ...} — it is running outdated code, reload the extension in chrome://extensions`);
+  }
+  if (!res.ok) throw new Error(`${message.type} failed in service worker: ${res.error}`);
+  return res.value;
+}
+
 async function dbGet(keys) {
-  const response = await chrome.runtime.sendMessage({ type: 'DB_GET', keys });
-  return response || {};
+  return swRequest({ type: 'DB_GET', keys });
 }
 
 async function dbSet(data) {
-  await chrome.runtime.sendMessage({ type: 'DB_SET', data });
+  await swRequest({ type: 'DB_SET', data });
 }
 
 async function dbDelete(keys) {
-  await chrome.runtime.sendMessage({ type: 'DB_DELETE', keys });
+  await swRequest({ type: 'DB_DELETE', keys });
 }
 
 async function dbClear() {
-  await chrome.runtime.sendMessage({ type: 'DB_CLEAR' });
+  await swRequest({ type: 'DB_CLEAR' });
 }
 
 // Expose explicitly so other content scripts (loaded later via manifest)
 // can see them, and so ESLint stops warning "defined but never used".
+globalThis.swRequest = swRequest;
 globalThis.dbGet = dbGet;
 globalThis.dbSet = dbSet;
 globalThis.dbDelete = dbDelete;

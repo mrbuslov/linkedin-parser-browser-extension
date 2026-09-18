@@ -93,6 +93,7 @@ function parseUrlList(text) {
 //     tabId:           number,     // OPTIONAL — set by popup.js; see isQueueTab.
 //     awaitingLandingFor: string|null, // URL the queue just navigated to; null once profile.js landed
 //     landedUrl:       string|null, // where that navigation actually ended (may be a LinkedIn redirect)
+//     error:           string|null, // driver crash message; set → queue paused until the popup resumes it
 //   }
 //
 // null when no queue is active.
@@ -112,12 +113,14 @@ function createQueue(urls, now, seed) {
     seed: typeof seed === 'number' ? seed : Math.floor(Math.random() * 1e9),
     awaitingLandingFor: urls[0],
     landedUrl: null,
+    error: null,
   };
 }
 
 function isActive(state) {
   if (!state) return false;
   if (state.cancelRequested) return false;
+  if (state.error) return false;
   if (!Array.isArray(state.urls)) return false;
   return state.currentIndex >= 0 && state.currentIndex < state.urls.length;
 }
@@ -198,11 +201,16 @@ function isQueueTab(state, tabId) {
 
 // 'redirect' = the queue asked for the target and LinkedIn sent us elsewhere (or a reload of that page).
 // 'mismatch' = the user navigated away → pause.
-function classifyLanding(state, currentUrl, tabId) {
+// 'stale-page' = this document loaded before the queue's last navigation, i.e. it's about to be left.
+function classifyLanding(state, currentUrl, tabId, pageStartedAt) {
   if (!isActive(state)) {
     throw new Error('classifyLanding: queue is not active');
   }
+  if (!Number.isFinite(pageStartedAt)) {
+    throw new TypeError(`classifyLanding: pageStartedAt must be a finite number, got ${pageStartedAt}`);
+  }
   if (!isQueueTab(state, tabId)) return 'other-tab';
+  if (pageStartedAt < state.lastAdvancedAt) return 'stale-page';
   if (isExpectedUrl(state, currentUrl)) return 'expected';
   const target = currentTargetUrl(state);
   if (state.awaitingLandingFor === target) return 'redirect';
@@ -212,6 +220,31 @@ function classifyLanding(state, currentUrl, tabId) {
 
 function markLanded(state, currentUrl) {
   return { ...state, awaitingLandingFor: null, landedUrl: currentUrl };
+}
+
+function isPaused(state) {
+  return !!state && !state.cancelRequested && typeof state.error === 'string' && state.error.length > 0;
+}
+
+function pauseWithError(state, message) {
+  if (!isActive(state)) throw new Error('pauseWithError: queue is not active');
+  if (typeof message !== 'string' || message.length === 0) {
+    throw new TypeError(`pauseWithError: message must be a non-empty string, got ${message}`);
+  }
+  return { ...state, error: message };
+}
+
+function resumeQueue(state, now, tabId) {
+  if (!isPaused(state)) throw new Error('resumeQueue: queue is not paused');
+  if (!Number.isInteger(tabId)) throw new TypeError(`resumeQueue: tabId must be an integer, got ${tabId}`);
+  return {
+    ...state,
+    error: null,
+    tabId,
+    lastAdvancedAt: now,
+    awaitingLandingFor: state.urls[state.currentIndex],
+    landedUrl: null,
+  };
 }
 
 // ---------- Humanized timing ----------
@@ -250,9 +283,13 @@ const LITVisitQueueSimple = {
   advance,
   cancelQueue,
   isExpectedUrl,
+  sameProfileUrl,
   isQueueTab,
   classifyLanding,
   markLanded,
+  isPaused,
+  pauseWithError,
+  resumeQueue,
   logNormalDwellMs,
   exponentialPauseMs,
 };

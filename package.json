@@ -1,13 +1,14 @@
 {
   "name": "linkedin-parser-browser-extension",
-  "version": "1.3.6",
+  "version": "1.3.7",
   "private": true,
   "description": "Chrome extension that tracks LinkedIn invitations and builds a local contact database.",
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint linkedin-tracker/**/*.js tests/**/*.js",
-    "pack:zip": "node scripts/pack-zip.js"
+    "pack:zip": "node scripts/pack-zip.js",
+    "smoke:queue": "node scripts/queue-driver-smoke.mjs"
   },
   "devDependencies": {
     "eslint": "^9.18.0",

@@ -1196,34 +1196,64 @@ function renderBulkPreview() {
   startBtn._parsedUrls = result.valid;
 }
 
+const NO_LINKEDIN_TAB_HINT = 'Open a LinkedIn tab first — the queue drives your current active tab.';
+
+async function getActiveLinkedInTab() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.url?.startsWith('https://www.linkedin.com/')) return null;
+  return tab;
+}
+
+// Always a fresh document: classifyLanding ignores pages loaded before the queue's lastAdvancedAt.
+async function navigateQueueTab(tab, url) {
+  const current = new URL(tab.url);
+  if (LITVisitQueueSimple.sameProfileUrl(current.origin + current.pathname, url)) {
+    await chrome.tabs.reload(tab.id);
+  } else {
+    await chrome.tabs.update(tab.id, { url });
+  }
+}
+
 async function startBulkQueue() {
   const startBtn = $('bulk-start-btn');
   const urls = startBtn._parsedUrls;
   if (!Array.isArray(urls) || urls.length === 0) return;
 
-  // Check that the user's current active tab is on LinkedIn — the queue
-  // drives THAT tab via profile.js self-navigation. No new tab is opened.
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const onLinkedIn = tab?.url?.startsWith('https://www.linkedin.com/');
-  if (!tab || !onLinkedIn) {
+  const tab = await getActiveLinkedInTab();
+  if (!tab) {
     const hint = $('bulk-hint');
     hint.hidden = false;
-    hint.textContent = 'Open a LinkedIn tab first — the queue drives your current active tab.';
+    hint.textContent = NO_LINKEDIN_TAB_HINT;
     return;
   }
 
   const queue = LITVisitQueueSimple.createQueue(urls, Date.now(), Math.floor(Math.random() * 1e9));
-  // tabId lets background.js's /404/ dead-profile skip target only this tab.
   await dbSet({ visitQueueSimple: { ...queue, tabId: tab.id } });
-  // Navigate the LinkedIn tab to the first URL — profile.js takes over
-  // from there. Popup can be closed after this point.
-  chrome.tabs.update(tab.id, { url: queue.urls[0] });
+  await navigateQueueTab(tab, queue.urls[0]);
   await renderBulkPanel();
+}
+
+async function resumeBulkQueue() {
+  const tab = await getActiveLinkedInTab();
+  const hint = $('bulk-running-hint');
+  hint.hidden = !!tab;
+  if (!tab) {
+    hint.textContent = NO_LINKEDIN_TAB_HINT;
+    return;
+  }
+  const { visitQueueSimple: state } = await dbGet('visitQueueSimple');
+  const resumed = LITVisitQueueSimple.resumeQueue(state, Date.now(), tab.id);
+  await dbSet({ visitQueueSimple: resumed });
+  await navigateQueueTab(tab, LITVisitQueueSimple.currentTargetUrl(resumed));
 }
 
 async function cancelBulkQueue() {
   const { visitQueueSimple: state } = await dbGet('visitQueueSimple');
   if (!state) return;
+  if (LITVisitQueueSimple.isPaused(state)) {
+    await dbSet({ visitQueueSimple: null });
+    return;
+  }
   await dbSet({ visitQueueSimple: LITVisitQueueSimple.cancelQueue(state) });
   // The queue driver in profile.js polls the cancel flag every ~1s and
   // clears the storage entry on next check. Popup's DB_CHANGED listener
@@ -1238,9 +1268,14 @@ async function renderBulkPanel() {
   const sub     = $('bulk-progress-sub');
   const { visitQueueSimple: state } = await dbGet('visitQueueSimple');
   const active = LITVisitQueueSimple.isActive(state);
-  idle.hidden = active;
-  running.hidden = !active;
-  if (!active) return;
+  const paused = LITVisitQueueSimple.isPaused(state);
+  idle.hidden = active || paused;
+  running.hidden = !active && !paused;
+  if (!active && !paused) return;
+  const errorEl = $('bulk-error');
+  errorEl.hidden = !paused;
+  errorEl.textContent = paused ? `Paused — ${state.error}` : '';
+  $('bulk-resume-btn').hidden = !paused;
   const total = state.urls.length;
   const done  = state.capturedCount;
   const idx   = state.currentIndex;
@@ -1254,7 +1289,9 @@ async function renderBulkPanel() {
   // profile.js:runQueueTickIfApplicable. If you change that range,
   // update this constant too.
   const etaMs = remaining * 32_500;
-  title.textContent = `${idx + 1} of ${total} · ${done} captured · ${LITPopupLogic.formatEta(etaMs)} remaining`;
+  title.textContent = paused
+    ? `Paused at ${idx + 1} of ${total} · ${done} captured`
+    : `${idx + 1} of ${total} · ${done} captured · ${LITPopupLogic.formatEta(etaMs)} remaining`;
   const started = new Date(state.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   sub.textContent = `Started ${started} · currently on ${state.urls[idx].replace(/^https?:\/\/(?:www\.)?linkedin\.com/, '')}`;
   list.innerHTML = '';
@@ -1276,6 +1313,7 @@ $('bulk-clear-btn').addEventListener('click', () => {
 });
 $('bulk-start-btn').addEventListener('click', startBulkQueue);
 $('bulk-cancel-btn').addEventListener('click', cancelBulkQueue);
+$('bulk-resume-btn').addEventListener('click', resumeBulkQueue);
 
 // Initial render (queue may already be running from a previous popup session
 // — the driver in profile.js keeps going even when the popup is closed).

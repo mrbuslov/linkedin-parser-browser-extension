@@ -523,11 +523,9 @@ function pickScrollTarget() {
 let ownTabIdPromise = null;
 function getOwnTabId() {
   if (!ownTabIdPromise) {
-    ownTabIdPromise = chrome.runtime.sendMessage({ type: 'GET_OWN_TAB_ID' }).then((res) => {
-      if (!Number.isInteger(res?.tabId)) {
-        throw new Error(`GET_OWN_TAB_ID returned no tabId: ${JSON.stringify(res)}`);
-      }
-      return res.tabId;
+    ownTabIdPromise = swRequest({ type: 'GET_OWN_TAB_ID' }).catch((e) => {
+      ownTabIdPromise = null;
+      throw e;
     });
   }
   return ownTabIdPromise;
@@ -544,8 +542,10 @@ async function runQueueTickIfApplicable(currentProfileUrl) {
   try {
     const { visitQueueSimple: state } = await dbGet('visitQueueSimple');
     if (!LITVisitQueueSimple.isActive(state)) return;
-    const landing = LITVisitQueueSimple.classifyLanding(state, currentProfileUrl, await getOwnTabId());
-    if (landing === 'other-tab') return;
+    const landing = LITVisitQueueSimple.classifyLanding(
+      state, currentProfileUrl, await getOwnTabId(), performance.timeOrigin,
+    );
+    if (landing === 'other-tab' || landing === 'stale-page') return;
     const target = LITVisitQueueSimple.currentTargetUrl(state);
     if (landing === 'mismatch') {
       if (queueSkipLoggedFor !== currentProfileUrl) {
@@ -651,9 +651,11 @@ async function runQueueTickIfApplicable(currentProfileUrl) {
     console.log(`[LI Tracker/queue] → ${result.nextUrl}`);
     window.location.href = result.nextUrl;
   } catch (err) {
-    console.error('[LI Tracker/queue] driver crashed:', err);
-    // Clear queue on crash so the user isn't stuck in a broken state.
-    await dbSet({ visitQueueSimple: null });
+    console.error('[LI Tracker/queue] driver crashed, pausing queue:', err);
+    const { visitQueueSimple: latest } = await dbGet('visitQueueSimple');
+    if (LITVisitQueueSimple.isActive(latest)) {
+      await dbSet({ visitQueueSimple: LITVisitQueueSimple.pauseWithError(latest, String(err?.message ?? err)) });
+    }
   } finally {
     queueRunning = false;
   }

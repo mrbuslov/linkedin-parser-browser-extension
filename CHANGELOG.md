@@ -9,6 +9,33 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
 
+## [1.3.7] — 2026-09-18
+
+### Fixed
+- **1.3.6 bulk queue vanished right after Start.** A service worker still
+  running pre-1.3.6 `background.js` (the running copy wasn't restarted after
+  the files changed; the extension's reload button fixed it) never answered
+  the new `GET_OWN_TAB_ID`. profile.js crashed and its crash handler
+  **deleted the whole queue**, so the popup showed an empty panel and the
+  console had no queue logs. Now:
+  - A crash **pauses** the queue (`error` field) instead of deleting it. The
+    popup shows "Paused — <error>" with **Resume** / **Cancel**.
+  - Every service-worker reply uses one envelope, `{ ok, value }` /
+    `{ ok: false, error }`. `db-client.js` throws on a failure or on a
+    missing/old-format reply ("reload the extension in chrome://extensions")
+    instead of returning `{}` / ignoring `false`.
+- **The page you pressed Start on hijacked the queue.** It saw the new queue
+  state within one 250 ms tick, before the tab navigated away. A page whose
+  load started before the queue's last navigation (`performance.timeOrigin <
+  lastAdvancedAt`) now ignores the queue. When the tab is already on the
+  target, Start/Resume reload it so the driver always runs on a fresh page.
+
+### Added
+- `npm run smoke:queue`: runs the real profile.js bundle in jsdom against a
+  simulated service worker (fresh landing, old page, redirect, foreign tab,
+  crash → pause, outdated service worker).
+
+
 ## [1.3.6] — 2026-09-16
 
 ### Fixed
