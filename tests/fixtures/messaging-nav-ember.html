@@ -1,6 +1,7 @@
 <!-- Messaging nav link, Ember shell (/messaging/*). Captured 2026-10-15.
-     No aria-label on the link; the artdeco badge carries the count, and the
-     Sales Navigator link next to it is the trap: it has a badge of its own. -->
+     No aria-label on the links; the artdeco badge carries each count, and the
+     Sales Navigator link is the trap: it has a badge of its own. Messaging 2,
+     invitations 5, notifications none. -->
 <header class="global-nav">
   <nav>
     <a href="https://www.linkedin.com/feed/?" target="_self">
@@ -26,6 +27,29 @@
         <div class="notification-badge notification-badge--show">
           <span class="notification-badge__count" aria-hidden="true">2</span>
           <span class="visually-hidden">2 new message notifications</span>
+        </div>
+      </div>
+    </a>
+    <a href="https://www.linkedin.com/mynetwork/?" target="_self">
+      <div class="ivm-image-view-model">
+        <li-icon aria-hidden="true" type="people" size="large"></li-icon>
+      </div>
+      <span class="t-12">My Network</span>
+      <div class="global-nav__primary-link-notif artdeco-notification-badge">
+        <div class="notification-badge notification-badge--show">
+          <span class="notification-badge__count" aria-hidden="true">5</span>
+          <span class="visually-hidden">5 new invitation notifications</span>
+        </div>
+      </div>
+    </a>
+    <a href="https://www.linkedin.com/notifications/?" target="_self">
+      <div class="ivm-image-view-model">
+        <li-icon aria-hidden="true" type="bell-fill" size="large"></li-icon>
+      </div>
+      <span class="t-12">Notifications</span>
+      <div class="global-nav__primary-link-notif artdeco-notification-badge">
+        <div class="notification-badge">
+          <span class="notification-badge__no-count" aria-hidden="true"></span>
         </div>
       </div>
     </a>

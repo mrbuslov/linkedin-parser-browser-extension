@@ -4,7 +4,16 @@
 
 const DEFAULT_SETTINGS = Object.freeze({
   messageNotifications: true,
+  invitationNotifications: true,
+  activityNotifications: false,
+  badgeShowsLinkedInCounts: false,
+  quietHoursEnabled: false,
+  quietHoursStart: '22:00',
+  quietHoursEnd: '09:00',
 });
+
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+const TIME_KEYS = Object.freeze(['quietHoursStart', 'quietHoursEnd']);
 
 function normalizeSettings(raw) {
   if (raw === null || raw === undefined) return { ...DEFAULT_SETTINGS };
@@ -22,6 +31,11 @@ function normalizeSettings(raw) {
       throw new TypeError(`settings.${key}: expected ${typeof defaultValue}, got ${typeof raw[key]}`);
     }
     out[key] = raw[key];
+  }
+  for (const key of TIME_KEYS) {
+    if (!TIME_RE.test(out[key])) {
+      throw new TypeError(`settings.${key}: expected HH:MM 24-hour time, got ${out[key]}`);
+    }
   }
   return out;
 }

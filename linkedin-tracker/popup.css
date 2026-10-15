@@ -1428,3 +1428,18 @@ body.is-on-sent .empty-off-sent { display: none; }
   cursor: pointer;
 }
 .settings-toggle input { margin: 0; cursor: pointer; }
+
+.settings-quiet {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 0 22px;
+  font-size: 11px;
+  color: #666;
+}
+.settings-quiet input[type="time"] {
+  font: inherit;
+  padding: 3px 6px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}

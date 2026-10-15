@@ -8,25 +8,37 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
+
+## [1.4.0] — 2026-10-15
+
 ### Added
-- **Chrome notification when a new LinkedIn message arrives.** Read entirely
-  out of the DOM of a tab you already have open — no LinkedIn API calls, no
-  navigation, no clicks. A content script on every linkedin.com page reads the
-  unread count off the messaging nav link (MutationObserver plus a 3 s poll as
-  the safety net) and reports it to the service worker, which is the only place
-  that compares it with the stored count, so two open tabs cannot notify twice.
-  Where the conversation list is on screen the notification carries the sender
-  and the snippet, otherwise the unread count. Clicking it focuses an existing
-  messaging tab or opens one.
-  - The count comes from two shapes of LinkedIn's own markup: the React shell
-    puts it in the link's `aria-label`, the Ember shell (`/messaging/*`) in the
-    artdeco badge inside the link. Neither present → the tick is skipped rather
-    than reporting an invented count. `document.title`'s `(N)` is deliberately
-    NOT used: on the live page it was the Sales Navigator count, not messages.
-  - Settings tab: toggle for message notifications (on by default) and a
-    "Send test notification" button that first checks Chrome's permission
-    level and reports it when the OS blocks notifications.
+- **Chrome notifications for LinkedIn's own nav counters.** Messages,
+  invitations and the notifications bell, read entirely out of the DOM of a tab
+  you already have open — no LinkedIn API calls, no navigation, no clicks. A
+  content script on every linkedin.com page reads each counter off its nav link
+  (MutationObserver plus a 3 s poll as the safety net) and reports it to the
+  service worker, which is the only place that compares it with the stored
+  counts, so two open tabs cannot notify twice. A new message carries the sender
+  and the snippet when the conversation list is on screen; invitations and the
+  bell carry counts. Clicking a notification focuses the matching LinkedIn tab
+  or opens one.
+  - Counters come from two shapes of LinkedIn's own markup: the React shell puts
+    the count in the link's `aria-label`, the Ember shell (`/messaging/*`) in the
+    artdeco badge inside the link. Neither present → that counter is skipped
+    rather than reported as a number we invented. Two traps are pinned by
+    fixtures: `document.title`'s `(N)` and the badge next to messaging belong to
+    Sales Navigator, and the feed body links `/mynetwork` from cards that carry
+    no counter, so counters are only read inside `header`/`nav`.
+  - Settings tab: a toggle per counter (messages and invitations on, bell off),
+    quiet hours with a window that wraps midnight (22:00–09:00 by default, counts
+    keep updating silently), an option to show the counts on the extension icon,
+    and a "Send test notification" button that reports Chrome's permission level,
+    which counters are armed and whether quiet hours are active.
   - Own sent messages never notify: the unread badge does not move for them.
+  - The toolbar badge now has a single writer. By default it still counts people
+    waiting for a welcome message; switching it to LinkedIn counts replaces that
+    number instead of fighting over it.
+- `npm run smoke:queue` stays green: the bulk visit queue is untouched.
 
 ### Fixed
 - `tests/content-script-bundle.test.js` only checked each `content_scripts`
@@ -34,6 +46,9 @@ In development for the next release. See [plan.md](plan.md) for the prioritized 
   isolated world. It now also loads the union per representative URL, and the
   popup bundle is parsed out of `popup.html` instead of a hardcoded list that
   had drifted.
+- All service-worker replies now use one `{ ok, value }` envelope, including
+  `SCAN_DONE` and `REFRESH_BADGE`, which previously answered with nothing and
+  would have thrown in any caller that waited for a reply.
 
 
 ## [1.3.7] — 2026-09-18

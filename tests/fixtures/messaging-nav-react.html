@@ -1,9 +1,9 @@
-<!-- Messaging nav link, React shell (feed, /in/*, search). Captured 2026-10-15.
-     The unread count lives in the link's own aria-label. -->
+<!-- Nav counters, React shell (feed, /in/*, search). Captured 2026-10-15.
+     Each count lives in that link's own aria-label: messaging 4, invitations 3. -->
 <header>
   <nav>
     <button aria-label="Home, 1 new notification">Home</button>
-    <a href="https://www.linkedin.com/mynetwork" aria-label="My Network, 0 new notifications">My Network</a>
+    <a href="https://www.linkedin.com/mynetwork" aria-label="My Network, 3 new notifications">My Network</a>
     <a href="https://www.linkedin.com/messaging/" aria-label="Messaging, 4 new notifications">
       <span><svg xmlns="http://www.w3.org/2000/svg" id="messages-medium" viewBox="0 0 24 24" width="24" height="24"></svg></span>
       <span>Messaging</span>
@@ -11,3 +11,8 @@
     <a href="https://www.linkedin.com/notifications/" aria-label="Notifications, 7 new notifications">Notifications</a>
   </nav>
 </header>
+<!-- The feed body links /mynetwork too: these must never be read as counters. -->
+<main>
+  <a href="https://www.linkedin.com/mynetwork/grow">Grow your network</a>
+  <a href="https://www.linkedin.com/mynetwork/invite-connect/connections/">View all recommendations</a>
+</main>

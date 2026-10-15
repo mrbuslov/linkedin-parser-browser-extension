@@ -1320,32 +1320,61 @@ $('bulk-resume-btn').addEventListener('click', resumeBulkQueue);
 // Live updates come via the DB_CHANGED broadcast above.
 renderBulkPanel();
 
-// ---------- Message notifications ----------
+// ---------- LinkedIn notifications ----------
 
-async function renderMessageNotificationSetting() {
+const NOTIFICATION_SETTING_INPUTS = Object.freeze({
+  'notif-messages': 'messageNotifications',
+  'notif-invitations': 'invitationNotifications',
+  'notif-activity': 'activityNotifications',
+  'notif-badge': 'badgeShowsLinkedInCounts',
+  'notif-quiet': 'quietHoursEnabled',
+  'notif-quiet-start': 'quietHoursStart',
+  'notif-quiet-end': 'quietHoursEnd',
+});
+
+async function loadSettings() {
   const { settings } = await dbGet('settings');
-  $('msg-notif-toggle').checked = LITSettings.normalizeSettings(settings ?? null).messageNotifications;
+  return LITSettings.normalizeSettings(settings ?? null);
 }
 
-async function saveMessageNotificationSetting(enabled) {
-  const { settings } = await dbGet('settings');
-  const next = { ...LITSettings.normalizeSettings(settings ?? null), messageNotifications: enabled };
-  await dbSet({ settings: next });
-  $('msg-notif-status').textContent = enabled ? 'Notifications on.' : 'Notifications off.';
+async function renderNotificationSettings() {
+  const settings = await loadSettings();
+  for (const [elementId, settingKey] of Object.entries(NOTIFICATION_SETTING_INPUTS)) {
+    const input = $(elementId);
+    if (input.type === 'checkbox') input.checked = settings[settingKey];
+    else input.value = settings[settingKey];
+  }
+  $('notif-quiet-start').disabled = !settings.quietHoursEnabled;
+  $('notif-quiet-end').disabled = !settings.quietHoursEnabled;
 }
 
-$('msg-notif-toggle').addEventListener('change', (e) => saveMessageNotificationSetting(e.target.checked));
-$('msg-notif-test').addEventListener('click', async () => {
-  const status = $('msg-notif-status');
+async function saveNotificationSetting(elementId) {
+  const input = $(elementId);
+  const value = input.type === 'checkbox' ? input.checked : input.value;
+  const settings = { ...(await loadSettings()), [NOTIFICATION_SETTING_INPUTS[elementId]]: value };
+  await dbSet({ settings: LITSettings.normalizeSettings(settings) });
+  await swRequest({ type: 'REFRESH_BADGE' });
+  await renderNotificationSettings();
+  $('notif-status').textContent = 'Saved.';
+}
+
+for (const elementId of Object.keys(NOTIFICATION_SETTING_INPUTS)) {
+  $(elementId).addEventListener('change', () => saveNotificationSetting(elementId));
+}
+
+$('notif-test').addEventListener('click', async () => {
+  const status = $('notif-status');
   status.textContent = 'Sending…';
   try {
     const result = await swRequest({ type: 'NOTIFICATION_SELFTEST' });
-    status.textContent = result.messageNotifications
-      ? 'Test notification sent — if you did not see it, Chrome notifications are blocked by your OS.'
-      : 'Test notification sent, but the toggle above is off, so real messages stay silent.';
+    const parts = [`Sent (permission: ${result.level}).`];
+    if (result.quietHours) parts.push('Quiet hours are on right now, so real alerts stay silent.');
+    if (result.enabled.length === 0) parts.push('Every counter above is off, so nothing would notify.');
+    else parts.push(`Watching: ${result.enabled.join(', ')}.`);
+    status.textContent = parts.join(' ');
   } catch (err) {
     status.textContent = err.message;
   }
 });
 
-renderMessageNotificationSetting();
+renderNotificationSettings();
