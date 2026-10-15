@@ -1,0 +1,69 @@
+<!-- Conversation list on /messaging/*, Ember shell. Captured 2026-10-15 from
+     the real page; participant names and snippets replaced with placeholders.
+     Structure kept verbatim, including the trap that broke the first version
+     of the parser: the row prints the timestamp twice (<time> and a plain
+     <span> right after it) and only then the snippet <p>. -->
+<ul tabindex="-1" aria-label="Conversation List">
+  <li tabindex="-1" class="msg-conversation-listitem">
+    <div class="msg-conversation-card">
+      <div class="entry-point"><div></div>
+        <div tabindex="0" class="msg-conversation-listitem__link">
+          <div><div><img alt="Alice Example"><div><span>Status is offline</span></div></div>
+            <div><input type="checkbox"><label aria-label="Select conversation with Alice Example"></label></div>
+          </div>
+          <div><div>
+            <div>
+              <h3><div><span>Alice Example</span></div></h3>
+              <div><!----></div>
+              <time>9:22 AM</time>
+              <span>9:22 AM</span>
+              <div></div>
+            </div>
+            <div><div><p>Alice: sure, send the file over tomorrow</p></div>
+              <div><div aria-label="Star conversation" role="img"></div></div>
+            </div>
+          </div></div>
+          <span>. Active conversation</span>
+          <span>. Press return to go to conversation details</span>
+        </div>
+      </div>
+    </div>
+  </li>
+  <li tabindex="-1" class="msg-conversation-listitem">
+    <div class="msg-conversation-card">
+      <div class="entry-point"><div></div>
+        <div tabindex="0" class="msg-conversation-listitem__link">
+          <div><div><img alt="Bob Example"><div><span>Status is online</span></div></div>
+            <div><input type="checkbox"><label aria-label="Select conversation with Bob Example"></label></div>
+          </div>
+          <div><div>
+            <div>
+              <h3><div><span>Bob Example</span></div></h3>
+              <time>Oct 14</time>
+              <span>Oct 14</span>
+            </div>
+            <div><div><p>You: thanks Bob, talk next week</p></div></div>
+          </div></div>
+          <span>. Press return to go to conversation details</span>
+        </div>
+      </div>
+    </div>
+  </li>
+  <li tabindex="-1" class="msg-conversation-listitem">
+    <div class="msg-conversation-card">
+      <div class="entry-point"><div></div>
+        <div tabindex="0" class="msg-conversation-listitem__link">
+          <div><div><img alt="Carol Example"><div><span>Status is reachable</span></div></div></div>
+          <div><div>
+            <div>
+              <h3><div><span>Carol Example</span></div></h3>
+              <time>Oct 13</time>
+              <span>Oct 13</span>
+            </div>
+            <div><div><p>Carol: attaching the signed scan</p></div></div>
+          </div></div>
+        </div>
+      </div>
+    </div>
+  </li>
+</ul>

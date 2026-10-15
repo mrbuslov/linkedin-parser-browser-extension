@@ -1319,3 +1319,33 @@ $('bulk-resume-btn').addEventListener('click', resumeBulkQueue);
 // — the driver in profile.js keeps going even when the popup is closed).
 // Live updates come via the DB_CHANGED broadcast above.
 renderBulkPanel();
+
+// ---------- Message notifications ----------
+
+async function renderMessageNotificationSetting() {
+  const { settings } = await dbGet('settings');
+  $('msg-notif-toggle').checked = LITSettings.normalizeSettings(settings ?? null).messageNotifications;
+}
+
+async function saveMessageNotificationSetting(enabled) {
+  const { settings } = await dbGet('settings');
+  const next = { ...LITSettings.normalizeSettings(settings ?? null), messageNotifications: enabled };
+  await dbSet({ settings: next });
+  $('msg-notif-status').textContent = enabled ? 'Notifications on.' : 'Notifications off.';
+}
+
+$('msg-notif-toggle').addEventListener('change', (e) => saveMessageNotificationSetting(e.target.checked));
+$('msg-notif-test').addEventListener('click', async () => {
+  const status = $('msg-notif-status');
+  status.textContent = 'Sending…';
+  try {
+    const result = await swRequest({ type: 'NOTIFICATION_SELFTEST' });
+    status.textContent = result.messageNotifications
+      ? 'Test notification sent — if you did not see it, Chrome notifications are blocked by your OS.'
+      : 'Test notification sent, but the toggle above is off, so real messages stay silent.';
+  } catch (err) {
+    status.textContent = err.message;
+  }
+});
+
+renderMessageNotificationSetting();

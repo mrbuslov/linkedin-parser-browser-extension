@@ -1,0 +1,42 @@
+<!-- Messaging nav link, Ember shell (/messaging/*). Captured 2026-10-15.
+     No aria-label on the link; the artdeco badge carries the count, and the
+     Sales Navigator link next to it is the trap: it has a badge of its own. -->
+<header class="global-nav">
+  <nav>
+    <a href="https://www.linkedin.com/feed/?" target="_self">
+      <div class="ivm-image-view-model">
+        <li-icon aria-hidden="true" type="home" size="large"></li-icon>
+      </div>
+      <span class="t-12">Home</span>
+      <div class="global-nav__primary-link-notif artdeco-notification-badge">
+        <div class="notification-badge notification-badge--show">
+          <span class="notification-badge__no-count" aria-hidden="true"></span>
+          <span class="visually-hidden">new feed updates notification</span>
+        </div>
+      </div>
+    </a>
+    <a href="https://www.linkedin.com/messaging/?" target="_self" aria-current="page">
+      <div class="ivm-image-view-model">
+        <div class="ivm-view-attr__img-wrapper">
+          <li-icon aria-hidden="true" type="messages-active" active="true" size="large"></li-icon>
+        </div>
+      </div>
+      <span class="t-12">Messaging</span>
+      <div class="global-nav__primary-link-notif artdeco-notification-badge">
+        <div class="notification-badge notification-badge--show">
+          <span class="notification-badge__count" aria-hidden="true">2</span>
+          <span class="visually-hidden">2 new message notifications</span>
+        </div>
+      </div>
+    </a>
+    <a href="https://www.linkedin.com/sales" data-view-name="nav-spotlight-sales-navigator">
+      <span class="t-12">Sales Nav</span>
+      <div class="global-nav__primary-link-notif artdeco-notification-badge">
+        <div class="notification-badge notification-badge--show">
+          <span class="notification-badge__count" aria-hidden="true">8</span>
+          <span class="visually-hidden">8 new Sales Navigator notifications</span>
+        </div>
+      </div>
+    </a>
+  </nav>
+</header>

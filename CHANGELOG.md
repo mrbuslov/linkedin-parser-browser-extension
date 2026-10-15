@@ -8,6 +8,33 @@ versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 In development for the next release. See [plan.md](plan.md) for the prioritized roadmap.
 
+### Added
+- **Chrome notification when a new LinkedIn message arrives.** Read entirely
+  out of the DOM of a tab you already have open — no LinkedIn API calls, no
+  navigation, no clicks. A content script on every linkedin.com page reads the
+  unread count off the messaging nav link (MutationObserver plus a 3 s poll as
+  the safety net) and reports it to the service worker, which is the only place
+  that compares it with the stored count, so two open tabs cannot notify twice.
+  Where the conversation list is on screen the notification carries the sender
+  and the snippet, otherwise the unread count. Clicking it focuses an existing
+  messaging tab or opens one.
+  - The count comes from two shapes of LinkedIn's own markup: the React shell
+    puts it in the link's `aria-label`, the Ember shell (`/messaging/*`) in the
+    artdeco badge inside the link. Neither present → the tick is skipped rather
+    than reporting an invented count. `document.title`'s `(N)` is deliberately
+    NOT used: on the live page it was the Sales Navigator count, not messages.
+  - Settings tab: toggle for message notifications (on by default) and a
+    "Send test notification" button that first checks Chrome's permission
+    level and reports it when the OS blocks notifications.
+  - Own sent messages never notify: the unread badge does not move for them.
+
+### Fixed
+- `tests/content-script-bundle.test.js` only checked each `content_scripts`
+  entry on its own, while Chrome runs every entry matching the URL in the same
+  isolated world. It now also loads the union per representative URL, and the
+  popup bundle is parsed out of `popup.html` instead of a hardcoded list that
+  had drifted.
+
 
 ## [1.3.7] — 2026-09-18
 

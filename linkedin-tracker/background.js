@@ -7,7 +7,7 @@
 // This ensures content scripts and the popup can always assume unified
 // `contacts` shape, regardless of who woke up first after an update.
 
-importScripts('core/schema-v2.js', 'core/visit-queue-simple.js');
+importScripts('core/schema-v2.js', 'core/visit-queue-simple.js', 'core/settings.js', 'core/message-watch.js');
 
 // Bulk Visit Queue disabled for the 1.3.0 Chrome Web Store submission —
 // the tabs/alarms/idle/webNavigation permissions triggered a
@@ -171,6 +171,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       : Promise.reject(new Error(`GET_OWN_TAB_ID must come from a content script in a tab, sender=${sender.url}`));
     return replyWith(reply, sendResponse, msg.type);
   }
+  if (msg?.type === 'MESSAGING_OBSERVED') {
+    return replyWith(handleMessagingObserved(msg.observed), sendResponse, msg.type);
+  }
+  if (msg?.type === 'NOTIFICATION_SELFTEST') {
+    return replyWith(runNotificationSelfTest(), sendResponse, msg.type);
+  }
   if (msg?.type === 'SCAN_DONE') {
     notifyNewlyAccepted(msg.newlyAccepted);
     refreshBadge();
@@ -299,4 +305,82 @@ async function skipDeadProfileInQueue(tabId) {
   console.log(`[LI Tracker/queue] ${deadUrl} → 404, skipping to ${result.nextUrl}`);
   await dbSet({ visitQueueSimple: { ...result.state, tabId } });
   await chrome.tabs.update(tabId, { url: result.nextUrl });
+}
+
+// ---------- New-message notifications ----------
+
+const MESSAGE_WATCH_KEY = 'messageWatch';
+const MESSAGE_NOTIFICATION_PREFIX = 'lit-msg:';
+
+async function readSettings() {
+  const { settings } = await dbGet('settings');
+  return LITSettings.normalizeSettings(settings ?? null);
+}
+
+let messageNotificationSeq = 0;
+
+async function showMessageNotification({ title, body }) {
+  messageNotificationSeq += 1;
+  return chrome.notifications.create(`${MESSAGE_NOTIFICATION_PREFIX}${Date.now()}-${messageNotificationSeq}`, {
+    type: 'basic',
+    iconUrl: chrome.runtime.getURL('icons/icon128.png'),
+    title,
+    message: body,
+    priority: 2,
+  });
+}
+
+// Without this chain two tabs read the same stored count and both notify.
+let messagingObservedChain = Promise.resolve();
+
+function handleMessagingObserved(observed) {
+  const result = messagingObservedChain.then(() => applyMessagingObserved(observed));
+  messagingObservedChain = result.catch(() => {});
+  return result;
+}
+
+async function applyMessagingObserved(observed) {
+  const stored = await dbGet(MESSAGE_WATCH_KEY);
+  const { notification, state } = LITMessageWatch.nextWatchState(
+    stored[MESSAGE_WATCH_KEY] ?? null,
+    observed,
+    Date.now(),
+  );
+  await dbSet({ [MESSAGE_WATCH_KEY]: state });
+  if (!notification) return { notified: false, unread: state.lastUnread };
+  const settings = await readSettings();
+  if (!settings.messageNotifications) return { notified: false, unread: state.lastUnread, mutedBySettings: true };
+  const notificationId = await showMessageNotification(notification);
+  console.log(`[LI Tracker/messages] notified "${notification.title}" (${state.lastUnread} unread)`);
+  return { notified: true, unread: state.lastUnread, notificationId };
+}
+
+async function runNotificationSelfTest() {
+  const level = await chrome.notifications.getPermissionLevel();
+  if (level !== 'granted') {
+    throw new Error(`Chrome reports notification permission "${level}" for this extension — allow notifications for Chrome in your OS settings, then retry`);
+  }
+  const notificationId = await showMessageNotification({
+    title: 'LinkedIn Tracker',
+    body: 'Test notification — new-message alerts are working.',
+  });
+  const settings = await readSettings();
+  return { level, notificationId, messageNotifications: settings.messageNotifications };
+}
+
+// Prefix, not a remembered id: the service worker is torn down between events.
+chrome.notifications.onClicked.addListener((notificationId) => {
+  if (!notificationId.startsWith(MESSAGE_NOTIFICATION_PREFIX)) return;
+  chrome.notifications.clear(notificationId);
+  openMessagingTab().catch((err) => console.error('[LI Tracker/messages] opening messaging failed:', err));
+});
+
+async function openMessagingTab() {
+  const [existing] = await chrome.tabs.query({ url: 'https://www.linkedin.com/messaging/*' });
+  if (existing) {
+    await chrome.tabs.update(existing.id, { active: true });
+    await chrome.windows.update(existing.windowId, { focused: true });
+    return;
+  }
+  await chrome.tabs.create({ url: LITMessageWatch.MESSAGING_URL });
 }

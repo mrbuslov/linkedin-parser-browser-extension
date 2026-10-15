@@ -337,6 +337,18 @@
         <p class="import-status" id="import-status"></p>
       </div>
       <div class="settings-block">
+        <h3>Message notifications</h3>
+        <p class="hint">Chrome notification when a new LinkedIn message arrives. The extension reads the messaging badge out of the page every 3 seconds — no LinkedIn API calls. It needs at least one LinkedIn tab open.</p>
+        <label class="settings-toggle">
+          <input type="checkbox" id="msg-notif-toggle">
+          <span>Notify me about new messages</span>
+        </label>
+        <div class="settings-actions">
+          <button id="msg-notif-test">Send test notification</button>
+        </div>
+        <p class="import-status" id="msg-notif-status"></p>
+      </div>
+      <div class="settings-block">
         <h3>Stats</h3>
         <p class="hint" id="stats-line">—</p>
       </div>
@@ -363,5 +375,6 @@
 <!-- humanizer.js / visit-queue.js not loaded — original Bulk Visit Queue disabled -->
 <script src="core/popup-logic.js"></script>
 <script src="core/visit-queue-simple.js"></script>
+<script src="core/settings.js"></script>
 <script src="popup.js"></script>
 </html>

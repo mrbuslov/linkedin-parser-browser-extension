@@ -3,8 +3,12 @@
   "name": "LinkedIn Parser: Invites & Contacts",
   "version": "1.3.7",
   "description": "LinkedIn parser & tracker. Sent invitations, accepted/declined connections, contacts auto-saved. 100% local.",
-  "permissions": ["notifications"],
-  "host_permissions": ["https://www.linkedin.com/*"],
+  "permissions": [
+    "notifications"
+  ],
+  "host_permissions": [
+    "https://www.linkedin.com/*"
+  ],
   "action": {
     "default_popup": "popup.html",
     "default_title": "LinkedIn Connection Tracker",
@@ -24,7 +28,9 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://www.linkedin.com/mynetwork/invitation-manager/sent/*"],
+      "matches": [
+        "https://www.linkedin.com/mynetwork/invitation-manager/sent/*"
+      ],
       "js": [
         "db-client.js",
         "core/schema-v2.js",
@@ -37,7 +43,9 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://www.linkedin.com/in/*"],
+      "matches": [
+        "https://www.linkedin.com/in/*"
+      ],
       "js": [
         "db-client.js",
         "core/schema-v2.js",
@@ -55,7 +63,9 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://www.linkedin.com/mynetwork/invite-connect/connections/*"],
+      "matches": [
+        "https://www.linkedin.com/mynetwork/invite-connect/connections/*"
+      ],
       "js": [
         "db-client.js",
         "core/schema-v2.js",
@@ -68,19 +78,36 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://www.linkedin.com/in/*"],
-      "js": ["page-scroll-bridge.js"],
+      "matches": [
+        "https://www.linkedin.com/in/*"
+      ],
+      "js": [
+        "page-scroll-bridge.js"
+      ],
       "world": "MAIN",
       "run_at": "document_start"
     },
     {
-      "matches": ["https://www.linkedin.com/search/results/people/*"],
+      "matches": [
+        "https://www.linkedin.com/search/results/people/*"
+      ],
       "js": [
         "db-client.js",
         "core/schema-v2.js",
         "core/url.js",
         "core/search-results-parser.js",
         "search-mutuals.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.linkedin.com/*"
+      ],
+      "js": [
+        "db-client.js",
+        "core/message-watch.js",
+        "messaging-watch.js"
       ],
       "run_at": "document_idle"
     }
