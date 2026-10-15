@@ -337,6 +337,24 @@
         <p class="import-status" id="import-status"></p>
       </div>
       <div class="settings-block">
+        <h3>LinkedIn notifications</h3>
+        <p class="hint">Chrome notification when a LinkedIn counter goes up. Read out of the page every 3 seconds — no LinkedIn API calls, no extra page loads. Needs at least one LinkedIn tab open.</p>
+        <label class="settings-toggle"><input type="checkbox" id="notif-messages"><span>New messages</span></label>
+        <label class="settings-toggle"><input type="checkbox" id="notif-invitations"><span>New invitations</span></label>
+        <label class="settings-toggle"><input type="checkbox" id="notif-activity"><span>Notifications bell (likes, comments, posts)</span></label>
+        <label class="settings-toggle"><input type="checkbox" id="notif-badge"><span>Show these counts on the extension icon</span></label>
+        <label class="settings-toggle"><input type="checkbox" id="notif-quiet"><span>Quiet hours — count silently, no popups</span></label>
+        <div class="settings-quiet">
+          <input type="time" id="notif-quiet-start">
+          <span>to</span>
+          <input type="time" id="notif-quiet-end">
+        </div>
+        <div class="settings-actions">
+          <button id="notif-test">Send test notification</button>
+        </div>
+        <p class="import-status" id="notif-status"></p>
+      </div>
+      <div class="settings-block">
         <h3>Stats</h3>
         <p class="hint" id="stats-line">—</p>
       </div>
@@ -363,5 +381,6 @@
 <!-- humanizer.js / visit-queue.js not loaded — original Bulk Visit Queue disabled -->
 <script src="core/popup-logic.js"></script>
 <script src="core/visit-queue-simple.js"></script>
+<script src="core/settings.js"></script>
 <script src="popup.js"></script>
 </html>

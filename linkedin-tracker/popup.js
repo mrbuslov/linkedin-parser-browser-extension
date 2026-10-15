@@ -1319,3 +1319,62 @@ $('bulk-resume-btn').addEventListener('click', resumeBulkQueue);
 // — the driver in profile.js keeps going even when the popup is closed).
 // Live updates come via the DB_CHANGED broadcast above.
 renderBulkPanel();
+
+// ---------- LinkedIn notifications ----------
+
+const NOTIFICATION_SETTING_INPUTS = Object.freeze({
+  'notif-messages': 'messageNotifications',
+  'notif-invitations': 'invitationNotifications',
+  'notif-activity': 'activityNotifications',
+  'notif-badge': 'badgeShowsLinkedInCounts',
+  'notif-quiet': 'quietHoursEnabled',
+  'notif-quiet-start': 'quietHoursStart',
+  'notif-quiet-end': 'quietHoursEnd',
+});
+
+async function loadSettings() {
+  const { settings } = await dbGet('settings');
+  return LITSettings.normalizeSettings(settings ?? null);
+}
+
+async function renderNotificationSettings() {
+  const settings = await loadSettings();
+  for (const [elementId, settingKey] of Object.entries(NOTIFICATION_SETTING_INPUTS)) {
+    const input = $(elementId);
+    if (input.type === 'checkbox') input.checked = settings[settingKey];
+    else input.value = settings[settingKey];
+  }
+  $('notif-quiet-start').disabled = !settings.quietHoursEnabled;
+  $('notif-quiet-end').disabled = !settings.quietHoursEnabled;
+}
+
+async function saveNotificationSetting(elementId) {
+  const input = $(elementId);
+  const value = input.type === 'checkbox' ? input.checked : input.value;
+  const settings = { ...(await loadSettings()), [NOTIFICATION_SETTING_INPUTS[elementId]]: value };
+  await dbSet({ settings: LITSettings.normalizeSettings(settings) });
+  await swRequest({ type: 'REFRESH_BADGE' });
+  await renderNotificationSettings();
+  $('notif-status').textContent = 'Saved.';
+}
+
+for (const elementId of Object.keys(NOTIFICATION_SETTING_INPUTS)) {
+  $(elementId).addEventListener('change', () => saveNotificationSetting(elementId));
+}
+
+$('notif-test').addEventListener('click', async () => {
+  const status = $('notif-status');
+  status.textContent = 'Sending…';
+  try {
+    const result = await swRequest({ type: 'NOTIFICATION_SELFTEST' });
+    const parts = [`Sent (permission: ${result.level}).`];
+    if (result.quietHours) parts.push('Quiet hours are on right now, so real alerts stay silent.');
+    if (result.enabled.length === 0) parts.push('Every counter above is off, so nothing would notify.');
+    else parts.push(`Watching: ${result.enabled.join(', ')}.`);
+    status.textContent = parts.join(' ');
+  } catch (err) {
+    status.textContent = err.message;
+  }
+});
+
+renderNotificationSettings();

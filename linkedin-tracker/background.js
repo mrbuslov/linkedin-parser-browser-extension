@@ -7,7 +7,7 @@
 // This ensures content scripts and the popup can always assume unified
 // `contacts` shape, regardless of who woke up first after an update.
 
-importScripts('core/schema-v2.js', 'core/visit-queue-simple.js');
+importScripts('core/schema-v2.js', 'core/visit-queue-simple.js', 'core/settings.js', 'core/nav-watch.js');
 
 // Bulk Visit Queue disabled for the 1.3.0 Chrome Web Store submission —
 // the tabs/alarms/idle/webNavigation permissions triggered a
@@ -17,6 +17,9 @@ importScripts('core/schema-v2.js', 'core/visit-queue-simple.js');
 // repo so 1.3.1 can re-enable the feature without a re-implementation.
 // The service-worker glue that wired them into chrome.tabs / alarms /
 // idle / webNavigation is commented out below.
+
+const NAV_WATCH_KEY = 'navWatch';
+const NAV_NOTIFICATION_PREFIX = 'lit-nav:';
 
 const DB_NAME = 'linkedin-tracker';
 const DB_VERSION = 1;
@@ -118,11 +121,17 @@ function notifyChange(keys) {
   if (keys.includes('contacts') || keys.includes('*')) refreshBadge();
 }
 
+// Sole writer of the toolbar badge: it shows either LinkedIn's pending counts
+// or the people waiting for a welcome message, never a mix of both.
 async function refreshBadge() {
-  const { contacts = {} } = await dbGet('contacts');
-  // Badge counts UNMARKED accepted people who need a welcome message. In v2
-  // that's status='accepted' && !marked && !welcomeMessageSent. Declined
-  // (was verified='declined') is now status='declined' which is out of scope.
+  const { contacts = {}, settings, [NAV_WATCH_KEY]: navWatch } = await dbGet(['contacts', 'settings', NAV_WATCH_KEY]);
+  const resolved = LITSettings.normalizeSettings(settings ?? null);
+  if (resolved.badgeShowsLinkedInCounts) {
+    await chrome.action.setBadgeText({ text: LITNavWatch.inboxBadgeText(navWatch ?? null, resolved) });
+    await chrome.action.setBadgeBackgroundColor({ color: '#0a66c2' });
+    return;
+  }
+  // status='accepted' && !marked && !welcomeMessageSent — people to welcome.
   const unmarked = Object.values(contacts)
     .filter((x) => x.status === 'accepted' && !x.marked && !x.welcomeMessageSent)
     .length;
@@ -171,14 +180,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       : Promise.reject(new Error(`GET_OWN_TAB_ID must come from a content script in a tab, sender=${sender.url}`));
     return replyWith(reply, sendResponse, msg.type);
   }
+  if (msg?.type === 'NAV_OBSERVED') {
+    return replyWith(handleNavObserved(msg.observed), sendResponse, msg.type);
+  }
+  if (msg?.type === 'NOTIFICATION_SELFTEST') {
+    return replyWith(runNotificationSelfTest(), sendResponse, msg.type);
+  }
   if (msg?.type === 'SCAN_DONE') {
     notifyNewlyAccepted(msg.newlyAccepted);
-    refreshBadge();
-    return;
+    return replyWith(refreshBadge(), sendResponse, msg.type);
   }
   if (msg?.type === 'REFRESH_BADGE') {
-    refreshBadge();
-    return;
+    return replyWith(refreshBadge(), sendResponse, msg.type);
   }
   // Bulk Visit Queue message handlers — disabled with the rest of the
   // feature for 1.3.0. See the note near importScripts at the top.
@@ -299,4 +312,90 @@ async function skipDeadProfileInQueue(tabId) {
   console.log(`[LI Tracker/queue] ${deadUrl} → 404, skipping to ${result.nextUrl}`);
   await dbSet({ visitQueueSimple: { ...result.state, tabId } });
   await chrome.tabs.update(tabId, { url: result.nextUrl });
+}
+
+// ---------- LinkedIn nav notifications ----------
+
+let navNotificationSeq = 0;
+
+async function readSettings() {
+  const { settings } = await dbGet('settings');
+  return LITSettings.normalizeSettings(settings ?? null);
+}
+
+async function showNavNotification({ key, title, body }) {
+  navNotificationSeq += 1;
+  return chrome.notifications.create(`${NAV_NOTIFICATION_PREFIX}${key}:${Date.now()}-${navNotificationSeq}`, {
+    type: 'basic',
+    iconUrl: chrome.runtime.getURL('icons/icon128.png'),
+    title,
+    message: body,
+    priority: 2,
+  });
+}
+
+// Without this chain two tabs read the same stored counts and both notify.
+let navObservedChain = Promise.resolve();
+
+function handleNavObserved(observed) {
+  const result = navObservedChain.then(() => applyNavObserved(observed));
+  navObservedChain = result.catch(() => {});
+  return result;
+}
+
+async function applyNavObserved(observed) {
+  const stored = await dbGet(NAV_WATCH_KEY);
+  const { notifications, state } = LITNavWatch.nextNavState(stored[NAV_WATCH_KEY] ?? null, observed, Date.now());
+  await dbSet({ [NAV_WATCH_KEY]: state });
+  const settings = await readSettings();
+  await refreshBadge();
+  const quiet = LITNavWatch.isWithinQuietHours(new Date(), settings);
+  const sent = [];
+  for (const notification of notifications) {
+    if (!settings[LITNavWatch.TARGET_BY_KEY[notification.key].settingKey]) continue;
+    if (quiet) continue;
+    await showNavNotification(notification);
+    sent.push(notification.key);
+  }
+  if (sent.length > 0) console.log(`[LI Tracker/nav] notified ${sent.join(', ')}`);
+  return { notified: sent, pending: notifications.map((n) => n.key), quietHours: quiet };
+}
+
+async function runNotificationSelfTest() {
+  const level = await chrome.notifications.getPermissionLevel();
+  if (level !== 'granted') {
+    throw new Error(`Chrome reports notification permission "${level}" for this extension — allow notifications for Chrome in your OS settings, then retry`);
+  }
+  const settings = await readSettings();
+  const notificationId = await showNavNotification({
+    key: 'messages',
+    title: 'LinkedIn Tracker',
+    body: 'Test notification — LinkedIn alerts are working.',
+  });
+  return {
+    level,
+    notificationId,
+    enabled: LITNavWatch.NAV_TARGETS.filter((t) => settings[t.settingKey]).map((t) => t.key),
+    quietHours: LITNavWatch.isWithinQuietHours(new Date(), settings),
+  };
+}
+
+// Prefix, not a remembered id: the service worker is torn down between events.
+chrome.notifications.onClicked.addListener((notificationId) => {
+  if (!notificationId.startsWith(NAV_NOTIFICATION_PREFIX)) return;
+  chrome.notifications.clear(notificationId);
+  const key = notificationId.slice(NAV_NOTIFICATION_PREFIX.length).split(':')[0];
+  const target = LITNavWatch.TARGET_BY_KEY[key];
+  if (!target) throw new Error(`notification id carries unknown target "${key}"`);
+  openLinkedInTab(target.openUrl).catch((err) => console.error('[LI Tracker/nav] opening LinkedIn failed:', err));
+});
+
+async function openLinkedInTab(url) {
+  const [existing] = await chrome.tabs.query({ url: `${url}*` });
+  if (existing) {
+    await chrome.tabs.update(existing.id, { active: true });
+    await chrome.windows.update(existing.windowId, { focused: true });
+    return;
+  }
+  await chrome.tabs.create({ url });
 }

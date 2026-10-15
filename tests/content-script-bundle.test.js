@@ -67,7 +67,7 @@ function loadBundle(jsFiles) {
       readyState: 'loading',
     },
     chrome: {
-      runtime: { sendMessage: () => Promise.resolve({}), onMessage: { addListener: () => {} }, getManifest: () => ({ version: 'test' }) },
+      runtime: { sendMessage: () => Promise.resolve({ ok: true, value: {} }), onMessage: { addListener: () => {} }, getManifest: () => ({ version: 'test' }) },
       tabs: { query: () => Promise.resolve([]), update: () => {}, create: () => {}, sendMessage: () => Promise.resolve({}) },
     },
     location: { href: 'https://www.linkedin.com/in/test/', pathname: '/in/test/' },
@@ -76,6 +76,7 @@ function loadBundle(jsFiles) {
     setTimeout: () => 0,
     clearTimeout: () => {},
     URL,
+    MutationObserver: class { observe() {} disconnect() {} },
     Node: { DOCUMENT_POSITION_FOLLOWING: 4 },
   };
   sandbox.window = sandbox;
@@ -115,9 +116,15 @@ function loadBundle(jsFiles) {
 // exact class of collision that content_scripts' per-file isolation hides.
 function loadConcat(jsFiles) {
   const sandbox = {
-    chrome: { runtime: { getURL: (p) => p, sendMessage: () => {}, onMessage: { addListener: () => {} }, id: 'test' },
+    chrome: { runtime: { getURL: (p) => p, sendMessage: () => Promise.resolve({ ok: true, value: {} }), onMessage: { addListener: () => {} }, getManifest: () => ({ version: 'test' }), id: 'test' },
       storage: { local: { get: () => Promise.resolve({}), set: () => Promise.resolve() } } },
-    document: new Proxy({}, { get: () => new Proxy({}, { get: () => () => null, apply: () => null }) }),
+    document: {
+      querySelector: () => null, querySelectorAll: () => [],
+      getElementById: () => null, createElement: () => ({ setAttribute: () => {}, style: {}, classList: { add: () => {} } }),
+      addEventListener: () => {}, removeEventListener: () => {},
+      documentElement: { setAttribute: () => {}, removeAttribute: () => {} },
+      body: { appendChild: () => {} }, head: { appendChild: () => {} }, readyState: 'loading',
+    },
     location: { href: 'https://www.linkedin.com/', hostname: 'www.linkedin.com', pathname: '/' },
     setTimeout: () => 0, clearTimeout: () => {},
     setInterval: () => 0, clearInterval: () => {},
@@ -128,6 +135,7 @@ function loadConcat(jsFiles) {
     JSON: JSON, Math: Math, Date: Date, RegExp: RegExp, Number: Number, String: String,
     TypeError: TypeError, RangeError: RangeError, Error: Error,
     scrollBy: () => {}, scrollTo: () => {},
+    MutationObserver: class { observe() {} disconnect() {} },
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
@@ -149,19 +157,16 @@ function loadConcat(jsFiles) {
   return sandbox;
 }
 
-// popup.html loads: db-client.js, core/schema-v2.js, core/humanizer.js,
-// core/visit-queue.js, core/popup-logic.js, popup.js. We test the core
-// set without popup.js (popup.js references DOM elements that don't
-// exist in sandbox; parse-time is what matters for identifier collision).
+// popup.html loads its scripts into one shared scope too. The file list is
+// parsed out of popup.html instead of being retyped here: the hardcoded list
+// had drifted and was testing a bundle the popup no longer loads.
 describe('popup.html script bundle — concatenated identifier check', () => {
-  it('schema-v2 + humanizer + visit-queue + popup-logic load together without collision', () => {
-    expect(() => loadConcat([
-      'db-client.js',
-      'core/schema-v2.js',
-      'core/humanizer.js',
-      'core/visit-queue.js',
-      'core/popup-logic.js',
-    ])).not.toThrow();
+  it('every script popup.html loads coexists in ONE scope', () => {
+    const html = readFileSync(join(ROOT, 'popup.html'), 'utf8');
+    const files = [...html.matchAll(/<script src="([^"]+)"><\/script>/g)].map((m) => m[1]);
+    expect(files).toContain('db-client.js');
+    expect(files.length).toBeGreaterThan(3);
+    expect(() => loadConcat(files.filter((f) => f !== 'popup.js'))).not.toThrow();
   });
 });
 
@@ -222,6 +227,38 @@ for (const cs of manifest.content_scripts) {
       const sandbox = loadBundle(cs.js);
       expect(typeof sandbox.cleanHeadline).toBe('function');
       expect(sandbox.LITPopupLogic.cleanHeadline).toBe(sandbox.cleanHeadline);
+    });
+  });
+}
+
+// Chrome runs EVERY content_scripts entry that matches the current URL in the
+// SAME isolated world, so overlapping entries share one scope just like files
+// inside one entry do. The per-entry test above cannot see that: the
+// messaging watcher matches every linkedin.com page and therefore co-loads
+// with the profile, connections, sent-invites and search bundles.
+const SAMPLE_URLS = [
+  'https://www.linkedin.com/feed/',
+  'https://www.linkedin.com/in/some-person/',
+  'https://www.linkedin.com/messaging/thread/2-abc/',
+  'https://www.linkedin.com/mynetwork/invitation-manager/sent/',
+  'https://www.linkedin.com/mynetwork/invite-connect/connections/',
+  'https://www.linkedin.com/search/results/people/?keywords=x',
+];
+
+function matchesPattern(pattern, url) {
+  const re = new RegExp('^' + pattern.split('*').map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$');
+  return re.test(url);
+}
+
+for (const url of SAMPLE_URLS) {
+  const entries = manifest.content_scripts.filter(
+    (cs) => cs.world !== 'MAIN' && cs.matches.some((m) => matchesPattern(m, url)),
+  );
+  describe(`content_scripts co-loaded on ${url}`, () => {
+    it(`all ${entries.length} matching entries load in ONE shared scope without collision`, () => {
+      expect(entries.length).toBeGreaterThan(0);
+      const files = [...new Set(entries.flatMap((cs) => cs.js))];
+      expect(() => loadConcat(files)).not.toThrow();
     });
   });
 }
